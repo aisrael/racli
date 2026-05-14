@@ -1,59 +1,145 @@
-//! The `racli mcp` server (MCP via `rmcp` on a Unix socket).
+//! The `racli mcp` server: MCP tools on stdio via `rmcp`, forwarding each tool call to `racli server` gRPC.
 
-use crate::transport::socket_server::ListenError;
-use crate::transport::socket_server::Listener;
-use crate::transport::socketwrapper::SocketAddr;
+mod mcp_proto_json;
 
-/// Errors from the MCP listen path or per-connection `rmcp` initialization.
+use std::path::PathBuf;
+
+use mcp_proto_json::FindDefinitionRequestJson;
+use mcp_proto_json::FindDefinitionResponseJson;
+use mcp_proto_json::GetVersionResponseJson;
+use mcp_proto_json::SearchRequestJson;
+use mcp_proto_json::SearchResponseJson;
+use mcp_proto_json::find_definition_response_proto_to_json;
+use mcp_proto_json::get_version_response_proto_to_json;
+use mcp_proto_json::search_response_proto_to_json;
+
+use rmcp::ErrorData;
+use rmcp::ServerHandler;
+use rmcp::ServiceExt;
+use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::wrapper::Json;
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::Implementation;
+use rmcp::model::ServerCapabilities;
+use rmcp::model::ServerInfo;
+use rmcp::tool;
+use rmcp::tool_handler;
+use rmcp::tool_router;
+
+use crate::grpc_server::init_grpc_server_tracing;
+
+/// Failures during the MCP lifecycle on stdio (gRPC errors surface as MCP tool errors).
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
-    /// Binding or accept loop failed on the MCP listen socket.
-    #[error(transparent)]
-    Listen(#[from] ListenError),
-    /// `rmcp` could not complete the MCP handshake on an accepted stream.
-    ///
-    /// `ServerInitializeError` is very large on the stack; boxing keeps [`ServerError`] and
-    /// [`crate::RunError`] small so `Result` values are not padded to that size.
+    /// `rmcp` could not complete the MCP handshake over stdio.
     #[error("mcp initialization failed")]
     McpInit(Box<rmcp::service::ServerInitializeError>),
 }
 
-/// Boxes `rmcp`'s initialize error into [`ServerError::McpInit`].
 impl From<rmcp::service::ServerInitializeError> for ServerError {
     fn from(value: rmcp::service::ServerInitializeError) -> Self {
         Self::McpInit(Box::new(value))
     }
 }
 
-/// Minimal MCP server handler (no custom tools yet); satisfies `rmcp::ServerHandler`.
-#[derive(Clone, Copy, Debug)]
-struct RacliMcp;
+/// MCP server state: Unix socket path for gRPC to `racli server`, plus a generated [`ToolRouter`].
+#[derive(Clone)]
+pub(crate) struct RacliMcpHandler {
+    grpc_socket: PathBuf,
+    tool_router: ToolRouter<Self>,
+}
 
-/// No-op MCP handler until custom tools or resources are added.
-impl rmcp::ServerHandler for RacliMcp {}
-
-/// Runs `rmcp` on `stream` until the session ends or initialization fails (errors go to stderr).
-pub async fn serve_unix_stream(stream: tokio::net::UnixStream) {
-    use rmcp::serve_server;
-
-    let handler = RacliMcp;
-    match serve_server(handler, stream).await {
-        Ok(running) => {
-            let _ = running.waiting().await;
+impl RacliMcpHandler {
+    /// Creates a handler that forwards tool calls to `racli server` at `grpc_socket`.
+    pub fn new(grpc_socket: PathBuf) -> Self {
+        Self {
+            grpc_socket,
+            tool_router: Self::tool_router(),
         }
-        Err(e) => {
-            eprintln!("mcp init error: {}", ServerError::from(e));
-        }
+    }
+
+    fn grpc_err(err: impl std::fmt::Display) -> ErrorData {
+        ErrorData::internal_error(err.to_string(), None)
     }
 }
 
-/// Binds [`crate::transport::socket_server::Listener`] on `socket_addr` and serves MCP per accepted Unix stream.
-pub async fn run(socket_addr: SocketAddr) -> Result<(), ServerError> {
-    Listener::new(socket_addr, |stream| async move {
-        serve_unix_stream(stream).await;
-    })
-    .run()
-    .await?;
+#[tool_router(router = tool_router)]
+impl RacliMcpHandler {
+    /// Returns the running racli version and rust-analyzer LSP serverInfo (`Racli.GetVersion`).
+    #[tool(
+        name = "get_version",
+        description = "Returns crate version string and rust-analyzer serverInfo from LSP initialize (mirrors gRPC Racli.GetVersion)."
+    )]
+    async fn get_version(&self) -> Result<Json<GetVersionResponseJson>, ErrorData> {
+        let resp = crate::client::get_version(&self.grpc_socket)
+            .await
+            .map_err(Self::grpc_err)?;
+        Ok(Json(get_version_response_proto_to_json(&resp)))
+    }
+
+    /// Runs workspace symbol resolution (`Racli.Search`).
+    #[tool(
+        name = "search",
+        description = "Runs LSP workspace/symbol via rust-analyzer with the racli merged query semantics (mirrors gRPC Racli.Search)."
+    )]
+    async fn search_symbols(
+        &self,
+        Parameters(req): Parameters<SearchRequestJson>,
+    ) -> Result<Json<SearchResponseJson>, ErrorData> {
+        let resp = crate::client::search(&self.grpc_socket, req.query)
+            .await
+            .map_err(Self::grpc_err)?;
+        Ok(Json(search_response_proto_to_json(&resp)))
+    }
+
+    /// Runs go-to-definition at a path + LSP position (`Racli.FindDefinition`).
+    #[tool(
+        name = "find_definition",
+        description = "Runs LSP textDocument/definition for file_path and 0-based line/character UTF-16 (mirrors gRPC Racli.FindDefinition)."
+    )]
+    async fn find_definition(
+        &self,
+        Parameters(req): Parameters<FindDefinitionRequestJson>,
+    ) -> Result<Json<FindDefinitionResponseJson>, ErrorData> {
+        let resp = crate::client::find_definition(
+            &self.grpc_socket,
+            req.file_path,
+            req.line,
+            req.character,
+        )
+        .await
+        .map_err(Self::grpc_err)?;
+        Ok(Json(find_definition_response_proto_to_json(&resp)))
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for RacliMcpHandler {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new(env!("CARGO_PKG_NAME"), crate::VERSION))
+    }
+}
+
+/// Serves MCP on stdin/stdout; each tool issues gRPC to `racli server` at [`crate::effective_unix_socket_path`].
+pub async fn run_stdio() -> Result<(), ServerError> {
+    init_grpc_server_tracing();
+
+    let grpc_socket = crate::effective_unix_socket_path();
+    tracing::info!(
+        version = %crate::VERSION,
+        grpc_socket = %grpc_socket.display(),
+        "racli MCP server starting on stdio"
+    );
+
+    let handler = RacliMcpHandler::new(grpc_socket);
+    let running = handler
+        .serve((tokio::io::stdin(), tokio::io::stdout()))
+        .await?;
+
+    if let Err(e) = running.waiting().await {
+        tracing::warn!(error = %e, "MCP runtime task ended with an error");
+    }
 
     Ok(())
 }

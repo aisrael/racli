@@ -12,20 +12,25 @@ pub mod client;
 pub mod find_definition;
 /// Unix-socket gRPC server for `racli server`.
 pub mod grpc_server;
+/// Generic LSP client.
+pub mod lsp_client;
 /// Maps `lsp_types` values into racli protobuf shapes.
 pub mod lsp_map;
-/// MCP server over a Unix stream (`rmcp`).
+/// MCP server over stdio (`rmcp`); tools forward to `racli server` gRPC.
 pub mod mcp;
 /// Protobuf and tonic-generated types for the Racli gRPC API.
 pub mod proto;
+/// Shared gRPC/MCP backend (rust-analyzer + [`crate::server::Core`]).
+pub mod racli_session;
 /// `rust-analyzer` LSP child process used by `racli server`.
 pub mod rust_analyzer;
 /// `racli search` CLI and response formatting.
 pub mod search;
 /// Shared server logic and future service wiring.
 pub mod server;
-/// Socket abstractions and the generic accept loop used by MCP.
+/// Transport layer components
 pub mod transport;
+mod workspace_file_watcher;
 
 pub use grpc_server::GrpcServerError;
 pub use grpc_server::run_grpc_unix_socket_interactive;
@@ -36,7 +41,7 @@ pub use search::SearchOutputFormat;
 /// Crate / binary version string embedded at compile time from `CARGO_PKG_VERSION`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Default filesystem path for the gRPC and MCP Unix sockets when `RACLI_UNIX_SOCKET` is unset.
+/// Default Unix socket path for `racli server` when `RACLI_UNIX_SOCKET` is unset or empty.
 pub const DEFAULT_UNIX_SOCKET_PATH: &str = "/tmp/racli.sock";
 
 /// Returns the Unix socket path from `RACLI_UNIX_SOCKET`, or [`DEFAULT_UNIX_SOCKET_PATH`] if unset or empty.
@@ -53,12 +58,9 @@ pub enum RunError {
     /// gRPC server failed to bind, serve, or clean up the socket.
     #[error(transparent)]
     Grpc(#[from] GrpcServerError),
-    /// MCP server failed during listen setup or handler initialization.
+    /// MCP server failed during handler setup or on the stdio transport.
     #[error(transparent)]
     Mcp(#[from] mcp::ServerError),
-    /// MCP generic listener failed to bind, accept, or handle signals.
-    #[error(transparent)]
-    Listen(#[from] transport::socket_server::ListenError),
 }
 
 /// Root CLI arguments: exactly one subcommand.
@@ -74,7 +76,7 @@ struct Args {
 enum Command {
     /// Start the gRPC server on the Unix socket.
     Server(ServerArgs),
-    /// Start the MCP server on the Unix socket (`rmcp`).
+    /// MCP stdio transport (`rmcp`); tools forward to [`Command::Server`] over the Unix gRPC socket.
     Mcp(ServerArgs),
     /// Print versions (client-side and, via gRPC, server-side).
     Version,
@@ -84,7 +86,7 @@ enum Command {
     FindDefinition(find_definition::FindDefinitionArgs),
 }
 
-/// Arguments shared by `racli server` and `racli mcp` (reserved for future listen options).
+/// Arguments for `racli server` (`--port` is reserved).
 #[derive(Parser)]
 pub struct ServerArgs {
     /// Optional TCP port (not used for the current Unix-socket-only servers).
@@ -92,24 +94,6 @@ pub struct ServerArgs {
     pub port: Option<u16>,
 }
 
-/// Builds a Tokio [`SocketAddr`](crate::transport::socketwrapper::SocketAddr) for a filesystem Unix socket path.
-fn unix_socket_addr_from_path(
-    path: PathBuf,
-) -> Result<transport::socketwrapper::SocketAddr, transport::socket_server::ListenError> {
-    let std_socket_addr =
-        std::os::unix::net::SocketAddr::from_pathname(&path).map_err(|source| {
-            transport::socket_server::ListenError::Bind {
-                path: path.clone(),
-                source,
-            }
-        })?;
-    let tokio_socket_addr = tokio::net::unix::SocketAddr::from(std_socket_addr);
-    Ok(transport::socketwrapper::SocketAddr::Unix(
-        tokio_socket_addr,
-    ))
-}
-
-/// Parses CLI arguments and dispatches `server`, `mcp`, or `version` until the chosen task completes.
 pub async fn run() -> Result<(), RunError> {
     let args = Args::parse();
 
@@ -118,8 +102,7 @@ pub async fn run() -> Result<(), RunError> {
             run_grpc_unix_socket_interactive(effective_unix_socket_path()).await?;
         }
         Command::Mcp(_opts) => {
-            let socket_addr = unix_socket_addr_from_path(effective_unix_socket_path())?;
-            mcp::run(socket_addr).await?;
+            mcp::run_stdio().await?;
         }
         Command::Version => {
             let sock = effective_unix_socket_path();
