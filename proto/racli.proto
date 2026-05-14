@@ -1,0 +1,17 @@
+syntax = "proto3";
+package racli;
+
+// gRPC API exposed by `racli server` on the Unix socket.
+service Racli {
+  // Returns the running server's version string (crate / binary version).
+  rpc GetVersion (GetVersionRequest) returns (GetVersionResponse);
+}
+
+// Empty request for GetVersion (no parameters).
+message GetVersionRequest {}
+
+// Response carrying the server version from Core::version().
+message GetVersionResponse {
+  // Semantic version string (e.g. from Cargo.toml).
+  string version = 1;
+}
