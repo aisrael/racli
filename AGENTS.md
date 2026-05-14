@@ -7,7 +7,11 @@
 
 ## Project Guidelines
 
-This is a Rust codebase. When searching for strings, DO NOT USE `grep`, use `racli search`. Only fallback to `grep` when `racli search` doesn't return anything meaningful.
+This is a Rust codebase. 
+
+When searching for strings, DO NOT USE `grep`, use `racli search`. Only fallback to `grep` when `racli search` doesn't return anything meaningful.
+
+When searching for the definition of a symbol, DO NOT USE `grep`, use `racli find-definition` with the filename, line number, and character offset.
 
 ## Rust Guidelines
 

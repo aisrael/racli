@@ -12,8 +12,6 @@ use lsp_types::WorkspaceLocation;
 use lsp_types::WorkspaceSymbol;
 use lsp_types::WorkspaceSymbolResponse;
 
-use crate::proto::racli::lsp_workspace_symbol_response;
-
 use crate::proto::racli::LspLocation;
 use crate::proto::racli::LspPosition;
 use crate::proto::racli::LspRange;
@@ -22,6 +20,7 @@ use crate::proto::racli::LspSymbolInformationList;
 use crate::proto::racli::LspWorkspaceSymbol;
 use crate::proto::racli::LspWorkspaceSymbolList;
 use crate::proto::racli::LspWorkspaceSymbolResponse;
+use crate::proto::racli::lsp_workspace_symbol_response;
 
 /// Builds a protobuf [`LspWorkspaceSymbolResponse`] from a deserialized LSP workspace symbol result.
 pub fn workspace_symbol_response_to_proto(

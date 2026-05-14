@@ -37,7 +37,7 @@ pub struct SearchArgs {
     /// Select how search results are printed (default: json).
     #[arg(long, value_enum)]
     pub output_format: Option<SearchOutputFormat>,
-    /// Substring forwarded to the language server `workspace/symbol` request.
+    /// Workspace symbol query: unescaped `|` separates alternative substring patterns (OR); use `\|` for a literal pipe (not full regex syntax).
     pub query: String,
 }
 

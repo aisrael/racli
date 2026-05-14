@@ -80,7 +80,7 @@ async fn grpc_find_definition_rust_analyzer_session() {
     let file_path = server_rs.canonicalize().expect("canonicalize server.rs");
 
     // 0-based LSP position on `RustAnalyzerSession` in `use crate::rust_analyzer::RustAnalyzerSession;`.
-    let resp = find_definition(sock.as_path(), file_path.to_string_lossy().as_ref(), 5, 26)
+    let resp = find_definition(sock.as_path(), file_path.to_string_lossy().as_ref(), 13, 27)
         .await
         .expect("find_definition");
 
