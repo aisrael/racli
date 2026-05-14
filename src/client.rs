@@ -49,7 +49,7 @@ pub async fn get_version(socket_path: &Path) -> Result<GetVersionResponse, Clien
     Ok(resp.into_inner())
 }
 
-/// Calls `Search` on the server at `socket_path` with 10s connect and request timeouts.
+/// Calls `Search` on the server at `socket_path` with 10s connect and 60s per-request timeout (LSP `workspace/symbol` can be slow).
 pub async fn search(
     socket_path: &Path,
     query: impl AsRef<str>,
@@ -58,7 +58,7 @@ pub async fn search(
 
     let channel = ep
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
         .connect()
         .await?;
 

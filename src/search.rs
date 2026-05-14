@@ -1,7 +1,6 @@
 //! `racli search`: CLI arguments and formatting for workspace symbol results.
 
 use std::io::Write;
-use std::path::Path;
 use std::time::Duration;
 
 use clap::Parser;
@@ -9,12 +8,14 @@ use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::client;
+use crate::effective_unix_socket_path;
 use crate::proto::racli::workspace_symbol_response::Payload;
-use crate::DEFAULT_UNIX_SOCKET_PATH;
 
-/// How `racli search` prints results (default is plain text).
+/// How `racli search` prints results (default is JSON).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum SearchOutputFormat {
+    /// One human-readable line per symbol (legacy plain-text layout).
+    Text,
     /// One JSON array of objects with `name`, `kind`, `uri`, and optional `range`.
     Json,
     /// RFC 4180-style CSV with a header row (`name`, `kind`, `uri`, `range`).
@@ -24,13 +25,16 @@ pub enum SearchOutputFormat {
 /// Arguments for `racli search` (query passed to LSP `workspace/symbol`).
 #[derive(Parser)]
 pub struct SearchArgs {
-    /// Print results as JSON (equivalent to `--output-format json`).
-    #[arg(long, conflicts_with = "csv")]
+    /// Print results as plain text, one symbol per line (equivalent to `--output-format text`).
+    #[arg(long, conflicts_with_all = ["json", "csv"])]
+    pub text: bool,
+    /// Print results as JSON (equivalent to `--output-format json`; same as the default).
+    #[arg(long, conflicts_with_all = ["csv", "text"])]
     pub json: bool,
     /// Print results as CSV with headers (equivalent to `--output-format csv`).
-    #[arg(long, conflicts_with = "json")]
+    #[arg(long, conflicts_with_all = ["json", "text"])]
     pub csv: bool,
-    /// Select how search results are printed (default: text).
+    /// Select how search results are printed (default: json).
     #[arg(long, value_enum)]
     pub output_format: Option<SearchOutputFormat>,
     /// Substring forwarded to the language server `workspace/symbol` request.
@@ -46,10 +50,11 @@ enum SearchPrintKind {
 }
 
 impl SearchArgs {
-    /// Picks plain text, JSON, or CSV; explicit `--output-format` wins over `--json` / `--csv`.
+    /// Picks plain text, JSON, or CSV; explicit `--output-format` wins over `--text` / `--json` / `--csv`.
     fn print_kind(&self) -> SearchPrintKind {
         if let Some(fmt) = self.output_format {
             match fmt {
+                SearchOutputFormat::Text => SearchPrintKind::Text,
                 SearchOutputFormat::Json => SearchPrintKind::Json,
                 SearchOutputFormat::Csv => SearchPrintKind::Csv,
             }
@@ -57,32 +62,29 @@ impl SearchArgs {
             SearchPrintKind::Json
         } else if self.csv {
             SearchPrintKind::Csv
-        } else {
+        } else if self.text {
             SearchPrintKind::Text
+        } else {
+            SearchPrintKind::Json
         }
     }
 }
 
 /// Runs the search RPC and prints results in the format selected by `args`.
 pub async fn run_cli_search(args: SearchArgs) {
-    match tokio::time::timeout(
-        Duration::from_secs(60),
-        client::search(Path::new(DEFAULT_UNIX_SOCKET_PATH), &args.query),
-    )
-    .await
-    {
+    let sock = effective_unix_socket_path();
+    let sock_display = sock.display().to_string();
+    match tokio::time::timeout(Duration::from_secs(60), client::search(&sock, &args.query)).await {
         Ok(Ok(resp)) => match args.print_kind() {
             SearchPrintKind::Text => print_search_response(resp),
             SearchPrintKind::Json => print_search_response_json(resp),
             SearchPrintKind::Csv => print_search_response_csv(resp),
         },
         Ok(Err(err)) => {
-            eprintln!("racli search ({DEFAULT_UNIX_SOCKET_PATH}): {err}");
+            eprintln!("racli search ({sock_display}): {err}");
         }
         Err(_elapsed) => {
-            eprintln!(
-                "racli search ({DEFAULT_UNIX_SOCKET_PATH}): request timed out after 60 seconds"
-            );
+            eprintln!("racli search ({sock_display}): request timed out after 60 seconds");
         }
     }
 }
@@ -142,7 +144,7 @@ fn lsp_range_line(r: &crate::proto::racli::LspRange) -> String {
     format!("{sl}:{sc}-{el}:{ec}")
 }
 
-/// Single symbol row emitted in `racli search --json` (merged from flat or nested workspace symbol payloads).
+/// Single symbol row emitted in JSON search output (merged from flat or nested workspace symbol payloads).
 #[derive(Serialize)]
 struct SearchSymbolJson {
     name: String,
@@ -167,7 +169,9 @@ struct SearchPositionJson {
 }
 
 /// Collects all symbols from a search RPC response into one list for JSON encoding.
-fn search_response_to_json_rows(resp: crate::proto::racli::SearchResponse) -> Vec<SearchSymbolJson> {
+fn search_response_to_json_rows(
+    resp: crate::proto::racli::SearchResponse,
+) -> Vec<SearchSymbolJson> {
     let mut rows = Vec::new();
     let Some(ws) = resp.workspace_symbol_response else {
         return rows;
@@ -284,10 +288,13 @@ fn print_search_response_csv(resp: crate::proto::racli::SearchResponse) {
 
 #[cfg(test)]
 mod search_output_tests {
+    use clap::Parser;
+
+    use super::SearchArgs;
+    use super::SearchPrintKind;
     use super::csv_escape_field;
     use super::search_response_to_json_rows;
     use super::write_search_response_csv;
-    use crate::proto::racli::workspace_symbol_response::Payload;
     use crate::proto::racli::LspPosition;
     use crate::proto::racli::LspRange;
     use crate::proto::racli::LspSymbolInformation;
@@ -296,6 +303,7 @@ mod search_output_tests {
     use crate::proto::racli::SymbolInformationList;
     use crate::proto::racli::WorkspaceSymbolList;
     use crate::proto::racli::WorkspaceSymbolResponse;
+    use crate::proto::racli::workspace_symbol_response::Payload;
 
     #[test]
     fn json_rows_merge_flat_and_include_range() {
@@ -412,5 +420,17 @@ mod search_output_tests {
             workspace_symbol_response: None,
         };
         assert!(search_response_to_json_rows(resp).is_empty());
+    }
+
+    #[test]
+    fn search_args_default_print_kind_is_json() {
+        let args = SearchArgs::try_parse_from(["racli", "q"]).expect("parse");
+        assert_eq!(args.print_kind(), SearchPrintKind::Json);
+    }
+
+    #[test]
+    fn search_args_text_flag_selects_plain_text() {
+        let args = SearchArgs::try_parse_from(["racli", "--text", "q"]).expect("parse");
+        assert_eq!(args.print_kind(), SearchPrintKind::Text);
     }
 }
