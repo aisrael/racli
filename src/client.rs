@@ -1,11 +1,11 @@
-//! gRPC client for `racli server` over a Unix socket (`GetVersion` today).
+//! gRPC client for `racli server` over a Unix socket (`GetVersion` returns the crate version and LSP server metadata).
 
 use std::path::Path;
 use std::time::Duration;
 
 use tonic::transport::Endpoint;
 
-use crate::proto::racli::{GetVersionRequest, racli_client::RacliClient};
+use crate::proto::racli::{GetVersionRequest, GetVersionResponse, racli_client::RacliClient};
 
 /// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `GetVersion`.
 #[derive(Debug, thiserror::Error)]
@@ -19,7 +19,7 @@ pub enum ClientVersionError {
 }
 
 /// Calls `GetVersion` on the server at `socket_path` with 10s connect and request timeouts.
-pub async fn get_server_version(socket_path: &Path) -> Result<String, ClientVersionError> {
+pub async fn get_version(socket_path: &Path) -> Result<GetVersionResponse, ClientVersionError> {
     let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
 
     let channel = ep
@@ -31,5 +31,5 @@ pub async fn get_server_version(socket_path: &Path) -> Result<String, ClientVers
     let mut client = RacliClient::new(channel);
     let resp = client.get_version(GetVersionRequest {}).await?;
 
-    Ok(resp.into_inner().version)
+    Ok(resp.into_inner())
 }

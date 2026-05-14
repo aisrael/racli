@@ -8,7 +8,7 @@ use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
 
 use crate::proto::racli::racli_server::{Racli, RacliServer};
-use crate::proto::racli::{GetVersionRequest, GetVersionResponse};
+use crate::proto::racli::{GetVersionRequest, GetVersionResponse, LspServerInfo};
 use crate::server::Core;
 use tonic::{Request, Response, Status};
 
@@ -48,36 +48,50 @@ pub enum GrpcServerError {
         #[source]
         source: std::io::Error,
     },
+    /// Failed to read the process working directory for the LSP workspace root.
+    #[error("failed to read current working directory")]
+    CurrentDir {
+        #[source]
+        source: std::io::Error,
+    },
+    /// Failed to spawn or speak LSP with the `rust-analyzer` child process.
+    #[error(transparent)]
+    RustAnalyzer(#[from] crate::rust_analyzer::RustAnalyzerError),
     /// tonic failed while driving the HTTP/2 stack over the Unix listener.
     #[error("failed serving gRPC transport")]
     Serve(#[from] tonic::transport::Error),
 }
 
-/// tonic service implementation that forwards RPCs to [`crate::server::Core`].
-#[derive(Clone, Copy, Debug, Default)]
+/// tonic service implementation that forwards RPCs to [`crate::server::Core`] and LSP metadata from rust-analyzer.
+#[derive(Clone, Debug)]
 pub struct RacliGrpc {
     core: Core,
+    lsp_server_info: LspServerInfo,
 }
 
 #[tonic::async_trait]
 impl Racli for RacliGrpc {
-    /// Returns [`Core::version`](crate::server::Core::version) as the protobuf `version` field.
+    /// Returns [`Core::version`](crate::server::Core::version) and rust-analyzer [`LspServerInfo`] from initialize.
     async fn get_version(
         &self,
         _request: Request<GetVersionRequest>,
     ) -> Result<Response<GetVersionResponse>, Status> {
         tracing::debug!(rpc = "Racli.GetVersion", "gRPC endpoint invoked");
         let version = self.core.version();
+        let lsp_server_info = self.lsp_server_info.clone();
         tracing::debug!(rpc = "Racli.GetVersion", %version, "returning GetVersion response");
-        Ok(Response::new(GetVersionResponse { version }))
+        Ok(Response::new(GetVersionResponse {
+            version,
+            lsp_server_info: Some(lsp_server_info),
+        }))
     }
 }
 
-/// Waits for SIGINT or SIGTERM (falls back to Ctrl+C only if SIGTERM cannot be registered).
+/// Waits for SIGINT or SIGTERM on the same [`signal`](tokio::signal::unix::signal) API (reliable with tonic shutdown).
 async fn unix_shutdown_signals() {
     use tokio::signal::unix::{SignalKind, signal};
 
-    let mut sigterm = match signal(SignalKind::terminate()) {
+    let mut sigint = match signal(SignalKind::interrupt()) {
         Ok(s) => s,
         Err(_) => {
             let _ = tokio::signal::ctrl_c().await;
@@ -85,8 +99,16 @@ async fn unix_shutdown_signals() {
         }
     };
 
+    let mut sigterm = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(_) => {
+            let _ = sigint.recv().await;
+            return;
+        }
+    };
+
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
+        _ = sigint.recv() => {}
         _ = sigterm.recv() => {}
     }
 }
@@ -113,6 +135,15 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
     let path_buf = socket_path.to_path_buf();
     let _ = std::fs::remove_file(socket_path);
 
+    let cwd = std::env::current_dir().map_err(|source| GrpcServerError::CurrentDir { source })?;
+    let rust_analyzer = match crate::rust_analyzer::RustAnalyzerSession::spawn(&cwd).await {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = std::fs::remove_file(&path_buf);
+            return Err(e.into());
+        }
+    };
+
     let uds =
         tokio::net::UnixListener::bind(socket_path).map_err(|source| GrpcServerError::Bind {
             path: path_buf.clone(),
@@ -120,13 +151,28 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
         })?;
 
     let incoming = UnixListenerStream::new(uds);
-    let svc = RacliGrpc::default();
+    let lsp_server_info = rust_analyzer.lsp_server_info.clone();
+    let svc = RacliGrpc {
+        core: Core::default(),
+        lsp_server_info,
+    };
 
-    Server::builder()
+    tracing::info!(
+        version = %crate::VERSION,
+        socket = %path_buf.display(),
+        "racli gRPC server starting"
+    );
+
+    let serve_result = Server::builder()
         .add_service(RacliServer::new(svc))
         .serve_with_incoming_shutdown(incoming, shutdown)
-        .await?;
+        .await;
+
+    let ra_result = rust_analyzer.shutdown_gracefully().await;
 
     let _ = std::fs::remove_file(&path_buf);
+
+    serve_result.map_err(GrpcServerError::Serve)?;
+    ra_result?;
     Ok(())
 }

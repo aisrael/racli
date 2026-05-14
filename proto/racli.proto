@@ -10,8 +10,16 @@ service Racli {
 // Empty request for GetVersion (no parameters).
 message GetVersionRequest {}
 
-// Response carrying the server version from Core::version().
+// LSP `InitializeResult.serverInfo` (language server name and version).
+message LspServerInfo {
+  string name = 1;
+  string version = 2;
+}
+
+// Response carrying the server version and the rust-analyzer LSP `serverInfo`.
 message GetVersionResponse {
   // Semantic version string (e.g. from Cargo.toml).
   string version = 1;
+  // Name and version reported by rust-analyzer in its `initialize` response (may be empty if missing).
+  LspServerInfo lsp_server_info = 2;
 }

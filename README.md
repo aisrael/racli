@@ -1,19 +1,26 @@
 racli - a CLI tool for [rust-analyzer](https://github.com/rust-lang/rust-analyzer)
 ====
 
-## Background
-
 ## Architecture
 
-`racli` has two main components:
+In the usual setup there are three pieces:
 
-  - a server (`racli mcp`) that listens on a Unix or IP socket
-  - `racli` acting as a client that connects to the running server
+- **rust-analyzer** — the Language Server process that `racli server` drives over LSP.
+- **racli server** — a long-running gRPC listener on a Unix socket (default `/tmp/racli.sock`); it spawns `rust-analyzer`, completes an LSP `initialize` handshake with the current working directory as the workspace root, and serves RPCs to clients.
+- **racli (client)** — the same binary used in client mode: subcommands that connect to the socket and call the server.
+
+Stop the server with Ctrl+C or SIGTERM to trigger LSP `shutdown`/`exit` and clean termination of the child.
+
+A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-architecture.md).
 
 ### `racli server`
 
-`racli mcp` when invoked without any other arguments spawns an instance of `rust-analyzer` in a child process, then initializes it to scan the current working directory, then listens on `/tmp/racli.sock` for requests from the client.
+`racli server` binds the gRPC Unix socket (default `/tmp/racli.sock`) and, when `rust-analyzer` is available on your `PATH`, spawns it as a child in the current working directory and completes the LSP `initialize` handshake described above.
 
-### `racli`
+## Client commands
 
-The `racli` binary then acts as a client, sending requests to `racli mcp`.
+These subcommands expect a running `racli server` at the default Unix socket path unless noted otherwise.
+
+### `racli version`
+
+Prints the client version from the binary (`CARGO_PKG_VERSION`). If the server answers at the default socket, prints the server version from gRPC `GetVersion`. If the server is missing, errors, or does not respond within 10 seconds, a message is written to stderr and only the client line is printed to stdout.

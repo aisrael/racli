@@ -14,6 +14,8 @@ pub mod grpc_server;
 pub mod mcp;
 /// Protobuf and tonic-generated types for the Racli gRPC API.
 pub mod proto;
+/// `rust-analyzer` LSP child process used by `racli server`.
+pub mod rust_analyzer;
 /// Shared server logic and future service wiring.
 pub mod server;
 /// Socket abstractions and the generic accept loop used by MCP.
@@ -101,13 +103,20 @@ pub async fn run() -> Result<(), RunError> {
         }
         Command::Version => match tokio::time::timeout(
             Duration::from_secs(10),
-            client::get_server_version(Path::new(DEFAULT_UNIX_SOCKET_PATH)),
+            client::get_version(Path::new(DEFAULT_UNIX_SOCKET_PATH)),
         )
         .await
         {
-            Ok(Ok(server_v)) => {
+            Ok(Ok(resp)) => {
                 println!("client: {VERSION}");
-                println!("server: {server_v}");
+                println!("server: {}", resp.version);
+                let lsp = resp.lsp_server_info.as_ref();
+                match lsp {
+                    Some(info) if !info.name.is_empty() || !info.version.is_empty() => {
+                        println!("{}: {}", info.name, info.version);
+                    }
+                    _ => {}
+                }
             }
             Ok(Err(err)) => {
                 eprintln!("racli server ({DEFAULT_UNIX_SOCKET_PATH}): {err}");
