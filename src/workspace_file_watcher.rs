@@ -142,7 +142,7 @@ fn run_notify_thread(
 fn file_change_type(kind: notify::EventKind) -> Option<FileChangeType> {
     match kind {
         notify::EventKind::Create(_) => Some(FileChangeType::CREATED),
-        notify::EventKind::Modify(mk) if matches!(mk, ModifyKind::Metadata(_)) => None,
+        notify::EventKind::Modify(ModifyKind::Metadata(_)) => None,
         notify::EventKind::Modify(_) => Some(FileChangeType::CHANGED),
         notify::EventKind::Remove(_) => Some(FileChangeType::DELETED),
         notify::EventKind::Other => Some(FileChangeType::CHANGED),
