@@ -5,9 +5,15 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, Command};
+use serde_json::Value;
+use serde_json::json;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
+use tokio::process::Child;
+use tokio::process::ChildStdin;
+use tokio::process::Command;
 use tokio::sync::Mutex;
 use url::Url;
 
@@ -108,9 +114,7 @@ impl RustAnalyzerSession {
             Arc::new(Mutex::new(HashMap::new()));
         let pending_reader = Arc::clone(&pending);
 
-        let reader = tokio::spawn(async move {
-            stdout_reader_loop(stdout, pending_reader).await
-        });
+        let reader = tokio::spawn(async move { stdout_reader_loop(stdout, pending_reader).await });
 
         let mut session = RustAnalyzerSession {
             child,
@@ -145,9 +149,7 @@ impl RustAnalyzerSession {
 
         session.lsp_server_info = lsp_server_info_from_initialize_result(&init_result);
 
-        session
-            .send_notification("initialized", json!({}))
-            .await?;
+        session.send_notification("initialized", json!({})).await?;
 
         tracing::info!(
             pid = ?session.child_pid,
@@ -224,6 +226,15 @@ impl RustAnalyzerSession {
         Ok(())
     }
 
+    /// Sends LSP `workspace/symbol` with the given query and returns the JSON-RPC `result` (often an array or `null`).
+    pub async fn workspace_symbol(
+        &mut self,
+        query: impl Into<String>,
+    ) -> Result<Value, RustAnalyzerError> {
+        self.request("workspace/symbol", json!({ "query": query.into() }))
+            .await
+    }
+
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, RustAnalyzerError> {
         let id = self
             .next_id
@@ -243,9 +254,7 @@ impl RustAnalyzerSession {
 
         write_lsp_message(&mut self.stdin, &msg).await?;
 
-        let response = rx
-            .await
-            .map_err(|_| RustAnalyzerError::ResponseDropped)?;
+        let response = rx.await.map_err(|_| RustAnalyzerError::ResponseDropped)?;
 
         if let Some(err) = response.get("error") {
             let msg = err
@@ -255,13 +264,14 @@ impl RustAnalyzerSession {
             return Err(RustAnalyzerError::Rpc(msg.to_string()));
         }
 
-        Ok(response
-            .get("result")
-            .cloned()
-            .unwrap_or(Value::Null))
+        Ok(response.get("result").cloned().unwrap_or(Value::Null))
     }
 
-    async fn send_notification(&mut self, method: &str, params: Value) -> Result<(), RustAnalyzerError> {
+    async fn send_notification(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<(), RustAnalyzerError> {
         let msg = json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -336,9 +346,8 @@ async fn read_lsp_message<R: AsyncBufReadExt + Unpin>(
             content_length = Some(len);
         }
     }
-    let len = content_length.ok_or_else(|| {
-        RustAnalyzerError::Framing("missing Content-Length header".into())
-    })?;
+    let len = content_length
+        .ok_or_else(|| RustAnalyzerError::Framing("missing Content-Length header".into()))?;
     let mut body = vec![0u8; len];
     reader
         .read_exact(&mut body)
@@ -373,9 +382,7 @@ async fn stdout_reader_loop(
     loop {
         let body = match read_lsp_message(&mut reader).await {
             Ok(b) => b,
-            Err(RustAnalyzerError::Io(e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
+            Err(RustAnalyzerError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 return Ok(());
             }
             Err(e) => return Err(e),

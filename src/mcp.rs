@@ -1,6 +1,7 @@
 //! The `racli mcp` server (MCP via `rmcp` on a Unix socket).
 
-use crate::transport::socket_server::{ListenError, Listener};
+use crate::transport::socket_server::ListenError;
+use crate::transport::socket_server::Listener;
 use crate::transport::socketwrapper::SocketAddr;
 
 /// Errors from the MCP listen path or per-connection `rmcp` initialization.

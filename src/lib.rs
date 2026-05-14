@@ -1,6 +1,7 @@
 //! racli binary library: async CLI entry, gRPC/MCP servers, and helpers used by integration tests.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Parser;
@@ -10,6 +11,8 @@ use clap::Subcommand;
 pub mod client;
 /// Unix-socket gRPC server for `racli server`.
 pub mod grpc_server;
+/// Maps `lsp_types` values into racli protobuf shapes.
+pub mod lsp_map;
 /// MCP server over a Unix stream (`rmcp`).
 pub mod mcp;
 /// Protobuf and tonic-generated types for the Racli gRPC API.
@@ -18,12 +21,16 @@ pub mod proto;
 pub mod rust_analyzer;
 /// Shared server logic and future service wiring.
 pub mod server;
+/// `racli search` CLI and response formatting.
+pub mod search;
 /// Socket abstractions and the generic accept loop used by MCP.
 pub mod transport;
 
-pub use grpc_server::{
-    GrpcServerError, run_grpc_unix_socket_interactive, run_grpc_unix_socket_until_shutdown,
-};
+pub use grpc_server::GrpcServerError;
+pub use grpc_server::run_grpc_unix_socket_interactive;
+pub use grpc_server::run_grpc_unix_socket_until_shutdown;
+pub use search::SearchArgs;
+pub use search::SearchOutputFormat;
 
 /// Crate / binary version string embedded at compile time from `CARGO_PKG_VERSION`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -62,6 +69,8 @@ enum Command {
     Mcp(ServerArgs),
     /// Print versions (client-side and, via gRPC, server-side).
     Version,
+    /// Search workspace symbols via rust-analyzer (LSP `workspace/symbol`).
+    Search(search::SearchArgs),
 }
 
 /// Arguments shared by `racli server` and `racli mcp` (reserved for future listen options).
@@ -129,6 +138,7 @@ pub async fn run() -> Result<(), RunError> {
                 println!("client: {VERSION}");
             }
         },
+        Command::Search(args) => search::run_cli_search(args).await,
     }
 
     Ok(())

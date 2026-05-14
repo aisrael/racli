@@ -25,6 +25,7 @@ tokio-stream = { version = "0.1", features = ["net"] }
 tonic = "0.14"
 tonic-prost = "0.14"
 url = "2"
+lsp-types = "0.97.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -21,6 +21,10 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 
 These subcommands expect a running `racli server` at the default Unix socket path unless noted otherwise.
 
+### `racli search <query>`
+
+Runs LSP [`workspace/symbol`](https://rust-analyzer.github.io/book/features.html#workspace-symbol) through the server: the client calls gRPC `Search`, the server forwards the query to rust-analyzer, and the reply is a structured [`WorkspaceSymbolResponse`](proto/racli.proto) mirroring `lsp_types::WorkspaceSymbolResponse` (either a **flat** list of symbol information or a **nested** list of workspace symbols). Symbols are scoped to the server's current working directory when `racli server` was started. Output is plain text (one line per symbol). The default Unix socket is `/tmp/racli.sock` (same as `racli version`).
+
 ### `racli version`
 
 Prints the client version from the binary (`CARGO_PKG_VERSION`). If the server answers at the default socket, prints the server version from gRPC `GetVersion`. If the server is missing, errors, or does not respond within 10 seconds, a message is written to stderr and only the client line is printed to stdout.

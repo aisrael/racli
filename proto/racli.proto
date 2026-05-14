@@ -5,6 +5,8 @@ package racli;
 service Racli {
   // Returns the running server's version string (crate / binary version).
   rpc GetVersion (GetVersionRequest) returns (GetVersionResponse);
+  // Runs LSP `workspace/symbol` via rust-analyzer and returns a structured response.
+  rpc Search (SearchRequest) returns (SearchResponse);
 }
 
 // Empty request for GetVersion (no parameters).
@@ -22,4 +24,60 @@ message GetVersionResponse {
   string version = 1;
   // Name and version reported by rust-analyzer in its `initialize` response (may be empty if missing).
   LspServerInfo lsp_server_info = 2;
+}
+
+// An LSP Range
+message LspRange {
+  LspPosition start = 1;
+  LspPosition end = 2;
+}
+
+// An LSP Position
+message LspPosition {
+  uint32 line = 1;
+  uint32 character = 2;
+}
+
+// Parameters for `Racli.Search`.
+message SearchRequest {
+  string query = 1;
+}
+
+// Result of `Racli.Search` wrapping an LSP-shaped workspace symbol payload.
+message SearchResponse {
+  WorkspaceSymbolResponse workspace_symbol_response = 1;
+}
+
+// Mirrors `lsp_types::WorkspaceSymbolResponse` (flat symbol list vs nested workspace symbols).
+message WorkspaceSymbolResponse {
+  oneof payload {
+    SymbolInformationList flat = 1;
+    WorkspaceSymbolList nested = 2;
+  }
+}
+
+// `WorkspaceSymbolResponse::Flat`: `Vec<SymbolInformation>`.
+message SymbolInformationList {
+  repeated LspSymbolInformation items = 1;
+}
+
+// Subset of LSP `SymbolInformation` used on the wire.
+message LspSymbolInformation {
+  string name = 1;
+  string kind = 2;
+  string uri = 3;
+  LspRange range = 4;
+}
+
+// `WorkspaceSymbolResponse::Nested`: `Vec<WorkspaceSymbol>`.
+message WorkspaceSymbolList {
+  repeated LspWorkspaceSymbol items = 1;
+}
+
+// Subset of LSP `WorkspaceSymbol` (location may omit range when only a URI is returned).
+message LspWorkspaceSymbol {
+  string name = 1;
+  string kind = 2;
+  string uri = 3;
+  optional LspRange range = 4;
 }
