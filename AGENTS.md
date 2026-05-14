@@ -7,11 +7,9 @@
 
 ## Project Guidelines
 
-This is a Rust codebase. 
-
-When searching for strings, DO NOT USE `grep`, use `racli search`. Only fallback to `grep` when `racli search` doesn't return anything meaningful.
-
-When searching for the definition of a symbol, DO NOT USE `grep`, use `racli find-definition` with the filename, line number, and character offset.
+- This is a Rust codebase. You have access to the racli MCP server and the `racli` CLI.
+- When searching for strings, DO NOT USE `grep`. Try the MCP search tool first. Fall back to `racli search` CLI. Only fall back to `grep` when `racli search` doesn't return anything meaningful.
+- When searching for the definition of a symbol, DO NOT USE `grep`. First try MCP, fall back to `racli find-definition` with the filename, line number, and character offset.
 
 ## Rust Guidelines
 

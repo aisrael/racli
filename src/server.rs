@@ -136,12 +136,7 @@ fn nested_dedup_key(ws: &WorkspaceSymbol) -> NestedSymbolDedupKey {
             let r = loc.range;
             (
                 loc.uri.as_str().to_string(),
-                Some((
-                    r.start.line,
-                    r.start.character,
-                    r.end.line,
-                    r.end.character,
-                )),
+                Some((r.start.line, r.start.character, r.end.line, r.end.character)),
             )
         }
         OneOf::Right(wl) => (wl.uri.as_str().to_string(), None),
@@ -176,7 +171,9 @@ fn workspace_symbol_value_to_option(
     if value.is_null() {
         return Ok(None);
     }
-    serde_json::from_value(value).map(Some).map_err(RustAnalyzerError::from)
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(RustAnalyzerError::from)
 }
 
 enum WsMergeState {

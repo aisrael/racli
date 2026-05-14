@@ -23,9 +23,7 @@ fn payload_has_symbol_named(payload: &Payload, needle: &str) -> bool {
 
 /// True if every listed name appears on some symbol in `payload`.
 fn payload_has_all_symbol_names(payload: &Payload, names: &[&str]) -> bool {
-    names
-        .iter()
-        .all(|n| payload_has_symbol_named(payload, n))
+    names.iter().all(|n| payload_has_symbol_named(payload, n))
 }
 
 async fn wait_until_socket_path_exists(sock: &Path) {
@@ -41,7 +39,11 @@ async fn wait_until_socket_path_exists(sock: &Path) {
 }
 
 /// Polls `workspace/symbol` until every `name` appears in one merged result for `query`.
-async fn search_until_all_symbols_named(sock: &Path, query: &str, names: &[&str]) -> SearchResponse {
+async fn search_until_all_symbols_named(
+    sock: &Path,
+    query: &str,
+    names: &[&str],
+) -> SearchResponse {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         let resp = search(sock, query)
