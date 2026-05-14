@@ -44,6 +44,9 @@ pub enum RustAnalyzerError {
     /// The workspace directory could not be turned into a `file://` URI.
     #[error("invalid workspace directory for file URL")]
     InvalidWorkspaceUrl,
+    /// A source file path could not be turned into a `file://` document URI.
+    #[error("invalid source file path for file URL")]
+    InvalidDocumentUrl,
     /// Failed to start the `rust-analyzer` process.
     #[error("failed to spawn rust-analyzer")]
     Spawn(#[source] std::io::Error),
@@ -235,6 +238,23 @@ impl RustAnalyzerSession {
             .await
     }
 
+    /// Sends LSP `textDocument/definition` for `document_uri` at `line` / `character` (0-based LSP position) and returns the JSON-RPC `result` (`null` or a location payload).
+    pub async fn text_document_definition(
+        &mut self,
+        document_uri: impl Into<String>,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, RustAnalyzerError> {
+        self.request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": document_uri.into() },
+                "position": { "line": line, "character": character }
+            }),
+        )
+        .await
+    }
+
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, RustAnalyzerError> {
         let id = self
             .next_id
@@ -300,6 +320,13 @@ fn workspace_uri(root: &Path) -> Result<String, RustAnalyzerError> {
     Url::from_directory_path(root)
         .map(|u| u.to_string())
         .map_err(|()| RustAnalyzerError::InvalidWorkspaceUrl)
+}
+
+/// Builds an LSP `file://` document URI for an absolute regular file path.
+pub fn document_uri_from_path(path: &Path) -> Result<String, RustAnalyzerError> {
+    Url::from_file_path(path)
+        .map(|u| u.to_string())
+        .map_err(|()| RustAnalyzerError::InvalidDocumentUrl)
 }
 
 /// Maps LSP `InitializeResult.serverInfo` JSON into [`LspServerInfo`].

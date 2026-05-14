@@ -203,7 +203,7 @@ fn main() {
     let socket = server.socket().to_path_buf();
 
     let mut criterion = Criterion::default()
-        .measurement_time(Duration::from_secs(30))
+        .measurement_time(Duration::from_secs(60))
         .configure_from_args();
     bench_grep_vs_racli(&mut criterion, &racli, &socket, &workspace);
     criterion.final_summary();

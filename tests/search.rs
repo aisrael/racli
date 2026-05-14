@@ -4,7 +4,7 @@ use std::time::Duration;
 use racli::client::search;
 use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
 use racli::proto::racli::SearchResponse;
-use racli::proto::racli::workspace_symbol_response::Payload;
+use racli::proto::racli::lsp_workspace_symbol_response::Payload;
 use tempfile::tempdir;
 
 fn payload_non_empty(payload: &Payload) -> bool {

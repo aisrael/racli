@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::client;
 use crate::effective_unix_socket_path;
-use crate::proto::racli::workspace_symbol_response::Payload;
+use crate::proto::racli::lsp_workspace_symbol_response::Payload;
 
 /// How `racli search` prints results (default is JSON).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -298,18 +298,18 @@ mod search_output_tests {
     use crate::proto::racli::LspPosition;
     use crate::proto::racli::LspRange;
     use crate::proto::racli::LspSymbolInformation;
+    use crate::proto::racli::LspSymbolInformationList;
     use crate::proto::racli::LspWorkspaceSymbol;
+    use crate::proto::racli::LspWorkspaceSymbolList;
+    use crate::proto::racli::LspWorkspaceSymbolResponse;
     use crate::proto::racli::SearchResponse;
-    use crate::proto::racli::SymbolInformationList;
-    use crate::proto::racli::WorkspaceSymbolList;
-    use crate::proto::racli::WorkspaceSymbolResponse;
-    use crate::proto::racli::workspace_symbol_response::Payload;
+    use crate::proto::racli::lsp_workspace_symbol_response::Payload;
 
     #[test]
     fn json_rows_merge_flat_and_include_range() {
         let resp = SearchResponse {
-            workspace_symbol_response: Some(WorkspaceSymbolResponse {
-                payload: Some(Payload::Flat(SymbolInformationList {
+            workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
+                payload: Some(Payload::Flat(LspSymbolInformationList {
                     items: vec![LspSymbolInformation {
                         name: "foo".into(),
                         kind: "FUNCTION".into(),
@@ -340,8 +340,8 @@ mod search_output_tests {
     #[test]
     fn json_rows_omit_range_when_absent() {
         let resp = SearchResponse {
-            workspace_symbol_response: Some(WorkspaceSymbolResponse {
-                payload: Some(Payload::Nested(WorkspaceSymbolList {
+            workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
+                payload: Some(Payload::Nested(LspWorkspaceSymbolList {
                     items: vec![LspWorkspaceSymbol {
                         name: "bar".into(),
                         kind: "MODULE".into(),
@@ -360,8 +360,8 @@ mod search_output_tests {
     #[test]
     fn csv_writes_header_and_rows() {
         let resp = SearchResponse {
-            workspace_symbol_response: Some(WorkspaceSymbolResponse {
-                payload: Some(Payload::Flat(SymbolInformationList {
+            workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
+                payload: Some(Payload::Flat(LspSymbolInformationList {
                     items: vec![LspSymbolInformation {
                         name: "x".into(),
                         kind: "CLASS".into(),
@@ -382,8 +382,8 @@ mod search_output_tests {
     #[test]
     fn csv_escapes_commas_in_fields() {
         let resp = SearchResponse {
-            workspace_symbol_response: Some(WorkspaceSymbolResponse {
-                payload: Some(Payload::Flat(SymbolInformationList {
+            workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
+                payload: Some(Payload::Flat(LspSymbolInformationList {
                     items: vec![LspSymbolInformation {
                         name: "a,b".into(),
                         kind: "FN".into(),

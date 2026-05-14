@@ -1,7 +1,7 @@
 [package]
 name = "racli"
 description = "a rust-analyzer client"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 build = "build.rs"
 repository = "https://github.com/aisrael/racli"

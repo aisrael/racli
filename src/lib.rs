@@ -8,6 +8,8 @@ use clap::Subcommand;
 
 /// gRPC client helpers for talking to `racli server` over a Unix socket.
 pub mod client;
+/// `racli find-definition`: CLI arguments and formatting for LSP go-to-definition results.
+pub mod find_definition;
 /// Unix-socket gRPC server for `racli server`.
 pub mod grpc_server;
 /// Maps `lsp_types` values into racli protobuf shapes.
@@ -78,6 +80,8 @@ enum Command {
     Version,
     /// Search workspace symbols via rust-analyzer (LSP `workspace/symbol`).
     Search(search::SearchArgs),
+    /// Resolve the definition at a file position via rust-analyzer (LSP `textDocument/definition`).
+    FindDefinition(find_definition::FindDefinitionArgs),
 }
 
 /// Arguments shared by `racli server` and `racli mcp` (reserved for future listen options).
@@ -145,6 +149,7 @@ pub async fn run() -> Result<(), RunError> {
             }
         }
         Command::Search(args) => search::run_cli_search(args).await,
+        Command::FindDefinition(args) => find_definition::run_cli_find_definition(args).await,
     }
 
     Ok(())

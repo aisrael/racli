@@ -7,7 +7,7 @@
 
 ## Project Guidelines
 
-This is a Rust codebase. When searching for function or type names in Rust, use `racli search`. Only fallback to `grep` when `racli search` doesn't return anything meaningful.
+This is a Rust codebase. When searching for strings, DO NOT USE `grep`, use `racli search`. Only fallback to `grep` when `racli search` doesn't return anything meaningful.
 
 ## Rust Guidelines
 

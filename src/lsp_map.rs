@@ -1,6 +1,8 @@
 //! Maps `lsp_types` workspace symbol responses into racli protobuf messages.
 
+use lsp_types::GotoDefinitionResponse;
 use lsp_types::Location;
+use lsp_types::LocationLink;
 use lsp_types::OneOf;
 use lsp_types::Range;
 use lsp_types::SymbolInformation;
@@ -10,33 +12,62 @@ use lsp_types::WorkspaceLocation;
 use lsp_types::WorkspaceSymbol;
 use lsp_types::WorkspaceSymbolResponse;
 
+use crate::proto::racli::lsp_workspace_symbol_response;
+
+use crate::proto::racli::LspLocation;
 use crate::proto::racli::LspPosition;
 use crate::proto::racli::LspRange;
 use crate::proto::racli::LspSymbolInformation;
+use crate::proto::racli::LspSymbolInformationList;
 use crate::proto::racli::LspWorkspaceSymbol;
-use crate::proto::racli::SymbolInformationList;
-use crate::proto::racli::WorkspaceSymbolList;
-use crate::proto::racli::WorkspaceSymbolResponse as ProtoWorkspaceSymbolResponse;
-use crate::proto::racli::workspace_symbol_response;
+use crate::proto::racli::LspWorkspaceSymbolList;
+use crate::proto::racli::LspWorkspaceSymbolResponse;
 
-/// Builds a protobuf [`ProtoWorkspaceSymbolResponse`] from a deserialized LSP workspace symbol result.
+/// Builds a protobuf [`LspWorkspaceSymbolResponse`] from a deserialized LSP workspace symbol result.
 pub fn workspace_symbol_response_to_proto(
     resp: WorkspaceSymbolResponse,
-) -> ProtoWorkspaceSymbolResponse {
+) -> LspWorkspaceSymbolResponse {
     let payload = match resp {
         WorkspaceSymbolResponse::Flat(items) => {
-            workspace_symbol_response::Payload::Flat(SymbolInformationList {
+            lsp_workspace_symbol_response::Payload::Flat(LspSymbolInformationList {
                 items: items.into_iter().map(symbol_information_to_proto).collect(),
             })
         }
         WorkspaceSymbolResponse::Nested(items) => {
-            workspace_symbol_response::Payload::Nested(WorkspaceSymbolList {
+            lsp_workspace_symbol_response::Payload::Nested(LspWorkspaceSymbolList {
                 items: items.into_iter().map(workspace_symbol_to_proto).collect(),
             })
         }
     };
-    ProtoWorkspaceSymbolResponse {
+    LspWorkspaceSymbolResponse {
         payload: Some(payload),
+    }
+}
+
+/// Flattens LSP `textDocument/definition` result shapes into protobuf [`LspLocation`] rows.
+pub fn goto_definition_response_to_locations(resp: GotoDefinitionResponse) -> Vec<LspLocation> {
+    match resp {
+        GotoDefinitionResponse::Scalar(loc) => vec![location_to_proto(loc)],
+        GotoDefinitionResponse::Array(locations) => {
+            locations.into_iter().map(location_to_proto).collect()
+        }
+        GotoDefinitionResponse::Link(links) => {
+            links.into_iter().map(location_link_to_proto).collect()
+        }
+    }
+}
+
+fn location_to_proto(loc: Location) -> LspLocation {
+    LspLocation {
+        uri: uri_to_string(&loc.uri),
+        range: Some(range_to_proto(loc.range)),
+    }
+}
+
+fn location_link_to_proto(link: LocationLink) -> LspLocation {
+    LspLocation {
+        uri: uri_to_string(&link.target_uri),
+        range: Some(range_to_proto(link.target_selection_range)),
     }
 }
 

@@ -23,4 +23,16 @@ impl Core {
     ) -> Result<Value, RustAnalyzerError> {
         ra.workspace_symbol(query).await
     }
+
+    /// Runs LSP `textDocument/definition` on the live rust-analyzer session and returns the raw JSON `result`.
+    pub async fn find_definition(
+        &self,
+        ra: &mut RustAnalyzerSession,
+        document_uri: String,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, RustAnalyzerError> {
+        ra.text_document_definition(document_uri, line, character)
+            .await
+    }
 }

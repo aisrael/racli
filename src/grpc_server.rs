@@ -10,12 +10,14 @@ use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
 
+use crate::proto::racli::FindDefinitionRequest;
+use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::LspServerInfo;
+use crate::proto::racli::LspWorkspaceSymbolResponse;
 use crate::proto::racli::SearchRequest;
 use crate::proto::racli::SearchResponse;
-use crate::proto::racli::WorkspaceSymbolResponse as ProtoWorkspaceSymbolResponse;
 use crate::proto::racli::racli_server::Racli;
 use crate::proto::racli::racli_server::RacliServer;
 use crate::rust_analyzer::RustAnalyzerSession;
@@ -114,8 +116,8 @@ impl Racli for RacliGrpc {
             .map_err(|e| Status::internal(e.to_string()))?;
         drop(ra);
 
-        let ws: ProtoWorkspaceSymbolResponse = if value.is_null() {
-            ProtoWorkspaceSymbolResponse { payload: None }
+        let ws: LspWorkspaceSymbolResponse = if value.is_null() {
+            LspWorkspaceSymbolResponse { payload: None }
         } else {
             let lsp_resp: lsp_types::WorkspaceSymbolResponse =
                 serde_json::from_value(value).map_err(|e| Status::internal(e.to_string()))?;
@@ -125,6 +127,48 @@ impl Racli for RacliGrpc {
         Ok(Response::new(SearchResponse {
             workspace_symbol_response: Some(ws),
         }))
+    }
+
+    /// Runs LSP `textDocument/definition` and returns flattened definition locations.
+    async fn find_definition(
+        &self,
+        request: Request<FindDefinitionRequest>,
+    ) -> Result<Response<FindDefinitionResponse>, Status> {
+        let inner = request.into_inner();
+        let path = PathBuf::from(inner.file_path.trim());
+        if path.as_os_str().is_empty() {
+            return Err(Status::invalid_argument("file_path must not be empty"));
+        }
+        let abs = std::fs::canonicalize(&path)
+            .map_err(|e| Status::invalid_argument(format!("cannot resolve file path: {e}")))?;
+        let uri = crate::rust_analyzer::document_uri_from_path(&abs)
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
+        tracing::debug!(
+            rpc = "Racli.FindDefinition",
+            %uri,
+            line = inner.line,
+            character = inner.character,
+            "gRPC endpoint invoked"
+        );
+
+        let mut ra = self.rust_analyzer.lock().await;
+        let value = self
+            .core
+            .find_definition(&mut ra, uri, inner.line, inner.character)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        drop(ra);
+
+        let locations = if value.is_null() {
+            vec![]
+        } else {
+            let resp: lsp_types::GotoDefinitionResponse =
+                serde_json::from_value(value).map_err(|e| Status::internal(e.to_string()))?;
+            crate::lsp_map::goto_definition_response_to_locations(resp)
+        };
+
+        Ok(Response::new(FindDefinitionResponse { locations }))
     }
 }
 

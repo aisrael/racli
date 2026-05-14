@@ -23,7 +23,11 @@ These subcommands expect a running `racli server` at the default Unix socket pat
 
 ### `racli search <query>`
 
-Runs LSP [`workspace/symbol`](https://rust-analyzer.github.io/book/features.html#workspace-symbol) through the server: the client calls gRPC `Search`, the server forwards the query to rust-analyzer, and the reply is a structured [`WorkspaceSymbolResponse`](proto/racli.proto) mirroring `lsp_types::WorkspaceSymbolResponse` (either a **flat** list of symbol information or a **nested** list of workspace symbols). Symbols are scoped to the server's current working directory when `racli server` was started. Output is plain text (one line per symbol). The default Unix socket is `/tmp/racli.sock` (same as `racli version`).
+Runs LSP [`workspace/symbol`](https://rust-analyzer.github.io/book/features.html#workspace-symbol) through the server: the client calls gRPC `Search`, the server forwards the query to rust-analyzer, and the reply is a structured [`WorkspaceSymbolResponse`](proto/racli.proto) mirroring `lsp_types::WorkspaceSymbolResponse` (either a **flat** list of symbol information or a **nested** list of workspace symbols). Symbols are scoped to the server's current working directory when `racli server` was started. By default, output is **JSON** (one array of symbol objects); use `--text` or `--csv` (or `--output-format`) for plain text or CSV. The default Unix socket is `/tmp/racli.sock` (same as `racli version`).
+
+### `racli find-definition <PATH> --line <N> --character <N>`
+
+Runs LSP [`textDocument/definition`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_definition): the client calls gRPC `FindDefinition` with an absolute filesystem path (after canonicalizing `PATH` on the client) plus a **0-based** line and **0-based** UTF-16 character offset on that line, matching LSP `Position`. The server resolves the path again, builds a `file://` URI, and returns a list of definition sites (scalar, array, and link-shaped LSP results are flattened to `uri` + `range`). Default output is **JSON**; pass `--text` for one human-readable line per location. Use the same workspace and socket rules as `racli search`; rust-analyzer must have indexed the crate (if the server just started, wait until analysis has caught up—for example until `racli search` returns symbols—before relying on definitions).
 
 ### `racli version`
 
