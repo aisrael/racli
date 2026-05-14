@@ -1,24 +1,36 @@
 ---
 name: racli
 description: >-
-  Resolves Rust workspace symbols and go-to-definition via the racli CLI
-  against a running racli server. Use when searching for Rust symbols, types,
-  functions, jumping to definitions, or workspace symbols in this repo or any
-  workspace where racli is the LSP bridge.
+  Search Rust workspace symbols and resolve go-to-definition via the racli CLI
+  against a running racli server (LSP workspace/symbol and textDocument/definition).
+  Use for symbol lookup, definition jumps, and structured search in any workspace
+  where racli bridges rust-analyzer. Prefer racli over grep for these tasks; fall
+  back to grep only when racli returns nothing useful.
 ---
 
 # racli
 
-You have access to the `racli` skill and command. Run it outside the sandbox and in the project workspace root anytime.
+Run `racli` from the **same directory the server used as its workspace root** (the cwd where `racli server` was started) so LSP paths and symbols match. The client talks to the server on a Unix domain socket: default `/tmp/racli.sock`, or override with the `RACLI_UNIX_SOCKET` environment variable if the server was started with a different path.
 
-## search
+Assume the server is already running. Run client commands **outside the sandbox** when the environment blocks access to the Unix socket.
 
-When searching for symbols in Rust, don't use `grep`. Use `racli search`, but outside the sandbox (assume the server is running).
+## search (`workspace/symbol`)
 
-Run the command from the same workspace root as `racli server` so results match the server’s LSP workspace. The client talks to the server on the default Unix socket (`/tmp/racli.sock`) unless configured otherwise.
+For **Rust symbol / identifier search**, do not use `grep`. Use `racli search <QUERY>`.
 
-## find-definition
+- **Query syntax:** A single unescaped `|` separates **alternative substring patterns** (each is a plain substring for rust-analyzer, not full regex). Example: `racli search 'Foo|Bar'`. A literal pipe in a pattern is written as `\|` (e.g. `racli search 'a\|b|c'` searches for `a|b` and for `c`; results are merged and deduped).
+- **Output:** Default is **JSON** (array of objects with fields such as `name`, `kind`, `uri`, optional `range`). Use `--text` for one human-readable line per symbol, `--csv` or `--output-format csv` for CSV with headers, `--json` or `--output-format json` to be explicit about JSON.
 
-For go-to-definition at a concrete file and LSP position (0-based line and UTF-16 `character`), use `racli find-definition` instead of guessing with `grep`.
+## find-definition (`textDocument/definition`)
 
-Use the same workspace root and Unix socket conventions as `racli search`. Pass a source path plus `--line` and `--character` matching the editor or `rust-analyzer` diagnostics; default output is JSON (add `--text` for one line per location).
+For **go-to-definition at a specific source location**, do not use `grep`. Use `racli find-definition` with a file path and LSP position.
+
+- **Invocation:** `racli find-definition <PATH> --line <N> --character <N>`  
+  `PATH` may be absolute or relative to the current directory; the client canonicalizes it before calling the server. `--line` is **0-based**; `--character` is **0-based UTF-16** offset on that line (same as LSP `Position` and rust-analyzer diagnostics).
+- **Output:** Default is **JSON** (definition locations). Use `--text` for one human-readable line per location.
+
+If the server just started, wait until analysis has caught up (for example until `racli search` returns sensible symbols) before relying on definitions.
+
+## grep fallback
+
+When searching for **plain text** or non-symbol strings, prefer `racli search` first for Rust-aware results. Use `grep` (or similar) **only** when `racli search` does not return anything meaningful for the task.
