@@ -1,6 +1,26 @@
 racli - a CLI tool for [rust-analyzer](https://github.com/rust-lang/rust-analyzer)
 ====
 
+## Installation
+
+```sh
+cargo install racli
+```
+
+## Usage
+
+In a Rust project folder, first run the server:
+
+```sh
+racli server
+```
+
+Then, to search for e.g. `worker`:
+
+```sh
+racli search worker
+```
+
 ## Architecture
 
 In the usual setup there are three pieces:
