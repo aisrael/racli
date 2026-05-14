@@ -1,4 +1,4 @@
-//! racli binary library: async CLI entry, gRPC/MCP servers, and helpers used by integration tests.
+#![doc = include_str!("../README.md")]
 
 use std::path::PathBuf;
 use std::time::Duration;
