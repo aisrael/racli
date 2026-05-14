@@ -82,7 +82,8 @@ where
         addr: tokio::net::unix::SocketAddr,
         handler: Arc<H>,
     ) -> Result<(), ListenError> {
-        use tokio::signal::unix::{SignalKind, signal};
+        use tokio::signal::unix::SignalKind;
+        use tokio::signal::unix::signal;
 
         let path = addr.as_pathname().ok_or(ListenError::MissingPathname)?;
         let path_buf = path.to_path_buf();

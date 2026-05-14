@@ -1,6 +1,6 @@
 //! racli binary library: async CLI entry, gRPC/MCP servers, and helpers used by integration tests.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Parser;
@@ -8,26 +8,44 @@ use clap::Subcommand;
 
 /// gRPC client helpers for talking to `racli server` over a Unix socket.
 pub mod client;
+/// `racli find-definition`: CLI arguments and formatting for LSP go-to-definition results.
+pub mod find_definition;
 /// Unix-socket gRPC server for `racli server`.
 pub mod grpc_server;
+/// Maps `lsp_types` values into racli protobuf shapes.
+pub mod lsp_map;
 /// MCP server over a Unix stream (`rmcp`).
 pub mod mcp;
 /// Protobuf and tonic-generated types for the Racli gRPC API.
 pub mod proto;
+/// `rust-analyzer` LSP child process used by `racli server`.
+pub mod rust_analyzer;
+/// `racli search` CLI and response formatting.
+pub mod search;
 /// Shared server logic and future service wiring.
 pub mod server;
 /// Socket abstractions and the generic accept loop used by MCP.
 pub mod transport;
 
-pub use grpc_server::{
-    GrpcServerError, run_grpc_unix_socket_interactive, run_grpc_unix_socket_until_shutdown,
-};
+pub use grpc_server::GrpcServerError;
+pub use grpc_server::run_grpc_unix_socket_interactive;
+pub use grpc_server::run_grpc_unix_socket_until_shutdown;
+pub use search::SearchArgs;
+pub use search::SearchOutputFormat;
 
 /// Crate / binary version string embedded at compile time from `CARGO_PKG_VERSION`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Default filesystem path for the gRPC and MCP Unix sockets when subcommands omit an override.
+/// Default filesystem path for the gRPC and MCP Unix sockets when `RACLI_UNIX_SOCKET` is unset.
 pub const DEFAULT_UNIX_SOCKET_PATH: &str = "/tmp/racli.sock";
+
+/// Returns the Unix socket path from `RACLI_UNIX_SOCKET`, or [`DEFAULT_UNIX_SOCKET_PATH`] if unset or empty.
+pub fn effective_unix_socket_path() -> PathBuf {
+    std::env::var_os("RACLI_UNIX_SOCKET")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_UNIX_SOCKET_PATH))
+}
 
 /// Top-level error returned by [`run`] for any server, listener, or MCP failure.
 #[derive(Debug, thiserror::Error)]
@@ -60,6 +78,10 @@ enum Command {
     Mcp(ServerArgs),
     /// Print versions (client-side and, via gRPC, server-side).
     Version,
+    /// Search workspace symbols via rust-analyzer (LSP `workspace/symbol`).
+    Search(search::SearchArgs),
+    /// Resolve the definition at a file position via rust-analyzer (LSP `textDocument/definition`).
+    FindDefinition(find_definition::FindDefinitionArgs),
 }
 
 /// Arguments shared by `racli server` and `racli mcp` (reserved for future listen options).
@@ -93,33 +115,41 @@ pub async fn run() -> Result<(), RunError> {
 
     match args.command {
         Command::Server(_opts) => {
-            run_grpc_unix_socket_interactive(PathBuf::from(DEFAULT_UNIX_SOCKET_PATH)).await?;
+            run_grpc_unix_socket_interactive(effective_unix_socket_path()).await?;
         }
         Command::Mcp(_opts) => {
-            let socket_addr = unix_socket_addr_from_path(PathBuf::from(DEFAULT_UNIX_SOCKET_PATH))?;
+            let socket_addr = unix_socket_addr_from_path(effective_unix_socket_path())?;
             mcp::run(socket_addr).await?;
         }
-        Command::Version => match tokio::time::timeout(
-            Duration::from_secs(10),
-            client::get_server_version(Path::new(DEFAULT_UNIX_SOCKET_PATH)),
-        )
-        .await
-        {
-            Ok(Ok(server_v)) => {
-                println!("client: {VERSION}");
-                println!("server: {server_v}");
+        Command::Version => {
+            let sock = effective_unix_socket_path();
+            let sock_display = sock.display().to_string();
+            match tokio::time::timeout(Duration::from_secs(10), client::get_version(&sock)).await {
+                Ok(Ok(resp)) => {
+                    println!("client: {VERSION}");
+                    println!("server: {}", resp.version);
+                    let lsp = resp.lsp_server_info.as_ref();
+                    match lsp {
+                        Some(info) if !info.name.is_empty() || !info.version.is_empty() => {
+                            println!("{}: {}", info.name, info.version);
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Err(err)) => {
+                    eprintln!("racli server ({sock_display}): {err}");
+                    println!("client: {VERSION}");
+                }
+                Err(_elapsed) => {
+                    eprintln!(
+                        "racli server ({sock_display}): connection timed out after 10 seconds"
+                    );
+                    println!("client: {VERSION}");
+                }
             }
-            Ok(Err(err)) => {
-                eprintln!("racli server ({DEFAULT_UNIX_SOCKET_PATH}): {err}");
-                println!("client: {VERSION}");
-            }
-            Err(_elapsed) => {
-                eprintln!(
-                    "racli server ({DEFAULT_UNIX_SOCKET_PATH}): connection timed out after 10 seconds"
-                );
-                println!("client: {VERSION}");
-            }
-        },
+        }
+        Command::Search(args) => search::run_cli_search(args).await,
+        Command::FindDefinition(args) => find_definition::run_cli_find_definition(args).await,
     }
 
     Ok(())

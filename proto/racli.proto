@@ -5,13 +5,99 @@ package racli;
 service Racli {
   // Returns the running server's version string (crate / binary version).
   rpc GetVersion (GetVersionRequest) returns (GetVersionResponse);
+  // Runs LSP `workspace/symbol` via rust-analyzer and returns a structured response.
+  rpc Search (SearchRequest) returns (SearchResponse);
+  // Runs LSP `textDocument/definition` at a path and LSP position (0-based line/character).
+  rpc FindDefinition (FindDefinitionRequest) returns (FindDefinitionResponse);
 }
 
 // Empty request for GetVersion (no parameters).
 message GetVersionRequest {}
 
-// Response carrying the server version from Core::version().
+// LSP `InitializeResult.serverInfo` (language server name and version).
+message LspServerInfo {
+  string name = 1;
+  string version = 2;
+}
+
+// Response carrying the server version and the rust-analyzer LSP `serverInfo`.
 message GetVersionResponse {
   // Semantic version string (e.g. from Cargo.toml).
   string version = 1;
+  // Name and version reported by rust-analyzer in its `initialize` response (may be empty if missing).
+  LspServerInfo lsp_server_info = 2;
+}
+
+// An LSP Position
+message LspPosition {
+  uint32 line = 1;
+  uint32 character = 2;
+}
+
+// An LSP Range
+message LspRange {
+  LspPosition start = 1;
+  LspPosition end = 2;
+}
+
+// LSP `Location`-like entry (uri + range).
+message LspLocation {
+  string uri = 1;
+  LspRange range = 2;
+}
+
+// Subset of LSP `WorkspaceSymbol` (location may omit range when only a URI is returned).
+message LspWorkspaceSymbol {
+  string name = 1;
+  string kind = 2;
+  string uri = 3;
+  optional LspRange range = 4;
+}
+
+// Subset of LSP `SymbolInformation` used on the wire.
+message LspSymbolInformation {
+  string name = 1;
+  string kind = 2;
+  string uri = 3;
+  LspRange range = 4;
+}
+
+// `WorkspaceSymbolResponse::Flat`: `Vec<SymbolInformation>`.
+message LspSymbolInformationList {
+  repeated LspSymbolInformation items = 1;
+}
+
+// `WorkspaceSymbolResponse::Nested`: `Vec<WorkspaceSymbol>`.
+message LspWorkspaceSymbolList {
+  repeated LspWorkspaceSymbol items = 1;
+}
+
+// Mirrors `lsp_types::WorkspaceSymbolResponse` (flat symbol list vs nested workspace symbols).
+message LspWorkspaceSymbolResponse {
+  oneof payload {
+    LspSymbolInformationList flat = 1;
+    LspWorkspaceSymbolList nested = 2;
+  }
+}
+
+// Parameters for `Racli.Search`.
+message SearchRequest {
+  string query = 1;
+}
+
+// Result of `Racli.Search` wrapping an LSP-shaped workspace symbol payload.
+message SearchResponse {
+  LspWorkspaceSymbolResponse workspace_symbol_response = 1;
+}
+
+// Parameters for `Racli.FindDefinition` (absolute `file_path` resolved on the server).
+message FindDefinitionRequest {
+  string file_path = 1;
+  uint32 line = 2;
+  uint32 character = 3;
+}
+
+// Result of `Racli.FindDefinition`: zero or more definition sites (scalar/array/link flattened).
+message FindDefinitionResponse {
+  repeated LspLocation locations = 1;
 }

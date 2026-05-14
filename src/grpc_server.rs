@@ -1,16 +1,30 @@
 //! gRPC server (`tonic`) bound to a Unix domain socket for `racli server`.
 
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
 
+use tokio::sync::Mutex;
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
 
-use crate::proto::racli::racli_server::{Racli, RacliServer};
-use crate::proto::racli::{GetVersionRequest, GetVersionResponse};
+use crate::proto::racli::FindDefinitionRequest;
+use crate::proto::racli::FindDefinitionResponse;
+use crate::proto::racli::GetVersionRequest;
+use crate::proto::racli::GetVersionResponse;
+use crate::proto::racli::LspServerInfo;
+use crate::proto::racli::LspWorkspaceSymbolResponse;
+use crate::proto::racli::SearchRequest;
+use crate::proto::racli::SearchResponse;
+use crate::proto::racli::racli_server::Racli;
+use crate::proto::racli::racli_server::RacliServer;
+use crate::rust_analyzer::RustAnalyzerSession;
 use crate::server::Core;
-use tonic::{Request, Response, Status};
+use tonic::Request;
+use tonic::Response;
+use tonic::Status;
 
 /// Name of the env var that sets the max level for `racli::*` only (e.g. `trace`, `debug`, `off`).
 pub const RACLI_SERVER_LOG_LEVEL_ENV: &str = "RACLI_SERVER_LOG_LEVEL";
@@ -48,36 +62,122 @@ pub enum GrpcServerError {
         #[source]
         source: std::io::Error,
     },
+    /// Failed to read the process working directory for the LSP workspace root.
+    #[error("failed to read current working directory")]
+    CurrentDir {
+        #[source]
+        source: std::io::Error,
+    },
+    /// Failed to spawn or speak LSP with the `rust-analyzer` child process.
+    #[error(transparent)]
+    RustAnalyzer(#[from] crate::rust_analyzer::RustAnalyzerError),
     /// tonic failed while driving the HTTP/2 stack over the Unix listener.
     #[error("failed serving gRPC transport")]
     Serve(#[from] tonic::transport::Error),
 }
 
-/// tonic service implementation that forwards RPCs to [`crate::server::Core`].
-#[derive(Clone, Copy, Debug, Default)]
+/// tonic service implementation that forwards RPCs to [`crate::server::Core`] and LSP metadata from rust-analyzer.
+#[derive(Clone)]
 pub struct RacliGrpc {
     core: Core,
+    lsp_server_info: LspServerInfo,
+    rust_analyzer: Arc<Mutex<RustAnalyzerSession>>,
 }
 
 #[tonic::async_trait]
 impl Racli for RacliGrpc {
-    /// Returns [`Core::version`](crate::server::Core::version) as the protobuf `version` field.
+    /// Returns [`Core::version`](crate::server::Core::version) and rust-analyzer [`LspServerInfo`] from initialize.
     async fn get_version(
         &self,
         _request: Request<GetVersionRequest>,
     ) -> Result<Response<GetVersionResponse>, Status> {
         tracing::debug!(rpc = "Racli.GetVersion", "gRPC endpoint invoked");
         let version = self.core.version();
+        let lsp_server_info = self.lsp_server_info.clone();
         tracing::debug!(rpc = "Racli.GetVersion", %version, "returning GetVersion response");
-        Ok(Response::new(GetVersionResponse { version }))
+        Ok(Response::new(GetVersionResponse {
+            version,
+            lsp_server_info: Some(lsp_server_info),
+        }))
+    }
+
+    /// Runs LSP `workspace/symbol` and returns a protobuf mirror of [`lsp_types::WorkspaceSymbolResponse`].
+    async fn search(
+        &self,
+        request: Request<SearchRequest>,
+    ) -> Result<Response<SearchResponse>, Status> {
+        let query = request.into_inner().query;
+        tracing::debug!(rpc = "Racli.Search", %query, "gRPC endpoint invoked");
+        let mut ra = self.rust_analyzer.lock().await;
+        let value = self
+            .core
+            .search(&mut ra, query)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        drop(ra);
+
+        let ws: LspWorkspaceSymbolResponse = if value.is_null() {
+            LspWorkspaceSymbolResponse { payload: None }
+        } else {
+            let lsp_resp: lsp_types::WorkspaceSymbolResponse =
+                serde_json::from_value(value).map_err(|e| Status::internal(e.to_string()))?;
+            crate::lsp_map::workspace_symbol_response_to_proto(lsp_resp)
+        };
+
+        Ok(Response::new(SearchResponse {
+            workspace_symbol_response: Some(ws),
+        }))
+    }
+
+    /// Runs LSP `textDocument/definition` and returns flattened definition locations.
+    async fn find_definition(
+        &self,
+        request: Request<FindDefinitionRequest>,
+    ) -> Result<Response<FindDefinitionResponse>, Status> {
+        let inner = request.into_inner();
+        let path = PathBuf::from(inner.file_path.trim());
+        if path.as_os_str().is_empty() {
+            return Err(Status::invalid_argument("file_path must not be empty"));
+        }
+        let abs = std::fs::canonicalize(&path)
+            .map_err(|e| Status::invalid_argument(format!("cannot resolve file path: {e}")))?;
+        let uri = crate::rust_analyzer::document_uri_from_path(&abs)
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
+        tracing::debug!(
+            rpc = "Racli.FindDefinition",
+            %uri,
+            line = inner.line,
+            character = inner.character,
+            "gRPC endpoint invoked"
+        );
+
+        let mut ra = self.rust_analyzer.lock().await;
+        let value = self
+            .core
+            .find_definition(&mut ra, uri, inner.line, inner.character)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        drop(ra);
+
+        let locations = if value.is_null() {
+            vec![]
+        } else {
+            let resp: lsp_types::GotoDefinitionResponse =
+                serde_json::from_value(value).map_err(|e| Status::internal(e.to_string()))?;
+            crate::lsp_map::goto_definition_response_to_locations(resp)
+        };
+
+        Ok(Response::new(FindDefinitionResponse { locations }))
     }
 }
 
-/// Waits for SIGINT or SIGTERM (falls back to Ctrl+C only if SIGTERM cannot be registered).
+/// Waits for SIGINT or SIGTERM on the same [`signal`](tokio::signal::unix::signal) API (reliable with tonic shutdown).
 async fn unix_shutdown_signals() {
-    use tokio::signal::unix::{SignalKind, signal};
+    use tokio::signal::unix::SignalKind;
+    use tokio::signal::unix::signal;
 
-    let mut sigterm = match signal(SignalKind::terminate()) {
+    let mut sigint = match signal(SignalKind::interrupt()) {
         Ok(s) => s,
         Err(_) => {
             let _ = tokio::signal::ctrl_c().await;
@@ -85,8 +185,16 @@ async fn unix_shutdown_signals() {
         }
     };
 
+    let mut sigterm = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(_) => {
+            let _ = sigint.recv().await;
+            return;
+        }
+    };
+
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
+        _ = sigint.recv() => {}
         _ = sigterm.recv() => {}
     }
 }
@@ -113,6 +221,17 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
     let path_buf = socket_path.to_path_buf();
     let _ = std::fs::remove_file(socket_path);
 
+    let cwd = std::env::current_dir().map_err(|source| GrpcServerError::CurrentDir { source })?;
+    let rust_analyzer = match RustAnalyzerSession::spawn(&cwd).await {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = std::fs::remove_file(&path_buf);
+            return Err(e.into());
+        }
+    };
+
+    let ra = Arc::new(Mutex::new(rust_analyzer));
+
     let uds =
         tokio::net::UnixListener::bind(socket_path).map_err(|source| GrpcServerError::Bind {
             path: path_buf.clone(),
@@ -120,13 +239,40 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
         })?;
 
     let incoming = UnixListenerStream::new(uds);
-    let svc = RacliGrpc::default();
+    let lsp_server_info = ra.lock().await.lsp_server_info.clone();
+    let svc = RacliGrpc {
+        core: Core::default(),
+        lsp_server_info,
+        rust_analyzer: Arc::clone(&ra),
+    };
 
-    Server::builder()
+    tracing::info!(
+        version = %crate::VERSION,
+        socket = %path_buf.display(),
+        "racli gRPC server starting"
+    );
+
+    let serve_result = Server::builder()
         .add_service(RacliServer::new(svc))
         .serve_with_incoming_shutdown(incoming, shutdown)
-        .await?;
+        .await;
+
+    let ra_result = match Arc::try_unwrap(ra) {
+        Ok(mutex) => {
+            let session = mutex.into_inner();
+            session.shutdown_gracefully().await
+        }
+        Err(_) => {
+            tracing::warn!(
+                "could not unwrap rust-analyzer Arc after gRPC shutdown; relying on Drop"
+            );
+            Ok(())
+        }
+    };
 
     let _ = std::fs::remove_file(&path_buf);
+
+    serve_result.map_err(GrpcServerError::Serve)?;
+    ra_result?;
     Ok(())
 }
