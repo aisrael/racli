@@ -1,8 +1,8 @@
-//! The `racli mcp` server: MCP tools on stdio via `rmcp`, forwarding each tool call to `racli server` gRPC.
+//! The `racli mcp` server: MCP tools on stdio via `rmcp`, served by an in-process [`RacliSession`] (rust-analyzer + file watcher).
 
 mod mcp_proto_json;
 
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use mcp_proto_json::FindDefinitionRequestJson;
 use mcp_proto_json::FindDefinitionResponseJson;
@@ -27,13 +27,30 @@ use rmcp::tool_handler;
 use rmcp::tool_router;
 
 use crate::grpc_server::init_grpc_server_tracing;
+use crate::racli_live_backend::RacliBackendStartError;
+use crate::racli_live_backend::RacliLiveBackend;
+use crate::racli_session::RacliRpcError;
+use crate::racli_session::RacliSession;
+use crate::rust_analyzer::RustAnalyzerError;
 
-/// Failures during the MCP lifecycle on stdio (gRPC errors surface as MCP tool errors).
+/// Failures during the MCP lifecycle on stdio or the embedded workspace backend.
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
     /// `rmcp` could not complete the MCP handshake over stdio.
     #[error("mcp initialization failed")]
     McpInit(Box<rmcp::service::ServerInitializeError>),
+    /// The process working directory could not be read (workspace root for LSP).
+    #[error("failed to read current working directory")]
+    CurrentDir {
+        #[source]
+        source: std::io::Error,
+    },
+    /// Spawning rust-analyzer or starting the workspace watcher failed.
+    #[error(transparent)]
+    BackendStart(#[from] RacliBackendStartError),
+    /// Shutting down rust-analyzer after MCP exited failed.
+    #[error(transparent)]
+    BackendShutdown(#[from] RustAnalyzerError),
 }
 
 impl From<rmcp::service::ServerInitializeError> for ServerError {
@@ -42,24 +59,27 @@ impl From<rmcp::service::ServerInitializeError> for ServerError {
     }
 }
 
-/// MCP server state: Unix socket path for gRPC to `racli server`, plus a generated [`ToolRouter`].
+/// MCP server state: shared [`RacliSession`], plus a generated [`ToolRouter`].
 #[derive(Clone)]
 pub(crate) struct RacliMcpHandler {
-    grpc_socket: PathBuf,
+    session: Arc<RacliSession>,
     tool_router: ToolRouter<Self>,
 }
 
 impl RacliMcpHandler {
-    /// Creates a handler that forwards tool calls to `racli server` at `grpc_socket`.
-    pub fn new(grpc_socket: PathBuf) -> Self {
+    /// Creates a handler that serves tools from `session` (rust-analyzer-backed).
+    pub fn new(session: Arc<RacliSession>) -> Self {
         Self {
-            grpc_socket,
+            session,
             tool_router: Self::tool_router(),
         }
     }
 
-    fn grpc_err(err: impl std::fmt::Display) -> ErrorData {
-        ErrorData::internal_error(err.to_string(), None)
+    fn racli_rpc_error_to_mcp(err: RacliRpcError) -> ErrorData {
+        match err {
+            RacliRpcError::InvalidArgument(msg) => ErrorData::invalid_params(msg, None),
+            RacliRpcError::Internal(msg) => ErrorData::internal_error(msg, None),
+        }
     }
 }
 
@@ -71,9 +91,7 @@ impl RacliMcpHandler {
         description = "Returns crate version string and rust-analyzer serverInfo from LSP initialize (mirrors gRPC Racli.GetVersion)."
     )]
     async fn get_version(&self) -> Result<Json<GetVersionResponseJson>, ErrorData> {
-        let resp = crate::client::get_version(&self.grpc_socket)
-            .await
-            .map_err(Self::grpc_err)?;
+        let resp = self.session.get_version();
         Ok(Json(get_version_response_proto_to_json(&resp)))
     }
 
@@ -86,9 +104,11 @@ impl RacliMcpHandler {
         &self,
         Parameters(req): Parameters<SearchRequestJson>,
     ) -> Result<Json<SearchResponseJson>, ErrorData> {
-        let resp = crate::client::search(&self.grpc_socket, req.query)
+        let resp = self
+            .session
+            .search(req.query)
             .await
-            .map_err(Self::grpc_err)?;
+            .map_err(Self::racli_rpc_error_to_mcp)?;
         Ok(Json(search_response_proto_to_json(&resp)))
     }
 
@@ -101,14 +121,11 @@ impl RacliMcpHandler {
         &self,
         Parameters(req): Parameters<FindDefinitionRequestJson>,
     ) -> Result<Json<FindDefinitionResponseJson>, ErrorData> {
-        let resp = crate::client::find_definition(
-            &self.grpc_socket,
-            req.file_path,
-            req.line,
-            req.character,
-        )
-        .await
-        .map_err(Self::grpc_err)?;
+        let resp = self
+            .session
+            .find_definition(req.file_path, req.line, req.character)
+            .await
+            .map_err(Self::racli_rpc_error_to_mcp)?;
         Ok(Json(find_definition_response_proto_to_json(&resp)))
     }
 }
@@ -121,25 +138,38 @@ impl ServerHandler for RacliMcpHandler {
     }
 }
 
-/// Serves MCP on stdin/stdout; each tool issues gRPC to `racli server` at [`crate::effective_unix_socket_path`].
+/// Serves MCP on stdin/stdout after starting rust-analyzer and the workspace file watcher in-process.
 pub async fn run_stdio() -> Result<(), ServerError> {
     init_grpc_server_tracing();
 
-    let grpc_socket = crate::effective_unix_socket_path();
+    let cwd = std::env::current_dir().map_err(|source| ServerError::CurrentDir { source })?;
+
     tracing::info!(
         version = %crate::VERSION,
-        grpc_socket = %grpc_socket.display(),
-        "racli MCP server starting on stdio"
+        workspace = %cwd.display(),
+        "racli MCP server starting on stdio (embedded rust-analyzer)"
     );
 
-    let handler = RacliMcpHandler::new(grpc_socket);
-    let running = handler
-        .serve((tokio::io::stdin(), tokio::io::stdout()))
-        .await?;
+    let backend = RacliLiveBackend::start(cwd).await?;
 
-    if let Err(e) = running.waiting().await {
+    let handler = RacliMcpHandler::new(backend.session().clone());
+    let running = match handler.serve((tokio::io::stdin(), tokio::io::stdout())).await {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = backend.shutdown().await;
+            return Err(e.into());
+        }
+    };
+
+    let mcp_wait = running.waiting().await;
+
+    let shutdown = backend.shutdown().await;
+
+    if let Err(e) = mcp_wait {
         tracing::warn!(error = %e, "MCP runtime task ended with an error");
     }
+
+    shutdown?;
 
     Ok(())
 }

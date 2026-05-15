@@ -28,6 +28,7 @@ In the usual setup there are three pieces:
 - **rust-analyzer** — the Language Server process that `racli server` drives over LSP.
 - **racli server** — a long-running gRPC listener on a Unix socket (default `/tmp/racli.sock`); it spawns `rust-analyzer`, completes an LSP `initialize` handshake with the current working directory as the workspace root, and serves RPCs to clients.
 - **racli (client)** — the same binary used in client mode: subcommands that connect to the socket and call the server.
+- **racli mcp** — MCP over stdio only: spawns rust-analyzer and the workspace file watcher inside the MCP child process (no Unix socket). Use **`racli server`** for `racli search`, `racli find-definition`, and `racli version`.
 
 Stop the server with Ctrl+C or SIGTERM to trigger LSP `shutdown`/`exit` and clean termination of the child.
 

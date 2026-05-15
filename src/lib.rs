@@ -16,10 +16,12 @@ pub mod grpc_server;
 pub mod lsp_client;
 /// Maps `lsp_types` values into racli protobuf shapes.
 pub mod lsp_map;
-/// MCP server over stdio (`rmcp`); tools forward to `racli server` gRPC.
+/// MCP server over stdio (`rmcp`); tools use an in-process rust-analyzer session and workspace watcher.
 pub mod mcp;
 /// Protobuf and tonic-generated types for the Racli gRPC API.
 pub mod proto;
+/// Shared live workspace backend (rust-analyzer + watcher + [`RacliSession`]) for gRPC and MCP.
+pub mod racli_live_backend;
 /// Shared gRPC/MCP backend (rust-analyzer + [`crate::server::Core`]).
 pub mod racli_session;
 /// `rust-analyzer` LSP child process used by `racli server`.
@@ -76,8 +78,8 @@ struct Args {
 enum Command {
     /// Start the gRPC server on the Unix socket.
     Server(ServerArgs),
-    /// MCP stdio transport (`rmcp`); tools forward to [`Command::Server`] over the Unix gRPC socket.
-    Mcp(ServerArgs),
+    /// MCP stdio transport (`rmcp`); rust-analyzer and file watching run in-process (no Unix socket).
+    Mcp,
     /// Print versions (client-side and, via gRPC, server-side).
     Version,
     /// Search workspace symbols via rust-analyzer (LSP `workspace/symbol`).
@@ -101,7 +103,7 @@ pub async fn run() -> Result<(), RunError> {
         Command::Server(_opts) => {
             run_grpc_unix_socket_interactive(effective_unix_socket_path()).await?;
         }
-        Command::Mcp(_opts) => {
+        Command::Mcp => {
             mcp::run_stdio().await?;
         }
         Command::Version => {
