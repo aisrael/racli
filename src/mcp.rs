@@ -153,7 +153,10 @@ pub async fn run_stdio() -> Result<(), ServerError> {
     let backend = RacliLiveBackend::start(cwd).await?;
 
     let handler = RacliMcpHandler::new(backend.session().clone());
-    let running = match handler.serve((tokio::io::stdin(), tokio::io::stdout())).await {
+    let running = match handler
+        .serve((tokio::io::stdin(), tokio::io::stdout()))
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             let _ = backend.shutdown().await;
