@@ -5,7 +5,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
@@ -18,10 +17,10 @@ use crate::proto::racli::SearchRequest;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::racli_server::Racli;
 use crate::proto::racli::racli_server::RacliServer;
+use crate::racli_live_backend::RacliBackendStartError;
+use crate::racli_live_backend::RacliLiveBackend;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
-use crate::rust_analyzer::RustAnalyzerSession;
-use crate::server::Core;
 use tonic::Request;
 use tonic::Response;
 use tonic::Status;
@@ -74,6 +73,14 @@ pub enum GrpcServerError {
     /// tonic failed while driving the HTTP/2 stack over the Unix listener.
     #[error("failed serving gRPC transport")]
     Serve(#[from] tonic::transport::Error),
+}
+
+impl From<RacliBackendStartError> for GrpcServerError {
+    fn from(value: RacliBackendStartError) -> Self {
+        match value {
+            RacliBackendStartError::RustAnalyzer(e) => Self::RustAnalyzer(e),
+        }
+    }
 }
 
 fn racli_rpc_error_to_status(err: RacliRpcError) -> Status {
@@ -187,18 +194,13 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
     let _ = std::fs::remove_file(socket_path);
 
     let cwd = std::env::current_dir().map_err(|source| GrpcServerError::CurrentDir { source })?;
-    let rust_analyzer = match RustAnalyzerSession::spawn(&cwd).await {
-        Ok(s) => s,
+    let backend = match RacliLiveBackend::start(cwd).await {
+        Ok(b) => b,
         Err(e) => {
             let _ = std::fs::remove_file(&path_buf);
             return Err(e.into());
         }
     };
-
-    let ra = Arc::new(Mutex::new(rust_analyzer));
-
-    let watcher =
-        crate::workspace_file_watcher::spawn_workspace_file_watcher(cwd.clone(), Arc::clone(&ra));
 
     let uds =
         tokio::net::UnixListener::bind(socket_path).map_err(|source| GrpcServerError::Bind {
@@ -207,13 +209,9 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
         })?;
 
     let incoming = UnixListenerStream::new(uds);
-    let lsp_server_info = ra.lock().await.lsp_server_info.clone();
-    let session = Arc::new(RacliSession::new(
-        Core::default(),
-        lsp_server_info,
-        Arc::clone(&ra),
-    ));
-    let svc = RacliGrpc { session };
+    let svc = RacliGrpc {
+        session: backend.session().clone(),
+    };
 
     tracing::info!(
         version = %crate::VERSION,
@@ -226,9 +224,7 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
         .serve_with_incoming_shutdown(incoming, shutdown)
         .await;
 
-    watcher.stop().await;
-
-    let ra_result = crate::rust_analyzer::shutdown_rust_analyzer_session_arc(ra).await;
+    let ra_result = backend.shutdown().await;
 
     let _ = std::fs::remove_file(&path_buf);
 

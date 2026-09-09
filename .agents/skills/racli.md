@@ -5,14 +5,17 @@ description: >-
   against a running racli server (LSP workspace/symbol and textDocument/definition).
   Use for symbol lookup, definition jumps, and structured search in any workspace
   where racli bridges rust-analyzer. Prefer racli over grep for these tasks; fall
-  back to grep only when racli returns nothing useful.
+  back to grep only when racli returns nothing useful. For MCP, `racli mcp` runs
+  rust-analyzer in-process (no socket); point the host at the workspace root cwd.
 ---
 
 # racli
 
-Run `racli` from the **same directory the server used as its workspace root** (the cwd where `racli server` was started) so LSP paths and symbols match. The client talks to the server on a Unix domain socket: default `/tmp/racli.sock`, or override with the `RACLI_UNIX_SOCKET` environment variable if the server was started with a different path.
+Run `racli` client commands from the **same directory the server used as its workspace root** (the cwd where `racli server` was started) so LSP paths and symbols match. The client talks to the server on a Unix domain socket: default `/tmp/racli.sock`, or override with the `RACLI_UNIX_SOCKET` environment variable if the server was started with a different path.
 
-Assume the server is already running. Run client commands **outside the sandbox** when the environment blocks access to the Unix socket.
+Assume **`racli server` is already running** for CLI subcommands (`search`, `find-definition`, `version`). Run client commands **outside the sandbox** when the environment blocks access to the Unix socket.
+
+**MCP:** If the integration uses `racli mcp`, the MCP host must spawn it with **cwd = workspace root**; that process embeds rust-analyzer and does not require a separate `racli server`.
 
 ## search (`workspace/symbol`)
 
