@@ -144,30 +144,39 @@ impl Racli for RacliGrpc {
     }
 }
 
-/// Waits for SIGINT or SIGTERM on the same [`signal`](tokio::signal::unix::signal) API (reliable with tonic shutdown).
-async fn unix_shutdown_signals() {
+/// Registers SIGINT/SIGTERM handlers immediately (via the same [`signal`](tokio::signal::unix::signal)
+/// API tonic's shutdown relies on) and returns a future that resolves once either fires.
+///
+/// Must be called *before* any slow startup work (e.g. spawning and initializing rust-analyzer):
+/// a signal received before the handler is registered falls back to the OS default disposition
+/// (immediate termination, skipping rust-analyzer's graceful LSP shutdown entirely). Registering
+/// early and awaiting late is safe — tokio records a pending signal via an atomic flag regardless
+/// of whether the returned future is being polled yet.
+pub(crate) fn install_unix_shutdown_signals() -> impl Future<Output = ()> + Send + 'static {
     use tokio::signal::unix::SignalKind;
     use tokio::signal::unix::signal;
 
-    let mut sigint = match signal(SignalKind::interrupt()) {
-        Ok(s) => s,
-        Err(_) => {
-            let _ = tokio::signal::ctrl_c().await;
-            return;
-        }
-    };
+    let sigint = signal(SignalKind::interrupt());
+    let sigterm = signal(SignalKind::terminate());
 
-    let mut sigterm = match signal(SignalKind::terminate()) {
-        Ok(s) => s,
-        Err(_) => {
-            let _ = sigint.recv().await;
-            return;
+    async move {
+        match (sigint, sigterm) {
+            (Ok(mut sigint), Ok(mut sigterm)) => {
+                tokio::select! {
+                    _ = sigint.recv() => {}
+                    _ = sigterm.recv() => {}
+                }
+            }
+            (Ok(mut sigint), Err(_)) => {
+                let _ = sigint.recv().await;
+            }
+            (Err(_), Ok(mut sigterm)) => {
+                let _ = sigterm.recv().await;
+            }
+            (Err(_), Err(_)) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
         }
-    };
-
-    tokio::select! {
-        _ = sigint.recv() => {}
-        _ = sigterm.recv() => {}
     }
 }
 
@@ -175,9 +184,10 @@ async fn unix_shutdown_signals() {
 pub async fn run_grpc_unix_socket_interactive<P: AsRef<Path>>(
     socket_path: P,
 ) -> Result<(), GrpcServerError> {
-    let shutdown = async {
-        unix_shutdown_signals().await;
-    };
+    // Install the signal handlers before any of the (potentially slow) startup work inside
+    // `run_grpc_unix_socket_until_shutdown` (spawning and initializing rust-analyzer), so a
+    // Ctrl+C during startup is caught instead of killing the process outright.
+    let shutdown = install_unix_shutdown_signals();
     run_grpc_unix_socket_until_shutdown(socket_path, shutdown).await
 }
 

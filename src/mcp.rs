@@ -27,6 +27,7 @@ use rmcp::tool_handler;
 use rmcp::tool_router;
 
 use crate::grpc_server::init_grpc_server_tracing;
+use crate::grpc_server::install_unix_shutdown_signals;
 use crate::racli_live_backend::RacliBackendStartError;
 use crate::racli_live_backend::RacliLiveBackend;
 use crate::racli_session::RacliRpcError;
@@ -142,6 +143,13 @@ impl ServerHandler for RacliMcpHandler {
 pub async fn run_stdio() -> Result<(), ServerError> {
     init_grpc_server_tracing();
 
+    // Install the shutdown signal handlers before any of the (potentially slow) startup work
+    // below (rust-analyzer spawn + LSP initialize), so a Ctrl+C/SIGTERM during startup is
+    // recorded by tokio instead of falling back to the OS default disposition (immediate
+    // termination, skipping rust-analyzer's graceful LSP shutdown). See
+    // `grpc_server::install_unix_shutdown_signals`.
+    let shutdown_signal = install_unix_shutdown_signals();
+
     let cwd = std::env::current_dir().map_err(|source| ServerError::CurrentDir { source })?;
 
     tracing::info!(
@@ -164,15 +172,18 @@ pub async fn run_stdio() -> Result<(), ServerError> {
         }
     };
 
-    let mcp_wait = running.waiting().await;
-
-    let shutdown = backend.shutdown().await;
-
-    if let Err(e) = mcp_wait {
-        tracing::warn!(error = %e, "MCP runtime task ended with an error");
+    tokio::select! {
+        result = running.waiting() => {
+            if let Err(e) = result {
+                tracing::warn!(error = %e, "MCP runtime task ended with an error");
+            }
+        }
+        () = shutdown_signal => {
+            tracing::info!("received shutdown signal; stopping MCP server");
+        }
     }
 
-    shutdown?;
+    backend.shutdown().await?;
 
     Ok(())
 }

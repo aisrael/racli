@@ -189,6 +189,14 @@ impl RustAnalyzerSession {
 
     /// Sends LSP `shutdown` and `exit` (best-effort with timeouts), waits for the process, and drops the LSP client.
     pub async fn shutdown_gracefully(mut self) -> Result<(), RustAnalyzerError> {
+        self.shutdown_handshake().await
+    }
+
+    /// Core of graceful shutdown: LSP `shutdown` + `exit` (best-effort, timed out), then waits for
+    /// the child to exit (killing it if it doesn't in time). Takes `&mut self` so it can run either
+    /// after taking ownership ([`Self::shutdown_gracefully`]) or through a `MutexGuard` while other
+    /// `Arc` clones of the session are still alive (see [`shutdown_rust_analyzer_session_arc`]).
+    async fn shutdown_handshake(&mut self) -> Result<(), RustAnalyzerError> {
         tracing::info!(
             pid = ?self.child_pid,
             "stopping rust-analyzer child process"
@@ -331,14 +339,29 @@ fn io_other(msg: &'static str) -> std::io::Error {
     std::io::Error::other(msg)
 }
 
-/// Shuts down the session when `ra` holds the last `Arc` strong reference (otherwise warns and returns Ok).
+/// Shuts down the session: takes ownership if `ra` is the last `Arc` reference, otherwise falls
+/// back to locking the shared session (bounded) to still send LSP `shutdown`/`exit` before
+/// giving up and relying on `Drop`.
 pub async fn shutdown_rust_analyzer_session_arc(
     ra: Arc<Mutex<RustAnalyzerSession>>,
 ) -> Result<(), RustAnalyzerError> {
-    match Arc::try_unwrap(ra) {
-        Ok(mutex) => mutex.into_inner().shutdown_gracefully().await,
+    let ra = match Arc::try_unwrap(ra) {
+        Ok(mutex) => return mutex.into_inner().shutdown_gracefully().await,
+        Err(ra) => ra,
+    };
+
+    tracing::warn!(
+        "rust-analyzer Arc still shared at shutdown time (likely an in-flight MCP/gRPC \
+         request); sending LSP shutdown/exit through the shared session instead"
+    );
+
+    match tokio::time::timeout(Duration::from_secs(10), ra.lock()).await {
+        Ok(mut guard) => guard.shutdown_handshake().await,
         Err(_) => {
-            tracing::warn!("could not unwrap rust-analyzer Arc before shutdown; relying on Drop");
+            tracing::warn!(
+                "timed out waiting to lock rust-analyzer session for shutdown handshake; \
+                 relying on Drop to terminate the child process"
+            );
             Ok(())
         }
     }

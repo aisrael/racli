@@ -96,6 +96,7 @@ pub struct ServerArgs {
     pub port: Option<u16>,
 }
 
+/// The actual `racli` entrypoint
 pub async fn run() -> Result<(), RunError> {
     let args = Args::parse();
 
