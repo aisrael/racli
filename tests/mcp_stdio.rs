@@ -22,12 +22,11 @@ async fn mcp_stdio_get_version_and_search_round_trip() {
         return;
     }
 
-    let transport = TokioChildProcess::new(Command::new(env!("CARGO_BIN_EXE_racli")).configure(
-        |cmd| {
+    let transport =
+        TokioChildProcess::new(Command::new(env!("CARGO_BIN_EXE_racli")).configure(|cmd| {
             cmd.arg("mcp");
-        },
-    ))
-    .expect("spawn `racli mcp` child process");
+        }))
+        .expect("spawn `racli mcp` child process");
 
     let client = tokio::time::timeout(Duration::from_secs(30), ().serve(transport))
         .await
