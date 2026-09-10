@@ -39,23 +39,20 @@ The client only speaks gRPC to `racli server`. The server owns the `rust-analyze
 
 ## racli mcp
 
-MCP hosts (for example **Cursor**, **Claude Desktop**, or any client that speaks the [Model Context Protocol](https://modelcontextprotocol.io)) register `racli mcp` as an MCP server **command**. When a session needs tools, the host **spawns** that command as a **child process** and drives MCP over the child’s **stdio**: framed JSON-RPC on **stdin** / **stdout**, with **stderr** available for logs. The LLM never opens the Unix socket itself; it only talks to the MCP runtime, which in turn talks to `racli mcp` on stdio.
+MCP hosts (for example **Cursor**, **Claude Desktop**, or any client that speaks the [Model Context Protocol](https://modelcontextprotocol.io)) register `racli mcp` as an MCP server **command**. When a session needs tools, the host **spawns** that command as a **child process** and drives MCP over the child’s **stdio**: framed JSON-RPC on **stdin** / **stdout**, with **stderr** available for logs.
 
-`racli mcp` is a **thin adapter**: each MCP tool (`get_version`, `search`, `find_definition`, …) maps to the same **`Racli` gRPC** methods as the CLI (`GetVersion`, `Search`, `FindDefinition`). The MCP process **dials the running `racli server`** on the Unix domain socket (default `/tmp/racli.sock`, overridable with `RACLI_UNIX_SOCKET`) and forwards the request there. The long-lived server still owns **rust-analyzer** and LSP; MCP traffic joins **CLI traffic** on the same socket and the same analyzer session.
+The MCP child process **starts its own rust-analyzer session** (same LSP `initialize` / `initialized` flow and workspace file watching as `racli server`) and serves tools **in-process**. It does **not** connect to `racli server` over the Unix socket. Tool semantics match the **`Racli` gRPC** API (`GetVersion`, `Search`, `FindDefinition`) but are implemented via the same in-crate `RacliSession` logic as the gRPC server, without dialing the socket.
 
 ```mermaid
 sequenceDiagram
     participant Host as MCP host (IDE / agent)
     participant Mcp as racli mcp (child)
-    participant Server as racli server
     participant RA as rust-analyzer
 
     Host->>Mcp: MCP JSON-RPC on child stdin/stdout
-    Mcp->>Server: gRPC (Unix socket)
-    Server->>RA: LSP over stdio
-    RA-->>Server: response
-    Server-->>Mcp: gRPC response
+    Mcp->>RA: LSP over stdio
+    RA-->>Mcp: response
     Mcp-->>Host: MCP tool result on stdio
 ```
 
-For workspace paths and symbol results to line up with the server, start **`racli server`** from the intended project root, then point the MCP host at `racli mcp` so tool calls hit that same server instance.
+Configure the MCP host so the **`racli mcp` working directory** is the intended Rust workspace root (the directory you would `cd` into before running `cargo build`). **`racli server`** remains the path for CLI clients (`racli search`, `racli find-definition`, `racli version`): those commands still use gRPC on the Unix socket.
