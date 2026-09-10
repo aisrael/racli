@@ -12,6 +12,8 @@ pub mod client;
 pub mod find_definition;
 /// Unix-socket gRPC server for `racli server`.
 pub mod grpc_server;
+/// Log-level parsing and stderr tracing setup for the client subcommands.
+pub mod logging;
 /// Generic LSP client.
 pub mod lsp_client;
 /// Maps `lsp_types` values into racli protobuf shapes.
@@ -108,6 +110,7 @@ pub async fn run() -> Result<(), RunError> {
             mcp::run_stdio().await?;
         }
         Command::Version => {
+            logging::init_client_tracing();
             let sock = effective_unix_socket_path();
             let sock_display = sock.display().to_string();
             match tokio::time::timeout(Duration::from_secs(10), client::get_version(&sock)).await {
@@ -134,8 +137,14 @@ pub async fn run() -> Result<(), RunError> {
                 }
             }
         }
-        Command::Search(args) => search::run_cli_search(args).await,
-        Command::FindDefinition(args) => find_definition::run_cli_find_definition(args).await,
+        Command::Search(args) => {
+            logging::init_client_tracing();
+            search::run_cli_search(args).await
+        }
+        Command::FindDefinition(args) => {
+            logging::init_client_tracing();
+            find_definition::run_cli_find_definition(args).await
+        }
     }
 
     Ok(())
