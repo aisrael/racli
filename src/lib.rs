@@ -1,7 +1,5 @@
 #![doc = include_str!("../README.md")]
 
-use std::path::PathBuf;
-
 /// CLI argument parsing and subcommand dispatch for the `racli` binary.
 mod cli;
 /// gRPC client helpers for talking to `racli server` over a Unix socket.
@@ -32,6 +30,8 @@ pub mod search;
 pub mod server;
 /// Transport layer components
 pub mod transport;
+/// Shared small helpers (e.g. Unix socket path resolution).
+pub mod utils;
 mod workspace_file_watcher;
 
 pub use cli::RunError;
@@ -41,17 +41,8 @@ pub use grpc_server::run_grpc_unix_socket_interactive;
 pub use grpc_server::run_grpc_unix_socket_until_shutdown;
 pub use search::SearchArgs;
 pub use search::SearchOutputFormat;
+pub use utils::DEFAULT_UNIX_SOCKET_PATH;
+pub use utils::effective_unix_socket_path;
 
 /// Crate / binary version string embedded at compile time from `CARGO_PKG_VERSION`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// Default Unix socket path for `racli server` when `RACLI_UNIX_SOCKET` is unset or empty.
-pub const DEFAULT_UNIX_SOCKET_PATH: &str = "/tmp/racli.sock";
-
-/// Returns the Unix socket path from `RACLI_UNIX_SOCKET`, or [`DEFAULT_UNIX_SOCKET_PATH`] if unset or empty.
-pub fn effective_unix_socket_path() -> PathBuf {
-    std::env::var_os("RACLI_UNIX_SOCKET")
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_UNIX_SOCKET_PATH))
-}
