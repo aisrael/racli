@@ -141,7 +141,7 @@ impl ServerHandler for RacliMcpHandler {
 
 /// Serves MCP on stdin/stdout after starting rust-analyzer and the workspace file watcher in-process.
 pub async fn run_stdio() -> Result<(), ServerError> {
-    init_grpc_server_tracing();
+    let _log_guard = init_grpc_server_tracing();
 
     // Install the shutdown signal handlers before any of the (potentially slow) startup work
     // below (rust-analyzer spawn + LSP initialize), so a Ctrl+C/SIGTERM during startup is
