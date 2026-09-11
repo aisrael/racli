@@ -26,16 +26,13 @@ tokio = { version = "1.52.2", features = ["full"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-tokio-stream = { version = "0.1", features = ["net"] }
-tonic = "0.14"
-tonic-prost = "0.14"
 url = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [build-dependencies]
-tonic-prost-build = "0.14"
+prost-build = "0.14"
 
 [dev-dependencies]
 criterion = "0.5"

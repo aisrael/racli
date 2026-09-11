@@ -351,7 +351,7 @@ pub async fn shutdown_rust_analyzer_session_arc(
     };
 
     tracing::warn!(
-        "rust-analyzer Arc still shared at shutdown time (likely an in-flight MCP/gRPC \
+        "rust-analyzer Arc still shared at shutdown time (likely an in-flight MCP/wire \
          request); sending LSP shutdown/exit through the shared session instead"
     );
 

@@ -1,9 +1,10 @@
-//! gRPC client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`).
+//! Wire-protocol client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`).
 
 use std::path::Path;
 use std::time::Duration;
 
-use tonic::transport::Endpoint;
+use prost::Message;
+use tokio::net::UnixStream;
 
 use crate::proto::racli::FindDefinitionRequest;
 use crate::proto::racli::FindDefinitionResponse;
@@ -11,78 +12,90 @@ use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::SearchRequest;
 use crate::proto::racli::SearchResponse;
-use crate::proto::racli::racli_client::RacliClient;
+use crate::racli_session::RacliRpcError;
+use crate::wire;
+use crate::wire::Method;
+use crate::wire::Status;
+use crate::wire::WireError;
 
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `GetVersion`.
+/// Failures connecting to `racli server` or completing a round trip of the wire protocol.
 #[derive(Debug, thiserror::Error)]
-pub enum ClientVersionError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
+pub enum ClientError {
+    /// Failed to connect to the Unix socket.
+    #[error("failed to connect to {path}")]
+    Connect {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// Connecting to the Unix socket did not complete within the timeout.
+    #[error("timed out connecting to {0}")]
+    ConnectTimedOut(std::path::PathBuf),
+    /// The request/response round trip did not complete within the timeout.
+    #[error("timed out waiting for a response")]
+    TimedOut,
+    /// Failed framing or parsing a wire message.
     #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
+    Wire(#[from] WireError),
+    /// The server returned an application-level error.
     #[error(transparent)]
-    Status(#[from] tonic::Status),
+    Rpc(#[from] RacliRpcError),
 }
 
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `Search`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientSearchError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
+async fn connect(socket_path: &Path, connect_timeout: Duration) -> Result<UnixStream, ClientError> {
+    tokio::time::timeout(connect_timeout, UnixStream::connect(socket_path))
+        .await
+        .map_err(|_| ClientError::ConnectTimedOut(socket_path.to_path_buf()))?
+        .map_err(|source| ClientError::Connect {
+            path: socket_path.to_path_buf(),
+            source,
+        })
 }
 
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `FindDefinition`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientFindDefinitionError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
+async fn roundtrip<Req: Message, Resp: Message + Default>(
+    stream: &mut UnixStream,
+    method: Method,
+    request: &Req,
+) -> Result<Resp, ClientError> {
+    wire::write_frame(stream, method as u8, &request.encode_to_vec()).await?;
+    let (tag, payload) = wire::read_frame(stream).await?;
+    match Status::try_from(tag)? {
+        Status::Ok => Ok(Resp::decode(&payload[..]).map_err(WireError::from)?),
+        Status::InvalidArgument => Err(ClientError::Rpc(RacliRpcError::InvalidArgument(
+            String::from_utf8_lossy(&payload).into_owned(),
+        ))),
+        Status::Internal => Err(ClientError::Rpc(RacliRpcError::Internal(
+            String::from_utf8_lossy(&payload).into_owned(),
+        ))),
+    }
 }
 
 /// Calls `GetVersion` on the server at `socket_path` with 10s connect and request timeouts.
-pub async fn get_version(socket_path: &Path) -> Result<GetVersionResponse, ClientVersionError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(10))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client.get_version(GetVersionRequest {}).await?;
-
-    Ok(resp.into_inner())
+pub async fn get_version(socket_path: &Path) -> Result<GetVersionResponse, ClientError> {
+    let mut stream = connect(socket_path, Duration::from_secs(10)).await?;
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        roundtrip(&mut stream, Method::GetVersion, &GetVersionRequest {}),
+    )
+    .await
+    .map_err(|_| ClientError::TimedOut)?
 }
 
 /// Calls `Search` on the server at `socket_path` with 10s connect and 60s per-request timeout (LSP `workspace/symbol` can be slow).
 pub async fn search(
     socket_path: &Path,
     query: impl AsRef<str>,
-) -> Result<SearchResponse, ClientSearchError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .search(SearchRequest {
-            query: query.as_ref().to_string(),
-        })
-        .await?;
-
-    Ok(resp.into_inner())
+) -> Result<SearchResponse, ClientError> {
+    let mut stream = connect(socket_path, Duration::from_secs(10)).await?;
+    let request = SearchRequest {
+        query: query.as_ref().to_string(),
+    };
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        roundtrip(&mut stream, Method::Search, &request),
+    )
+    .await
+    .map_err(|_| ClientError::TimedOut)?
 }
 
 /// Calls `FindDefinition` on the server at `socket_path` with 10s connect and 60s per-request timeout.
@@ -91,23 +104,17 @@ pub async fn find_definition(
     file_path: impl AsRef<str>,
     line: u32,
     character: u32,
-) -> Result<FindDefinitionResponse, ClientFindDefinitionError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .find_definition(FindDefinitionRequest {
-            file_path: file_path.as_ref().to_string(),
-            line,
-            character,
-        })
-        .await?;
-
-    Ok(resp.into_inner())
+) -> Result<FindDefinitionResponse, ClientError> {
+    let mut stream = connect(socket_path, Duration::from_secs(10)).await?;
+    let request = FindDefinitionRequest {
+        file_path: file_path.as_ref().to_string(),
+        line,
+        character,
+    };
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        roundtrip(&mut stream, Method::FindDefinition, &request),
+    )
+    .await
+    .map_err(|_| ClientError::TimedOut)?
 }

@@ -9,18 +9,18 @@ use crate::VERSION;
 use crate::client;
 use crate::effective_unix_socket_path;
 use crate::find_definition;
-use crate::grpc_server::GrpcServerError;
-use crate::grpc_server::run_grpc_unix_socket_interactive;
 use crate::logging;
 use crate::mcp;
 use crate::search;
+use crate::wire_server::WireServerError;
+use crate::wire_server::run_wire_unix_socket_interactive;
 
 /// Top-level error returned by [`run`] for any server, listener, or MCP failure.
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
-    /// gRPC server failed to bind, serve, or clean up the socket.
+    /// Wire-protocol server failed to bind, serve, or clean up the socket.
     #[error(transparent)]
-    Grpc(#[from] GrpcServerError),
+    Wire(#[from] WireServerError),
     /// MCP server failed during handler setup or on the stdio transport.
     #[error(transparent)]
     Mcp(#[from] mcp::ServerError),
@@ -37,11 +37,11 @@ struct Args {
 /// Subcommands for the `racli` binary (server, MCP, or version probe).
 #[derive(Subcommand)]
 enum Command {
-    /// Start the gRPC server on the Unix socket.
+    /// Start the wire-protocol server on the Unix socket.
     Server(ServerArgs),
     /// MCP stdio transport (`rmcp`); rust-analyzer and file watching run in-process (no Unix socket).
     Mcp,
-    /// Print versions (client-side and, via gRPC, server-side).
+    /// Print versions (client-side and, via the wire protocol, server-side).
     Version,
     /// Search workspace symbols via rust-analyzer (LSP `workspace/symbol`).
     Search(search::SearchArgs),
@@ -63,7 +63,7 @@ pub async fn run() -> Result<(), RunError> {
 
     match args.command {
         Command::Server(_opts) => {
-            run_grpc_unix_socket_interactive(effective_unix_socket_path()).await?;
+            run_wire_unix_socket_interactive(effective_unix_socket_path()).await?;
         }
         Command::Mcp => {
             mcp::run_stdio().await?;

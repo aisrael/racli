@@ -26,13 +26,13 @@ use rmcp::tool;
 use rmcp::tool_handler;
 use rmcp::tool_router;
 
-use crate::grpc_server::init_grpc_server_tracing;
-use crate::grpc_server::install_unix_shutdown_signals;
 use crate::racli_live_backend::RacliBackendStartError;
 use crate::racli_live_backend::RacliLiveBackend;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
 use crate::rust_analyzer::RustAnalyzerError;
+use crate::wire_server::init_server_tracing;
+use crate::wire_server::install_unix_shutdown_signals;
 
 /// Failures during the MCP lifecycle on stdio or the embedded workspace backend.
 #[derive(Debug, thiserror::Error)]
@@ -89,7 +89,7 @@ impl RacliMcpHandler {
     /// Returns the running racli version and rust-analyzer LSP serverInfo (`Racli.GetVersion`).
     #[tool(
         name = "get_version",
-        description = "Returns crate version string and rust-analyzer serverInfo from LSP initialize (mirrors gRPC Racli.GetVersion)."
+        description = "Returns crate version string and rust-analyzer serverInfo from LSP initialize (mirrors the wire protocol's GetVersion)."
     )]
     async fn get_version(&self) -> Result<Json<GetVersionResponseJson>, ErrorData> {
         let resp = self.session.get_version();
@@ -99,7 +99,7 @@ impl RacliMcpHandler {
     /// Runs workspace symbol resolution (`Racli.Search`).
     #[tool(
         name = "search",
-        description = "Runs LSP workspace/symbol via rust-analyzer with the racli merged query semantics (mirrors gRPC Racli.Search)."
+        description = "Runs LSP workspace/symbol via rust-analyzer with the racli merged query semantics (mirrors the wire protocol's Search)."
     )]
     async fn search_symbols(
         &self,
@@ -116,7 +116,7 @@ impl RacliMcpHandler {
     /// Runs go-to-definition at a path + LSP position (`Racli.FindDefinition`).
     #[tool(
         name = "find_definition",
-        description = "Runs LSP textDocument/definition for file_path and 0-based line/character UTF-16 (mirrors gRPC Racli.FindDefinition)."
+        description = "Runs LSP textDocument/definition for file_path and 0-based line/character UTF-16 (mirrors the wire protocol's FindDefinition)."
     )]
     async fn find_definition(
         &self,
@@ -141,13 +141,13 @@ impl ServerHandler for RacliMcpHandler {
 
 /// Serves MCP on stdin/stdout after starting rust-analyzer and the workspace file watcher in-process.
 pub async fn run_stdio() -> Result<(), ServerError> {
-    let _log_guard = init_grpc_server_tracing();
+    let _log_guard = init_server_tracing();
 
     // Install the shutdown signal handlers before any of the (potentially slow) startup work
     // below (rust-analyzer spawn + LSP initialize), so a Ctrl+C/SIGTERM during startup is
     // recorded by tokio instead of falling back to the OS default disposition (immediate
     // termination, skipping rust-analyzer's graceful LSP shutdown). See
-    // `grpc_server::install_unix_shutdown_signals`.
+    // `wire_server::install_unix_shutdown_signals`.
     let shutdown_signal = install_unix_shutdown_signals();
 
     let cwd = std::env::current_dir().map_err(|source| ServerError::CurrentDir { source })?;

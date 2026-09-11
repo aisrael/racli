@@ -1,4 +1,4 @@
-//! Shared backend for gRPC [`crate::grpc_server::RacliGrpc`].
+//! Shared backend for the wire-protocol server (see [`crate::wire_server`]).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
 use crate::server::Core;
 
-/// Mirrors gRPC [`tonic::Status`] intent for callers that are not tonic-specific.
+/// Mirrors the wire protocol's status tag intent for callers that are not wire-protocol-specific.
 #[derive(Debug, thiserror::Error)]
 pub enum RacliRpcError {
     /// Invalid RPC arguments (`INVALID_ARGUMENT`).

@@ -1,12 +1,12 @@
 use std::time::Duration;
 
 use racli::client::get_version;
-use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
+use racli::wire_server::run_wire_unix_socket_until_shutdown;
 use tempfile::tempdir;
 
-/// Integration test: temporary UDS, gRPC `GetVersion` matches `CARGO_PKG_VERSION`, then server shuts down cleanly.
+/// Integration test: temporary UDS, `GetVersion` matches `CARGO_PKG_VERSION`, then server shuts down cleanly.
 #[tokio::test]
-async fn grpc_get_version_round_trip() {
+async fn wire_get_version_round_trip() {
     if std::process::Command::new("rust-analyzer")
         .arg("--version")
         .status()
@@ -24,7 +24,7 @@ async fn grpc_get_version_round_trip() {
 
     let sock_path = sock.clone();
     let server = tokio::spawn(async move {
-        run_grpc_unix_socket_until_shutdown(&sock_path, async {
+        run_wire_unix_socket_until_shutdown(&sock_path, async {
             let _ = stop_rx.await;
         })
         .await

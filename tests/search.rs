@@ -2,7 +2,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use racli::client::search;
-use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
+use racli::wire_server::run_wire_unix_socket_until_shutdown;
 use racli::proto::racli::SearchResponse;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
 use tempfile::tempdir;
@@ -105,9 +105,9 @@ async fn search_until_symbol_named(sock: &Path, query: &str, needle: &str) -> Se
     }
 }
 
-/// Integration test: gRPC `Search` returns a flat or nested workspace symbol list from a real workspace.
+/// Integration test: `Search` returns a flat or nested workspace symbol list from a real workspace.
 #[tokio::test]
-async fn grpc_search_workspace_symbol_round_trip() {
+async fn wire_search_workspace_symbol_round_trip() {
     if std::process::Command::new("rust-analyzer")
         .arg("--version")
         .status()
@@ -125,7 +125,7 @@ async fn grpc_search_workspace_symbol_round_trip() {
 
     let sock_path = sock.clone();
     let server = tokio::spawn(async move {
-        run_grpc_unix_socket_until_shutdown(&sock_path, async {
+        run_wire_unix_socket_until_shutdown(&sock_path, async {
             let _ = stop_rx.await;
         })
         .await
@@ -163,7 +163,7 @@ async fn grpc_search_workspace_symbol_round_trip() {
 
 /// Integration test: `search` with query `"GetVersionResponse"` includes that protobuf message symbol.
 #[tokio::test]
-async fn grpc_search_get_version_response_symbol() {
+async fn wire_search_get_version_response_symbol() {
     if std::process::Command::new("rust-analyzer")
         .arg("--version")
         .status()
@@ -181,7 +181,7 @@ async fn grpc_search_get_version_response_symbol() {
 
     let sock_path = sock.clone();
     let server = tokio::spawn(async move {
-        run_grpc_unix_socket_until_shutdown(&sock_path, async {
+        run_wire_unix_socket_until_shutdown(&sock_path, async {
             let _ = stop_rx.await;
         })
         .await
@@ -203,7 +203,7 @@ async fn grpc_search_get_version_response_symbol() {
 
 /// Integration test: unescaped `|` merges workspace symbol hits from separate substring queries.
 #[tokio::test]
-async fn grpc_search_pipe_merges_alternative_patterns() {
+async fn wire_search_pipe_merges_alternative_patterns() {
     if std::process::Command::new("rust-analyzer")
         .arg("--version")
         .status()
@@ -221,7 +221,7 @@ async fn grpc_search_pipe_merges_alternative_patterns() {
 
     let sock_path = sock.clone();
     let server = tokio::spawn(async move {
-        run_grpc_unix_socket_until_shutdown(&sock_path, async {
+        run_wire_unix_socket_until_shutdown(&sock_path, async {
             let _ = stop_rx.await;
         })
         .await

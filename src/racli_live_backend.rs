@@ -13,7 +13,7 @@ use crate::server::Core;
 use crate::workspace_file_watcher::WorkspaceFileWatcherHandle;
 use crate::workspace_file_watcher::spawn_workspace_file_watcher;
 
-/// Failures starting [`RustAnalyzerSession`] or wiring the file watcher (before gRPC bind in server mode).
+/// Failures starting [`RustAnalyzerSession`] or wiring the file watcher (before the wire-protocol listener binds in server mode).
 #[derive(Debug, thiserror::Error)]
 pub enum RacliBackendStartError {
     /// `rust-analyzer` could not be spawned or LSP initialization failed.
@@ -50,7 +50,7 @@ impl RacliLiveBackend {
         })
     }
 
-    /// Shared session for gRPC or MCP tool handlers.
+    /// Shared session for the wire-protocol server or MCP tool handlers.
     pub fn session(&self) -> &Arc<RacliSession> {
         &self.session
     }

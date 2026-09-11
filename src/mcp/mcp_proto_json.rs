@@ -30,7 +30,7 @@ pub struct SearchRequestJson {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FindDefinitionRequestJson {
-    /// Resolved on the server; same rules as gRPC [`crate::proto::racli::FindDefinitionRequest::file_path`].
+    /// Resolved on the server; same rules as [`crate::proto::racli::FindDefinitionRequest::file_path`].
     pub file_path: String,
     /// Zero-based line (LSP `Position`).
     pub line: u32,
@@ -134,7 +134,7 @@ pub struct FindDefinitionResponseJson {
     pub locations: Vec<LspLocationJson>,
 }
 
-/// Builds [`GetVersionResponseJson`] from the gRPC protobuf struct.
+/// Builds [`GetVersionResponseJson`] from the protobuf struct.
 pub fn get_version_response_proto_to_json(p: &GetVersionResponse) -> GetVersionResponseJson {
     GetVersionResponseJson {
         version: p.version.clone(),
@@ -152,7 +152,7 @@ fn lsp_server_info_proto_to_json(p: &LspServerInfo) -> LspServerInfoJson {
     }
 }
 
-/// Builds [`SearchResponseJson`] from the gRPC protobuf struct.
+/// Builds [`SearchResponseJson`] from the protobuf struct.
 pub fn search_response_proto_to_json(p: &SearchResponse) -> SearchResponseJson {
     SearchResponseJson {
         workspace_symbol_response: p
@@ -248,7 +248,7 @@ fn lsp_location_proto_to_json(p: &LspLocation) -> LspLocationJson {
     }
 }
 
-/// Builds [`FindDefinitionResponseJson`] from the gRPC protobuf struct.
+/// Builds [`FindDefinitionResponseJson`] from the protobuf struct.
 pub fn find_definition_response_proto_to_json(
     p: &FindDefinitionResponse,
 ) -> FindDefinitionResponseJson {

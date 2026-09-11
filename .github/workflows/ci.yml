@@ -27,7 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # tonic-prost-build runs `protoc` from build.rs; it is not on the runner image by default.
+      # prost-build runs `protoc` from build.rs; it is not on the runner image by default.
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 

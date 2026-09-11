@@ -2,12 +2,10 @@
 
 /// CLI argument parsing and subcommand dispatch for the `racli` binary.
 mod cli;
-/// gRPC client helpers for talking to `racli server` over a Unix socket.
+/// Wire-protocol client helpers for talking to `racli server` over a Unix socket.
 pub mod client;
 /// `racli find-definition`: CLI arguments and formatting for LSP go-to-definition results.
 pub mod find_definition;
-/// Unix-socket gRPC server for `racli server`.
-pub mod grpc_server;
 /// Log-level parsing and stderr tracing setup for the client subcommands.
 pub mod logging;
 /// Generic LSP client.
@@ -16,11 +14,11 @@ pub mod lsp_client;
 pub mod lsp_map;
 /// MCP server over stdio (`rmcp`); tools use an in-process rust-analyzer session and workspace watcher.
 pub mod mcp;
-/// Protobuf and tonic-generated types for the Racli gRPC API.
+/// Protobuf message types for the Racli wire protocol.
 pub mod proto;
-/// Shared live workspace backend (rust-analyzer + watcher + [`RacliSession`]) for gRPC and MCP.
+/// Shared live workspace backend (rust-analyzer + watcher + [`RacliSession`]) for the wire server and MCP.
 pub mod racli_live_backend;
-/// Shared gRPC/MCP backend (rust-analyzer + [`crate::server::Core`]).
+/// Shared wire-protocol/MCP backend (rust-analyzer + [`crate::server::Core`]).
 pub mod racli_session;
 /// `rust-analyzer` LSP child process used by `racli server`.
 pub mod rust_analyzer;
@@ -32,17 +30,21 @@ pub mod server;
 pub mod transport;
 /// Shared small helpers (e.g. Unix socket path resolution).
 pub mod utils;
+/// Length-prefixed binary framing for the Racli wire protocol.
+mod wire;
+/// Unix-socket wire-protocol server for `racli server`.
+pub mod wire_server;
 mod workspace_file_watcher;
 
 pub use cli::RunError;
 pub use cli::run;
-pub use grpc_server::GrpcServerError;
-pub use grpc_server::run_grpc_unix_socket_interactive;
-pub use grpc_server::run_grpc_unix_socket_until_shutdown;
 pub use search::SearchArgs;
 pub use search::SearchOutputFormat;
 pub use utils::DEFAULT_UNIX_SOCKET_PATH;
 pub use utils::effective_unix_socket_path;
+pub use wire_server::WireServerError;
+pub use wire_server::run_wire_unix_socket_interactive;
+pub use wire_server::run_wire_unix_socket_until_shutdown;
 
 /// Crate / binary version string embedded at compile time from `CARGO_PKG_VERSION`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

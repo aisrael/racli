@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
 
-/// Holds stateless helpers shared by gRPC handlers (e.g. [`Core::version`]).
+/// Holds stateless helpers shared by wire-protocol handlers (e.g. [`Core::version`]).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Core {}
 

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use racli::client::find_definition;
 use racli::client::search;
-use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
+use racli::wire_server::run_wire_unix_socket_until_shutdown;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
 use tempfile::tempdir;
 
@@ -45,9 +45,9 @@ async fn search_until_non_empty(sock: &Path) {
     }
 }
 
-/// Integration test: gRPC `FindDefinition` resolves `RustAnalyzerSession` in `src/server.rs` to `rust_analyzer.rs`.
+/// Integration test: `FindDefinition` resolves `RustAnalyzerSession` in `src/server.rs` to `rust_analyzer.rs`.
 #[tokio::test]
-async fn grpc_find_definition_rust_analyzer_session() {
+async fn wire_find_definition_rust_analyzer_session() {
     if std::process::Command::new("rust-analyzer")
         .arg("--version")
         .status()
@@ -65,7 +65,7 @@ async fn grpc_find_definition_rust_analyzer_session() {
 
     let sock_path = sock.clone();
     let server = tokio::spawn(async move {
-        run_grpc_unix_socket_until_shutdown(&sock_path, async {
+        run_wire_unix_socket_until_shutdown(&sock_path, async {
             let _ = stop_rx.await;
         })
         .await
