@@ -6,8 +6,8 @@ Feature: racli search
       racli search mkfifo --text
       """
     Then it should exit with status code 0
-    And stdout should contain "mkfifo"
-    And stdout should contain "sys.rs"
+    And the output should contain "mkfifo"
+    And the output should contain "sys.rs"
 
   Scenario: JSON search finds a known symbol
     When the following command is run:

@@ -80,8 +80,8 @@ async fn it_should_exit_with_status_code(world: &mut RacliWorld, expected: i32) 
     );
 }
 
-#[then(expr = "stdout should contain {string}")]
-async fn stdout_should_contain(world: &mut RacliWorld, expected: String) {
+#[then(expr = "the output should contain {string}")]
+async fn the_output_should_contain(world: &mut RacliWorld, expected: String) {
     let output = world
         .command_output
         .as_ref()
@@ -90,6 +90,21 @@ async fn stdout_should_contain(world: &mut RacliWorld, expected: String) {
         output.stdout.contains(&expected),
         "expected stdout to contain {expected:?}.\nstdout: {}\nstderr: {}",
         output.stdout,
+        output.stderr
+    );
+}
+
+#[then(regex = "^the output should be$")]
+async fn the_output_should_be(world: &mut RacliWorld, step: &Step) {
+    let expected = step.docstring.as_ref().expect("expected a docstring");
+    let output = world
+        .command_output
+        .as_ref()
+        .expect("no command has been run");
+    assert_eq!(
+        output.stdout.trim(),
+        expected.trim(),
+        "stdout mismatch.\nstderr: {}",
         output.stderr
     );
 }

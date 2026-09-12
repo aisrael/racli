@@ -6,8 +6,8 @@ Feature: racli find-references
       racli find-references fixtures/queue/src/sys.rs --line 2 --character 7 --text
       """
     Then it should exit with status code 0
-    And stdout should contain "sys.rs"
-    And stdout should contain "main.rs"
+    And the output should contain "sys.rs"
+    And the output should contain "main.rs"
 
   Scenario: JSON find-references includes the call site
     When the following command is run:
