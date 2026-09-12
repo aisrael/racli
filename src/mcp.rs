@@ -6,10 +6,13 @@ use std::sync::Arc;
 
 use mcp_proto_json::FindDefinitionRequestJson;
 use mcp_proto_json::FindDefinitionResponseJson;
+use mcp_proto_json::FindReferencesRequestJson;
+use mcp_proto_json::FindReferencesResponseJson;
 use mcp_proto_json::GetVersionResponseJson;
 use mcp_proto_json::SearchRequestJson;
 use mcp_proto_json::SearchResponseJson;
 use mcp_proto_json::find_definition_response_proto_to_json;
+use mcp_proto_json::find_references_response_proto_to_json;
 use mcp_proto_json::get_version_response_proto_to_json;
 use mcp_proto_json::search_response_proto_to_json;
 
@@ -128,6 +131,23 @@ impl RacliMcpHandler {
             .await
             .map_err(Self::racli_rpc_error_to_mcp)?;
         Ok(Json(find_definition_response_proto_to_json(&resp)))
+    }
+
+    /// Lists references (declaration included) at a path + LSP position (`Racli.FindReferences`).
+    #[tool(
+        name = "find_references",
+        description = "Runs LSP textDocument/references (declaration included) for file_path and 0-based line/character UTF-16 (mirrors gRPC Racli.FindReferences)."
+    )]
+    async fn find_references(
+        &self,
+        Parameters(req): Parameters<FindReferencesRequestJson>,
+    ) -> Result<Json<FindReferencesResponseJson>, ErrorData> {
+        let resp = self
+            .session
+            .find_references(req.file_path, req.line, req.character)
+            .await
+            .map_err(Self::racli_rpc_error_to_mcp)?;
+        Ok(Json(find_references_response_proto_to_json(&resp)))
     }
 }
 

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::proto::racli::FindDefinitionResponse;
+use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::LspServerInfo;
 use crate::proto::racli::LspWorkspaceSymbolResponse;
@@ -116,5 +117,42 @@ impl RacliSession {
         };
 
         Ok(FindDefinitionResponse { locations })
+    }
+
+    /// Resolves references (including the declaration) at `file_path` + LSP position (`Racli.FindReferences`).
+    pub async fn find_references(
+        &self,
+        file_path: String,
+        line: u32,
+        character: u32,
+    ) -> Result<FindReferencesResponse, RacliRpcError> {
+        let path = PathBuf::from(file_path.trim());
+        if path.as_os_str().is_empty() {
+            return Err(RacliRpcError::InvalidArgument(
+                "file_path must not be empty".into(),
+            ));
+        }
+        let abs = std::fs::canonicalize(&path).map_err(|e| {
+            RacliRpcError::InvalidArgument(format!("cannot resolve file path: {e}"))
+        })?;
+        let uri = crate::rust_analyzer::document_uri_from_path(&abs)
+            .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
+
+        let mut ra = self.rust_analyzer.lock().await;
+        let value = self
+            .core
+            .find_references(&mut ra, uri, line, character)
+            .await?;
+        drop(ra);
+
+        let locations = if value.is_null() {
+            vec![]
+        } else {
+            let resp: Option<Vec<lsp_types::Location>> = serde_json::from_value(value)
+                .map_err(|e| RacliRpcError::Internal(e.to_string()))?;
+            crate::lsp_map::references_to_locations(resp.unwrap_or_default())
+        };
+
+        Ok(FindReferencesResponse { locations })
     }
 }

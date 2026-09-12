@@ -9,6 +9,7 @@ use crate::VERSION;
 use crate::client;
 use crate::effective_unix_socket_path;
 use crate::find_definition;
+use crate::find_references;
 use crate::grpc_server::GrpcServerError;
 use crate::grpc_server::run_grpc_unix_socket_interactive;
 use crate::logging;
@@ -47,6 +48,8 @@ enum Command {
     Search(search::SearchArgs),
     /// Resolve the definition at a file position via rust-analyzer (LSP `textDocument/definition`).
     FindDefinition(find_definition::FindDefinitionArgs),
+    /// List references to the symbol at a file position via rust-analyzer (LSP `textDocument/references`; always includes the declaration).
+    FindReferences(find_references::FindReferencesArgs),
 }
 
 /// Arguments for `racli server` (`--port` is reserved).
@@ -103,6 +106,10 @@ pub async fn run() -> Result<(), RunError> {
         Command::FindDefinition(args) => {
             logging::init_client_tracing();
             find_definition::run_cli_find_definition(args).await
+        }
+        Command::FindReferences(args) => {
+            logging::init_client_tracing();
+            find_references::run_cli_find_references(args).await
         }
     }
 

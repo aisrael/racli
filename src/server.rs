@@ -51,6 +51,18 @@ impl Core {
         ra.text_document_definition(document_uri, line, character)
             .await
     }
+
+    /// Runs LSP `textDocument/references` on the live rust-analyzer session and returns the raw JSON `result`.
+    pub async fn find_references(
+        &self,
+        ra: &mut RustAnalyzerSession,
+        document_uri: String,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, RustAnalyzerError> {
+        ra.text_document_references(document_uri, line, character)
+            .await
+    }
 }
 
 /// Splits `query` on unescaped ASCII `|` into trimmed segments; `\|` produces a literal `|` in the segment.

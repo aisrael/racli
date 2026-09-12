@@ -1,4 +1,4 @@
-//! gRPC client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`).
+//! gRPC client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`, `FindReferences`).
 
 use std::path::Path;
 use std::time::Duration;
@@ -7,6 +7,8 @@ use tonic::transport::Endpoint;
 
 use crate::proto::racli::FindDefinitionRequest;
 use crate::proto::racli::FindDefinitionResponse;
+use crate::proto::racli::FindReferencesRequest;
+use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::SearchRequest;
@@ -38,6 +40,17 @@ pub enum ClientSearchError {
 /// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `FindDefinition`.
 #[derive(Debug, thiserror::Error)]
 pub enum ClientFindDefinitionError {
+    /// Failed to build the channel endpoint or connect over the Unix URI.
+    #[error(transparent)]
+    Transport(#[from] tonic::transport::Error),
+    /// gRPC call completed with a non-OK status from the server.
+    #[error(transparent)]
+    Status(#[from] tonic::Status),
+}
+
+/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `FindReferences`.
+#[derive(Debug, thiserror::Error)]
+pub enum ClientFindReferencesError {
     /// Failed to build the channel endpoint or connect over the Unix URI.
     #[error(transparent)]
     Transport(#[from] tonic::transport::Error),
@@ -103,6 +116,33 @@ pub async fn find_definition(
     let mut client = RacliClient::new(channel);
     let resp = client
         .find_definition(FindDefinitionRequest {
+            file_path: file_path.as_ref().to_string(),
+            line,
+            character,
+        })
+        .await?;
+
+    Ok(resp.into_inner())
+}
+
+/// Calls `FindReferences` on the server at `socket_path` with 10s connect and 60s per-request timeout.
+pub async fn find_references(
+    socket_path: &Path,
+    file_path: impl AsRef<str>,
+    line: u32,
+    character: u32,
+) -> Result<FindReferencesResponse, ClientFindReferencesError> {
+    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
+
+    let channel = ep
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
+        .connect()
+        .await?;
+
+    let mut client = RacliClient::new(channel);
+    let resp = client
+        .find_references(FindReferencesRequest {
             file_path: file_path.as_ref().to_string(),
             line,
             character,

@@ -9,6 +9,8 @@ service Racli {
   rpc Search (SearchRequest) returns (SearchResponse);
   // Runs LSP `textDocument/definition` at a path and LSP position (0-based line/character).
   rpc FindDefinition (FindDefinitionRequest) returns (FindDefinitionResponse);
+  // Runs LSP `textDocument/references` at a path and LSP position (0-based line/character); the server always includes the declaration.
+  rpc FindReferences (FindReferencesRequest) returns (FindReferencesResponse);
 }
 
 // Empty request for GetVersion (no parameters).
@@ -99,5 +101,17 @@ message FindDefinitionRequest {
 
 // Result of `Racli.FindDefinition`: zero or more definition sites (scalar/array/link flattened).
 message FindDefinitionResponse {
+  repeated LspLocation locations = 1;
+}
+
+// Parameters for `Racli.FindReferences` (absolute `file_path` resolved on the server); include_declaration is always true server-side.
+message FindReferencesRequest {
+  string file_path = 1;
+  uint32 line = 2;
+  uint32 character = 3;
+}
+
+// Result of `Racli.FindReferences`: all reference sites for the symbol (the declaration is always included).
+message FindReferencesResponse {
   repeated LspLocation locations = 1;
 }

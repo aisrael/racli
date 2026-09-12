@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::proto::racli::FindDefinitionResponse;
+use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::LspLocation;
 use crate::proto::racli::LspPosition;
@@ -31,6 +32,18 @@ pub struct SearchRequestJson {
 #[serde(rename_all = "camelCase")]
 pub struct FindDefinitionRequestJson {
     /// Resolved on the server; same rules as gRPC [`crate::proto::racli::FindDefinitionRequest::file_path`].
+    pub file_path: String,
+    /// Zero-based line (LSP `Position`).
+    pub line: u32,
+    /// Zero-based UTF-16 character offset on the line.
+    pub character: u32,
+}
+
+/// `FindReferencesRequest` JSON body for MCP `find_references`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FindReferencesRequestJson {
+    /// Resolved on the server; same rules as gRPC [`crate::proto::racli::FindReferencesRequest::file_path`].
     pub file_path: String,
     /// Zero-based line (LSP `Position`).
     pub line: u32,
@@ -131,6 +144,12 @@ pub struct SearchResponseJson {
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FindDefinitionResponseJson {
+    pub locations: Vec<LspLocationJson>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FindReferencesResponseJson {
     pub locations: Vec<LspLocationJson>,
 }
 
@@ -253,6 +272,15 @@ pub fn find_definition_response_proto_to_json(
     p: &FindDefinitionResponse,
 ) -> FindDefinitionResponseJson {
     FindDefinitionResponseJson {
+        locations: p.locations.iter().map(lsp_location_proto_to_json).collect(),
+    }
+}
+
+/// Builds [`FindReferencesResponseJson`] from the gRPC protobuf struct.
+pub fn find_references_response_proto_to_json(
+    p: &FindReferencesResponse,
+) -> FindReferencesResponseJson {
+    FindReferencesResponseJson {
         locations: p.locations.iter().map(lsp_location_proto_to_json).collect(),
     }
 }
