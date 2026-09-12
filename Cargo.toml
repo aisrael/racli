@@ -39,10 +39,16 @@ tonic-prost-build = "0.14"
 
 [dev-dependencies]
 criterion = "0.5"
+cucumber = "0.23.0"
+jsonpath-rust = "1"
 libc = "0.2"
 rmcp = { version = "1.6", features = ["client", "transport-child-process"] }
 tempfile = "3"
 
 [[bench]]
 name = "search"
+harness = false
+
+[[test]]
+name = "cucumber"
 harness = false
