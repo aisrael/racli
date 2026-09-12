@@ -1,11 +1,11 @@
 //! Compares plain `grep` against `racli search` for substring queries (workspace: this crate).
 
+use std::hint::black_box;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
-use std::hint::black_box;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
