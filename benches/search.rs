@@ -1,5 +1,6 @@
 //! Compares plain `grep` against `racli search` for substring queries (workspace: this crate).
 
+use std::hint::black_box;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
@@ -11,7 +12,6 @@ use std::time::Instant;
 
 use criterion::BenchmarkId;
 use criterion::Criterion;
-use criterion::black_box;
 use tempfile::TempDir;
 
 /// Substrings exercised against the repo (`.rs` tree for `grep`, LSP symbols for `racli`).

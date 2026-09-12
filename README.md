@@ -1,3 +1,8 @@
+[![CI Tests](https://github.com/aisrael/racli/actions/workflows/ci.yml/badge.svg)](https://github.com/aisrael/racli/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/racli.svg)](https://crates.io/crates/racli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+
 racli - a CLI tool for [rust-analyzer](https://github.com/rust-lang/rust-analyzer)
 ====
 

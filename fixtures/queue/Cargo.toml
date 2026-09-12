@@ -1,0 +1,12 @@
+[package]
+name = "queue"
+version = "0.0.2"
+authors = ["Alistair A. Israel <aisrael@gmail.com>"]
+edition = "2024"
+
+[[bin]]
+name = "queue"
+
+[dependencies]
+getopts = "0.2.24"
+libc = "0.2"
