@@ -5,13 +5,13 @@ use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
+use std::hint::black_box;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
 use criterion::BenchmarkId;
 use criterion::Criterion;
-use criterion::black_box;
 use tempfile::TempDir;
 
 /// Substrings exercised against the repo (`.rs` tree for `grep`, LSP symbols for `racli`).
