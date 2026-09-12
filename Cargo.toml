@@ -49,6 +49,10 @@ tempfile = "3"
 name = "search"
 harness = false
 
+[[bench]]
+name = "find_definition"
+harness = false
+
 [[test]]
 name = "cucumber"
 harness = false
