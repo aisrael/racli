@@ -6,6 +6,8 @@ mod cli;
 pub mod client;
 /// `racli find-definition`: CLI arguments and formatting for LSP go-to-definition results.
 pub mod find_definition;
+/// `racli find-references`: CLI arguments and formatting for LSP find-references results.
+pub mod find_references;
 /// Unix-socket gRPC server for `racli server`.
 pub mod grpc_server;
 /// Log-level parsing and stderr tracing setup for the client subcommands.

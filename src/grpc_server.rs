@@ -13,6 +13,8 @@ use tracing_subscriber::EnvFilter;
 use crate::logging;
 use crate::proto::racli::FindDefinitionRequest;
 use crate::proto::racli::FindDefinitionResponse;
+use crate::proto::racli::FindReferencesRequest;
+use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::SearchRequest;
@@ -162,6 +164,26 @@ impl Racli for RacliGrpc {
         );
         self.session
             .find_definition(inner.file_path, inner.line, inner.character)
+            .await
+            .map(Response::new)
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Runs LSP `textDocument/references` and returns flattened reference locations (declaration included).
+    async fn find_references(
+        &self,
+        request: Request<FindReferencesRequest>,
+    ) -> Result<Response<FindReferencesResponse>, Status> {
+        let inner = request.into_inner();
+        tracing::debug!(
+            rpc = "Racli.FindReferences",
+            file_path = %inner.file_path,
+            line = inner.line,
+            character = inner.character,
+            "gRPC endpoint invoked"
+        );
+        self.session
+            .find_references(inner.file_path, inner.line, inner.character)
             .await
             .map(Response::new)
             .map_err(racli_rpc_error_to_status)
