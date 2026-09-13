@@ -33,11 +33,14 @@ impl WorkspaceFileWatcherHandle {
     /// Stops the watcher thread first (so no further events are queued), then waits for
     /// the forwarding task to drain any already-buffered events and exit on its own.
     pub async fn stop(mut self) {
+        tracing::debug!("workspace file watcher: stop requested; signaling notify thread");
         let _ = self.shutdown_tx.send(());
         if let Some(join) = self.notify_thread.take() {
             let _ = join.join();
         }
+        tracing::debug!("workspace file watcher: notify thread stopped; draining forwarding task");
         let _ = self.forward_task.await;
+        tracing::debug!("workspace file watcher: forwarding task stopped");
     }
 }
 
@@ -87,6 +90,7 @@ pub(crate) fn spawn_workspace_file_watcher(
                 );
             }
         }
+        tracing::debug!("workspace file watcher: forwarding task exiting (event channel closed)");
     });
 
     WorkspaceFileWatcherHandle {
@@ -136,6 +140,7 @@ fn run_notify_thread(
 
     tracing::debug!(path = %root.display(), "workspace file watcher active");
     let _ = shutdown_rx.recv();
+    tracing::debug!(path = %root.display(), "workspace file watcher: shutdown signal received; stopping watch");
     drop(watcher);
 }
 
