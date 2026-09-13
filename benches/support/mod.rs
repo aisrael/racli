@@ -29,11 +29,9 @@ pub fn racli_executable() -> PathBuf {
         .expect("build the `racli` binary first (e.g. `cargo bench --bench search`)")
 }
 
-/// Resolves the `fixtures/queue` toy project used as the workspace for these benchmarks.
-pub fn queue_fixture_workspace() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("fixtures")
-        .join("queue")
+/// Resolves racli's own repo root, used as the benchmarked workspace.
+pub fn racli_workspace() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
 /// Polls until `path` exists or `timeout` elapses.
