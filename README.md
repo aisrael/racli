@@ -33,7 +33,7 @@ In the usual setup there are three pieces:
 - **rust-analyzer** — the Language Server process that `racli server` drives over LSP.
 - **racli server** — a long-running gRPC listener on a Unix socket (default `/tmp/racli.sock`); it spawns `rust-analyzer`, completes an LSP `initialize` handshake with the current working directory as the workspace root, and serves RPCs to clients.
 - **racli (client)** — the same binary used in client mode: subcommands that connect to the socket and call the server.
-- **racli mcp** — MCP over stdio only: spawns rust-analyzer and the workspace file watcher inside the MCP child process (no Unix socket). Use **`racli server`** for `racli search`, `racli find-definition`, and `racli version`.
+- **racli mcp** — MCP over stdio only: spawns rust-analyzer and the workspace file watcher inside the MCP child process (no Unix socket). Use **`racli server`** for `racli search`, `racli find-definition`, `racli find-references`, and `racli version`.
 
 Stop the server with Ctrl+C or SIGTERM to trigger LSP `shutdown`/`exit` and clean termination of the child.
 
@@ -56,6 +56,10 @@ Separate alternative patterns with a single unescaped `|` (similar to `grep -E`)
 ### `racli find-definition <PATH> --line <N> --character <N>`
 
 Runs LSP [`textDocument/definition`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_definition): the client calls gRPC `FindDefinition` with an absolute filesystem path (after canonicalizing `PATH` on the client) plus a **0-based** line and **0-based** UTF-16 character offset on that line, matching LSP `Position`. The server resolves the path again, builds a `file://` URI, and returns a list of definition sites (scalar, array, and link-shaped LSP results are flattened to `uri` + `range`). Default output is **JSON**; pass `--text` for one human-readable line per location. Use the same workspace and socket rules as `racli search`; rust-analyzer must have indexed the crate (if the server just started, wait until analysis has caught up—for example until `racli search` returns symbols—before relying on definitions).
+
+### `racli find-references <PATH> --line <N> --character <N>`
+
+Runs LSP [`textDocument/references`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_references): the client calls gRPC `FindReferences` with an absolute filesystem path (after canonicalizing `PATH` on the client) plus a **0-based** line and **0-based** UTF-16 character offset on that line, matching LSP `Position`. The declaration is included in the results. The server resolves the path again, builds a `file://` URI, and returns a list of reference locations (`uri` + `range`). Default output is **JSON**; pass `--text` for one human-readable line per location. Use the same workspace and socket rules as `racli search` and `racli find-definition`.
 
 ### `racli version`
 
