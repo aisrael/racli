@@ -23,36 +23,61 @@ struct DefinitionQuery {
     symbol: &'static str,
 }
 
-/// Reference sites in the `fixtures/queue` fixture, each resolving to a `sys.rs` declaration.
+/// Reference sites in racli's own `src/` tree, one per most-frequent symbol, each resolving to
+/// that symbol's declaration elsewhere in the crate.
 const QUERIES: &[DefinitionQuery] = &[
     DefinitionQuery {
-        file: "src/main.rs",
-        line: 80,
-        character: 21,
-        symbol: "mkfifo",
+        file: "src/racli_session.rs",
+        line: 38,
+        character: 29,
+        symbol: "RustAnalyzerSession",
     },
     DefinitionQuery {
-        file: "src/main.rs",
-        line: 88,
+        file: "src/grpc_server.rs",
+        line: 121,
+        character: 17,
+        symbol: "RacliSession",
+    },
+    DefinitionQuery {
+        file: "src/racli_session.rs",
+        line: 36,
         character: 10,
-        symbol: "unlink",
+        symbol: "Core",
+    },
+    DefinitionQuery {
+        file: "src/cli.rs",
+        line: 68,
+        character: 45,
+        symbol: "effective_unix_socket_path",
+    },
+    DefinitionQuery {
+        file: "src/rust_analyzer.rs",
+        line: 88,
+        character: 35,
+        symbol: "LspError",
     },
 ];
 
-/// Approximates "go to definition of `symbol`" by grepping for its `fn` declaration under `root`.
+/// Approximates "go to definition of `symbol`" by grepping for its `fn`/`struct`/`enum`
+/// declaration under `root`.
 ///
 /// This is a naive textual stand-in for real go-to-definition, not a correctness-equivalent
-/// implementation: it matches any `fn <symbol>` under `src/` regardless of module or `impl` block,
-/// would misfire on overloaded/shadowed names, and does not handle multi-line signatures. The
-/// benchmark compares raw speed, not whether the two approaches agree on the resulting location.
+/// implementation: it matches any of those three declaration forms under `src/` regardless of
+/// module or `impl` block, would misfire on overloaded/shadowed names, and does not handle
+/// multi-line signatures. The benchmark compares raw speed, not whether the two approaches agree
+/// on the resulting location.
 fn grep_definition_approx(root: &Path, symbol: &str) {
-    let pattern = format!("fn {symbol}");
     let status = Command::new("grep")
         .arg("-r")
         .arg("-n")
         .arg("-F")
         .arg("--include=*.rs")
-        .arg(&pattern)
+        .arg("-e")
+        .arg(format!("fn {symbol}"))
+        .arg("-e")
+        .arg(format!("struct {symbol}"))
+        .arg("-e")
+        .arg(format!("enum {symbol}"))
         .arg(root.join("src"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -128,7 +153,7 @@ fn main() {
 
 #[cfg(unix)]
 fn main() {
-    let workspace = support::queue_fixture_workspace();
+    let workspace = support::racli_workspace();
     let racli = support::racli_executable();
     let server = support::RacliServer::start(&workspace, |sock| {
         support::poll_until(
@@ -137,7 +162,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::search(sock, "mkfifo")
+                        racli::client::search(sock, "RustAnalyzerSession")
                     )
                     .await,
                     Ok(Ok(_))
@@ -146,11 +171,11 @@ fn main() {
             "racli server did not accept search RPCs in time",
         );
 
-        let main_rs = workspace
+        let racli_session_rs = workspace
             .join("src")
-            .join("main.rs")
+            .join("racli_session.rs")
             .canonicalize()
-            .expect("canonicalize fixtures/queue/src/main.rs")
+            .expect("canonicalize src/racli_session.rs")
             .display()
             .to_string();
         support::poll_until(
@@ -159,13 +184,13 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::find_definition(sock, &main_rs, 80, 21),
+                        racli::client::find_definition(sock, &racli_session_rs, 38, 29),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.locations.is_empty()
                 )
             },
-            "racli server did not resolve the `mkfifo` definition in time",
+            "racli server did not resolve the `RustAnalyzerSession` definition in time",
         );
     });
     let socket = server.socket().to_path_buf();

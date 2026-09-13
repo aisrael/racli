@@ -1,4 +1,4 @@
-//! Compares plain `grep` against `racli search` for substring queries (workspace: `fixtures/queue`).
+//! Compares plain `grep` against `racli search` for substring queries (workspace: racli's own source tree).
 
 mod support;
 
@@ -11,8 +11,14 @@ use std::time::Duration;
 use criterion::BenchmarkId;
 use criterion::Criterion;
 
-/// Substrings exercised against `fixtures/queue` (`.rs` tree for `grep`, LSP symbols for `racli`).
-const QUERIES: &[&str] = &["queue", "mkfifo", "unlink", "handle", "server"];
+/// The most frequent real symbols in racli's own `src/` tree (`.rs` tree for `grep`, LSP symbols for `racli`).
+const QUERIES: &[&str] = &[
+    "RustAnalyzerSession",
+    "RacliSession",
+    "Core",
+    "effective_unix_socket_path",
+    "LspError",
+];
 
 /// Runs `grep -r` with a fixed substring over `*.rs` under `root` (discards output).
 fn grep_rs_substring(root: &Path, query: &str) {
@@ -71,7 +77,7 @@ fn main() {
 
 #[cfg(unix)]
 fn main() {
-    let workspace = support::queue_fixture_workspace();
+    let workspace = support::racli_workspace();
     let racli = support::racli_executable();
     let server = support::RacliServer::start(&workspace, |sock| {
         support::poll_until(
@@ -80,7 +86,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::search(sock, "mkfifo")
+                        racli::client::search(sock, "RustAnalyzerSession")
                     )
                     .await,
                     Ok(Ok(_))
