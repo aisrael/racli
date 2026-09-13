@@ -30,14 +30,14 @@ pub struct WorkspaceFileWatcherHandle {
 }
 
 impl WorkspaceFileWatcherHandle {
-    /// Aborts LSP forwarding, stops the watcher thread, and waits for it to finish.
+    /// Stops the watcher thread first (so no further events are queued), then waits for
+    /// the forwarding task to drain any already-buffered events and exit on its own.
     pub async fn stop(mut self) {
-        self.forward_task.abort();
-        let _ = self.forward_task.await;
         let _ = self.shutdown_tx.send(());
         if let Some(join) = self.notify_thread.take() {
             let _ = join.join();
         }
+        let _ = self.forward_task.await;
     }
 }
 
