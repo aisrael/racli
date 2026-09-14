@@ -53,6 +53,10 @@ harness = false
 name = "find_definition"
 harness = false
 
+[[bench]]
+name = "find_references"
+harness = false
+
 [[test]]
 name = "cucumber"
 harness = false
