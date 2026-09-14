@@ -14,6 +14,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::logging;
 use crate::proto::racli::FindDefinitionRequest;
+use crate::proto::racli::FindReferencesRequest;
 use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::SearchRequest;
 use crate::racli_live_backend::RacliBackendStartError;
@@ -181,6 +182,28 @@ async fn handle_connection_inner(
             }
             Err(e) => (Status::Internal, e.to_string().into_bytes()),
         },
+        Method::FindReferences => match FindReferencesRequest::decode(&payload[..]) {
+            Ok(req) => {
+                tracing::debug!(
+                    rpc = "FindReferences",
+                    file_path = %req.file_path,
+                    line = req.line,
+                    character = req.character,
+                    "wire endpoint invoked"
+                );
+                match session
+                    .find_references(req.file_path, req.line, req.character)
+                    .await
+                {
+                    Ok(resp) => (Status::Ok, resp.encode_to_vec()),
+                    Err(e) => {
+                        let (status, msg) = racli_rpc_error_to_status(e);
+                        (status, msg.into_bytes())
+                    }
+                }
+            }
+            Err(e) => (Status::Internal, e.to_string().into_bytes()),
+        },
     };
 
     wire::write_frame(stream, status as u8, &response_bytes).await
@@ -253,11 +276,10 @@ pub async fn run_wire_unix_socket_until_shutdown<P: AsRef<Path>>(
         }
     };
 
-    let listener =
-        UnixListener::bind(socket_path).map_err(|source| WireServerError::Bind {
-            path: path_buf.clone(),
-            source,
-        })?;
+    let listener = UnixListener::bind(socket_path).map_err(|source| WireServerError::Bind {
+        path: path_buf.clone(),
+        source,
+    })?;
 
     tracing::info!(
         version = %crate::VERSION,

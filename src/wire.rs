@@ -20,6 +20,8 @@ pub enum Method {
     Search = 1,
     /// `RacliSession::find_definition`.
     FindDefinition = 2,
+    /// `RacliSession::find_references`.
+    FindReferences = 3,
 }
 
 impl TryFrom<u8> for Method {
@@ -30,6 +32,7 @@ impl TryFrom<u8> for Method {
             0 => Ok(Method::GetVersion),
             1 => Ok(Method::Search),
             2 => Ok(Method::FindDefinition),
+            3 => Ok(Method::FindReferences),
             other => Err(WireError::UnknownMethod(other)),
         }
     }
@@ -138,11 +141,17 @@ mod tests {
 
     #[test]
     fn method_try_from_rejects_unknown_tag() {
-        assert!(matches!(Method::try_from(99), Err(WireError::UnknownMethod(99))));
+        assert!(matches!(
+            Method::try_from(99),
+            Err(WireError::UnknownMethod(99))
+        ));
     }
 
     #[test]
     fn status_try_from_rejects_unknown_tag() {
-        assert!(matches!(Status::try_from(99), Err(WireError::UnknownStatus(99))));
+        assert!(matches!(
+            Status::try_from(99),
+            Err(WireError::UnknownStatus(99))
+        ));
     }
 }

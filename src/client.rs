@@ -1,4 +1,4 @@
-//! Wire-protocol client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`).
+//! Wire-protocol client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`, `FindReferences`).
 
 use std::path::Path;
 use std::time::Duration;
@@ -8,6 +8,8 @@ use tokio::net::UnixStream;
 
 use crate::proto::racli::FindDefinitionRequest;
 use crate::proto::racli::FindDefinitionResponse;
+use crate::proto::racli::FindReferencesRequest;
+use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::SearchRequest;
@@ -114,6 +116,27 @@ pub async fn find_definition(
     tokio::time::timeout(
         Duration::from_secs(60),
         roundtrip(&mut stream, Method::FindDefinition, &request),
+    )
+    .await
+    .map_err(|_| ClientError::TimedOut)?
+}
+
+/// Calls `FindReferences` on the server at `socket_path` with 10s connect and 60s per-request timeout.
+pub async fn find_references(
+    socket_path: &Path,
+    file_path: impl AsRef<str>,
+    line: u32,
+    character: u32,
+) -> Result<FindReferencesResponse, ClientError> {
+    let mut stream = connect(socket_path, Duration::from_secs(10)).await?;
+    let request = FindReferencesRequest {
+        file_path: file_path.as_ref().to_string(),
+        line,
+        character,
+    };
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        roundtrip(&mut stream, Method::FindReferences, &request),
     )
     .await
     .map_err(|_| ClientError::TimedOut)?

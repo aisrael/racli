@@ -12,6 +12,8 @@ use lsp_types::GotoDefinitionParams;
 use lsp_types::InitializeParams;
 use lsp_types::PartialResultParams;
 use lsp_types::Position;
+use lsp_types::ReferenceContext;
+use lsp_types::ReferenceParams;
 use lsp_types::TextDocumentIdentifier;
 use lsp_types::TextDocumentPositionParams;
 use lsp_types::Uri;
@@ -22,6 +24,7 @@ use lsp_types::WorkspaceSymbolParams;
 use lsp_types::notification::DidChangeWatchedFiles;
 use lsp_types::notification::Notification;
 use lsp_types::request::GotoDefinition;
+use lsp_types::request::References;
 use lsp_types::request::WorkspaceSymbolRequest;
 use serde_json::Value;
 use tokio::process::Child;
@@ -299,6 +302,36 @@ impl RustAnalyzerSession {
             partial_result_params: PartialResultParams::default(),
         };
         let result = lsp.send_request::<GotoDefinition>(params).await?;
+        serde_json::to_value(result).map_err(RustAnalyzerError::from)
+    }
+
+    /// Sends LSP `textDocument/references` for `document_uri` at `line` / `character` (0-based LSP position), always including the declaration, and returns the JSON-RPC `result` (`null` or a location array).
+    pub async fn text_document_references(
+        &mut self,
+        document_uri: impl Into<String>,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, RustAnalyzerError> {
+        let uri_str = document_uri.into();
+        let uri: Uri = uri_str
+            .parse()
+            .map_err(|_| RustAnalyzerError::InvalidDocumentUrl)?;
+        let lsp = self
+            .lsp
+            .as_ref()
+            .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
+        let params = ReferenceParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: ReferenceContext {
+                include_declaration: true,
+            },
+        };
+        let result = lsp.send_request::<References>(params).await?;
         serde_json::to_value(result).map_err(RustAnalyzerError::from)
     }
 

@@ -91,3 +91,15 @@ message FindDefinitionRequest {
 message FindDefinitionResponse {
   repeated LspLocation locations = 1;
 }
+
+// Parameters for `Racli.FindReferences` (absolute `file_path` resolved on the server); include_declaration is always true server-side.
+message FindReferencesRequest {
+  string file_path = 1;
+  uint32 line = 2;
+  uint32 character = 3;
+}
+
+// Result of `Racli.FindReferences`: all reference sites for the symbol (the declaration is always included).
+message FindReferencesResponse {
+  repeated LspLocation locations = 1;
+}

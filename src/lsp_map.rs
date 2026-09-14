@@ -56,6 +56,11 @@ pub fn goto_definition_response_to_locations(resp: GotoDefinitionResponse) -> Ve
     }
 }
 
+/// Flattens LSP `textDocument/references` results into protobuf [`LspLocation`] rows.
+pub fn references_to_locations(locations: Vec<Location>) -> Vec<LspLocation> {
+    locations.into_iter().map(location_to_proto).collect()
+}
+
 fn location_to_proto(loc: Location) -> LspLocation {
     LspLocation {
         uri: uri_to_string(&loc.uri),

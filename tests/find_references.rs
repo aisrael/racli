@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use racli::client::find_definition;
+use racli::client::find_references;
 use racli::client::search;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
 use racli::wire_server::run_wire_unix_socket_until_shutdown;
@@ -45,9 +45,9 @@ async fn search_until_non_empty(sock: &Path) {
     }
 }
 
-/// Integration test: `FindDefinition` resolves `RustAnalyzerSession` in `src/server.rs` to `rust_analyzer.rs`.
+/// Integration test: `FindReferences` resolves `RustAnalyzerSession` in `src/server.rs` to its multiple usages.
 #[tokio::test]
-async fn wire_find_definition_rust_analyzer_session() {
+async fn wire_find_references_rust_analyzer_session() {
     if std::process::Command::new("rust-analyzer")
         .arg("--version")
         .status()
@@ -80,20 +80,34 @@ async fn wire_find_definition_rust_analyzer_session() {
     let file_path = server_rs.canonicalize().expect("canonicalize server.rs");
 
     // 0-based LSP position on `RustAnalyzerSession` in `use crate::rust_analyzer::RustAnalyzerSession;`.
-    let resp = find_definition(sock.as_path(), file_path.to_string_lossy().as_ref(), 13, 27)
+    let resp = find_references(sock.as_path(), file_path.to_string_lossy().as_ref(), 13, 27)
         .await
-        .expect("find_definition");
+        .expect("find_references");
 
-    let mut saw_rust_analyzer = false;
+    assert!(
+        resp.locations.len() > 1,
+        "expected more than one reference to RustAnalyzerSession, got {:?}",
+        resp.locations
+    );
+
+    let mut saw_declaration = false;
+    let mut saw_other_usage = false;
     for loc in &resp.locations {
+        assert!(loc.range.is_some(), "expected range on reference location");
         if loc.uri.ends_with("rust_analyzer.rs") {
-            saw_rust_analyzer = true;
-            assert!(loc.range.is_some(), "expected range on definition location");
+            saw_declaration = true;
+        } else if loc.uri.ends_with("racli_session.rs") || loc.uri.ends_with("server.rs") {
+            saw_other_usage = true;
         }
     }
     assert!(
-        saw_rust_analyzer,
-        "expected at least one definition in rust_analyzer.rs, got {:?}",
+        saw_declaration,
+        "expected the declaration site in rust_analyzer.rs, got {:?}",
+        resp.locations
+    );
+    assert!(
+        saw_other_usage,
+        "expected at least one other usage site, got {:?}",
         resp.locations
     );
 

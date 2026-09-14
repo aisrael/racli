@@ -2,9 +2,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use racli::client::search;
-use racli::wire_server::run_wire_unix_socket_until_shutdown;
 use racli::proto::racli::SearchResponse;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
+use racli::wire_server::run_wire_unix_socket_until_shutdown;
 use tempfile::tempdir;
 
 fn payload_non_empty(payload: &Payload) -> bool {

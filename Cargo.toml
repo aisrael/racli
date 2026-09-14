@@ -47,3 +47,7 @@ harness = false
 [[bench]]
 name = "find_definition"
 harness = false
+
+[[bench]]
+name = "find_references"
+harness = false
