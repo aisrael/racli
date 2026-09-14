@@ -1,10 +1,12 @@
-//! gRPC client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`, `FindReferences`).
+//! gRPC client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`, `FindReferences`, `DocumentSymbols`).
 
 use std::path::Path;
 use std::time::Duration;
 
 use tonic::transport::Endpoint;
 
+use crate::proto::racli::DocumentSymbolsRequest;
+use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionRequest;
 use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::FindReferencesRequest;
@@ -125,6 +127,17 @@ pub async fn find_definition(
     Ok(resp.into_inner())
 }
 
+/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `DocumentSymbols`.
+#[derive(Debug, thiserror::Error)]
+pub enum ClientDocumentSymbolsError {
+    /// Failed to build the channel endpoint or connect over the Unix URI.
+    #[error(transparent)]
+    Transport(#[from] tonic::transport::Error),
+    /// gRPC call completed with a non-OK status from the server.
+    #[error(transparent)]
+    Status(#[from] tonic::Status),
+}
+
 /// Calls `FindReferences` on the server at `socket_path` with 10s connect and 60s per-request timeout.
 pub async fn find_references(
     socket_path: &Path,
@@ -146,6 +159,29 @@ pub async fn find_references(
             file_path: file_path.as_ref().to_string(),
             line,
             character,
+        })
+        .await?;
+
+    Ok(resp.into_inner())
+}
+
+/// Calls `DocumentSymbols` on the server at `socket_path` with 10s connect and 60s per-request timeout.
+pub async fn document_symbols(
+    socket_path: &Path,
+    file_path: impl AsRef<str>,
+) -> Result<DocumentSymbolsResponse, ClientDocumentSymbolsError> {
+    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
+
+    let channel = ep
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
+        .connect()
+        .await?;
+
+    let mut client = RacliClient::new(channel);
+    let resp = client
+        .document_symbols(DocumentSymbolsRequest {
+            file_path: file_path.as_ref().to_string(),
         })
         .await?;
 

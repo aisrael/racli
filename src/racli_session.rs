@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
+use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionResponse;
@@ -154,5 +155,37 @@ impl RacliSession {
         };
 
         Ok(FindReferencesResponse { locations })
+    }
+
+    /// Runs LSP `textDocument/documentSymbol` for `file_path` (`Racli.DocumentSymbols`); file-scoped, no line/character.
+    pub async fn document_symbols(
+        &self,
+        file_path: String,
+    ) -> Result<DocumentSymbolsResponse, RacliRpcError> {
+        let path = PathBuf::from(file_path.trim());
+        if path.as_os_str().is_empty() {
+            return Err(RacliRpcError::InvalidArgument(
+                "file_path must not be empty".into(),
+            ));
+        }
+        let abs = std::fs::canonicalize(&path).map_err(|e| {
+            RacliRpcError::InvalidArgument(format!("cannot resolve file path: {e}"))
+        })?;
+        let uri = crate::rust_analyzer::document_uri_from_path(&abs)
+            .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
+
+        let mut ra = self.rust_analyzer.lock().await;
+        let value = self.core.document_symbols(&mut ra, uri).await?;
+        drop(ra);
+
+        let symbols = if value.is_null() {
+            vec![]
+        } else {
+            let resp: lsp_types::DocumentSymbolResponse = serde_json::from_value(value)
+                .map_err(|e| RacliRpcError::Internal(e.to_string()))?;
+            crate::lsp_map::document_symbol_response_to_symbols(resp)
+        };
+
+        Ok(DocumentSymbolsResponse { symbols })
     }
 }

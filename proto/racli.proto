@@ -11,6 +11,8 @@ service Racli {
   rpc FindDefinition (FindDefinitionRequest) returns (FindDefinitionResponse);
   // Runs LSP `textDocument/references` at a path and LSP position (0-based line/character); the server always includes the declaration.
   rpc FindReferences (FindReferencesRequest) returns (FindReferencesResponse);
+  // Runs LSP `textDocument/documentSymbol` for a single file (no line/character).
+  rpc DocumentSymbols (DocumentSymbolsRequest) returns (DocumentSymbolsResponse);
 }
 
 // Empty request for GetVersion (no parameters).
@@ -64,6 +66,16 @@ message LspSymbolInformation {
   LspRange range = 4;
 }
 
+// Subset of LSP `DocumentSymbol` (hierarchical; `children` recurses for nested symbols, e.g. methods under an `impl`).
+message LspDocumentSymbol {
+  string name = 1;
+  optional string detail = 2;
+  string kind = 3;
+  LspRange range = 4;
+  LspRange selection_range = 5;
+  repeated LspDocumentSymbol children = 6;
+}
+
 // `WorkspaceSymbolResponse::Flat`: `Vec<SymbolInformation>`.
 message LspSymbolInformationList {
   repeated LspSymbolInformation items = 1;
@@ -114,4 +126,14 @@ message FindReferencesRequest {
 // Result of `Racli.FindReferences`: all reference sites for the symbol (the declaration is always included).
 message FindReferencesResponse {
   repeated LspLocation locations = 1;
+}
+
+// Parameters for `Racli.DocumentSymbols` (absolute `file_path` resolved on the server).
+message DocumentSymbolsRequest {
+  string file_path = 1;
+}
+
+// Result of `Racli.DocumentSymbols`: top-level symbols in the file, each possibly with nested children.
+message DocumentSymbolsResponse {
+  repeated LspDocumentSymbol symbols = 1;
 }

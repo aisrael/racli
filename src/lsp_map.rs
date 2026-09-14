@@ -1,5 +1,7 @@
 //! Maps `lsp_types` workspace symbol responses into racli protobuf messages.
 
+use lsp_types::DocumentSymbol;
+use lsp_types::DocumentSymbolResponse;
 use lsp_types::GotoDefinitionResponse;
 use lsp_types::Location;
 use lsp_types::LocationLink;
@@ -12,6 +14,7 @@ use lsp_types::WorkspaceLocation;
 use lsp_types::WorkspaceSymbol;
 use lsp_types::WorkspaceSymbolResponse;
 
+use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspLocation;
 use crate::proto::racli::LspPosition;
 use crate::proto::racli::LspRange;
@@ -59,6 +62,44 @@ pub fn goto_definition_response_to_locations(resp: GotoDefinitionResponse) -> Ve
 /// Maps LSP `textDocument/references` results into protobuf [`LspLocation`] rows.
 pub fn references_to_locations(locations: Vec<Location>) -> Vec<LspLocation> {
     locations.into_iter().map(location_to_proto).collect()
+}
+
+/// Maps an LSP `textDocument/documentSymbol` result into top-level protobuf [`LspDocumentSymbol`] rows (children nested recursively).
+///
+/// `DocumentSymbolResponse::Flat` (rust-analyzer does not emit this shape in practice) is degraded to childless symbols.
+pub fn document_symbol_response_to_symbols(resp: DocumentSymbolResponse) -> Vec<LspDocumentSymbol> {
+    match resp {
+        DocumentSymbolResponse::Nested(items) => {
+            items.into_iter().map(document_symbol_to_proto).collect()
+        }
+        DocumentSymbolResponse::Flat(items) => items
+            .into_iter()
+            .map(|si| LspDocumentSymbol {
+                name: si.name,
+                detail: None,
+                kind: symbol_kind_to_string(si.kind),
+                range: Some(range_to_proto(si.location.range)),
+                selection_range: Some(range_to_proto(si.location.range)),
+                children: vec![],
+            })
+            .collect(),
+    }
+}
+
+fn document_symbol_to_proto(ds: DocumentSymbol) -> LspDocumentSymbol {
+    LspDocumentSymbol {
+        name: ds.name,
+        detail: ds.detail,
+        kind: symbol_kind_to_string(ds.kind),
+        range: Some(range_to_proto(ds.range)),
+        selection_range: Some(range_to_proto(ds.selection_range)),
+        children: ds
+            .children
+            .unwrap_or_default()
+            .into_iter()
+            .map(document_symbol_to_proto)
+            .collect(),
+    }
 }
 
 fn location_to_proto(loc: Location) -> LspLocation {

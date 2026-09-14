@@ -4,9 +4,11 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionResponse;
+use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspLocation;
 use crate::proto::racli::LspPosition;
 use crate::proto::racli::LspRange;
@@ -49,6 +51,14 @@ pub struct FindReferencesRequestJson {
     pub line: u32,
     /// Zero-based UTF-16 character offset on the line.
     pub character: u32,
+}
+
+/// `DocumentSymbolsRequest` JSON body for MCP `document_symbols`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentSymbolsRequestJson {
+    /// Resolved on the server; same rules as gRPC [`crate::proto::racli::DocumentSymbolsRequest::file_path`].
+    pub file_path: String,
 }
 
 /// Mirrors [`GetVersionResponse`] for structured MCP output.
@@ -151,6 +161,27 @@ pub struct FindDefinitionResponseJson {
 #[serde(rename_all = "camelCase")]
 pub struct FindReferencesResponseJson {
     pub locations: Vec<LspLocationJson>,
+}
+
+/// Mirrors [`LspDocumentSymbol`]; `children` recurses for nested symbols (e.g. methods under an `impl`).
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LspDocumentSymbolJson {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<LspRangeJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_range: Option<LspRangeJson>,
+    pub children: Vec<LspDocumentSymbolJson>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentSymbolsResponseJson {
+    pub symbols: Vec<LspDocumentSymbolJson>,
 }
 
 /// Builds [`GetVersionResponseJson`] from the gRPC protobuf struct.
@@ -282,6 +313,34 @@ pub fn find_references_response_proto_to_json(
 ) -> FindReferencesResponseJson {
     FindReferencesResponseJson {
         locations: p.locations.iter().map(lsp_location_proto_to_json).collect(),
+    }
+}
+
+fn lsp_document_symbol_proto_to_json(p: &LspDocumentSymbol) -> LspDocumentSymbolJson {
+    LspDocumentSymbolJson {
+        name: p.name.clone(),
+        detail: p.detail.clone(),
+        kind: p.kind.clone(),
+        range: p.range.as_ref().map(range_proto_to_json),
+        selection_range: p.selection_range.as_ref().map(range_proto_to_json),
+        children: p
+            .children
+            .iter()
+            .map(lsp_document_symbol_proto_to_json)
+            .collect(),
+    }
+}
+
+/// Builds [`DocumentSymbolsResponseJson`] from the gRPC protobuf struct.
+pub fn document_symbols_response_proto_to_json(
+    p: &DocumentSymbolsResponse,
+) -> DocumentSymbolsResponseJson {
+    DocumentSymbolsResponseJson {
+        symbols: p
+            .symbols
+            .iter()
+            .map(lsp_document_symbol_proto_to_json)
+            .collect(),
     }
 }
 
