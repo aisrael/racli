@@ -90,7 +90,10 @@ async fn grpc_document_symbols_server_rs_core_struct() {
 
     // Flatten the tree (depth-first) so `Core`'s methods are found whether rust-analyzer nests
     // them directly under the `Core` struct symbol or under an intermediate `impl` symbol.
-    fn collect_names<'a>(symbols: &'a [racli::proto::racli::LspDocumentSymbol], out: &mut Vec<&'a str>) {
+    fn collect_names<'a>(
+        symbols: &'a [racli::proto::racli::LspDocumentSymbol],
+        out: &mut Vec<&'a str>,
+    ) {
         for s in symbols {
             out.push(s.name.as_str());
             collect_names(&s.children, out);

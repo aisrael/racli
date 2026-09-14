@@ -241,15 +241,15 @@ mod document_symbols_output_tests {
 
     #[test]
     fn document_symbols_args_text_flag_selects_text() {
-        let args = DocumentSymbolsArgs::try_parse_from(["racli", "--text", "src/main.rs"])
-            .expect("parse");
+        let args =
+            DocumentSymbolsArgs::try_parse_from(["racli", "--text", "src/main.rs"]).expect("parse");
         assert_eq!(args.print_kind(), DocumentSymbolsPrintKind::Text);
     }
 
     #[test]
     fn document_symbols_args_json_flag_selects_json() {
-        let args = DocumentSymbolsArgs::try_parse_from(["racli", "--json", "src/main.rs"])
-            .expect("parse");
+        let args =
+            DocumentSymbolsArgs::try_parse_from(["racli", "--json", "src/main.rs"]).expect("parse");
         assert_eq!(args.print_kind(), DocumentSymbolsPrintKind::Json);
     }
 
@@ -268,12 +268,8 @@ mod document_symbols_output_tests {
 
     #[test]
     fn document_symbols_args_text_and_json_conflict() {
-        let args = DocumentSymbolsArgs::try_parse_from([
-            "racli",
-            "--text",
-            "--json",
-            "src/main.rs",
-        ]);
+        let args =
+            DocumentSymbolsArgs::try_parse_from(["racli", "--text", "--json", "src/main.rs"]);
         assert!(args.is_err(), "expected --text and --json to conflict");
     }
 }
