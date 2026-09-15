@@ -86,9 +86,10 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
         .expect("canonicalize src/rust_analyzer.rs");
 
     // 0-based LSP position on `document_uri_from_path` in `pub fn document_uri_from_path(...)`.
-    let prepared = prepare_call_hierarchy(sock.as_path(), file_path.to_string_lossy().as_ref(), 482, 7)
-        .await
-        .expect("prepare_call_hierarchy");
+    let prepared =
+        prepare_call_hierarchy(sock.as_path(), file_path.to_string_lossy().as_ref(), 482, 7)
+            .await
+            .expect("prepare_call_hierarchy");
 
     assert!(
         !prepared.items.is_empty(),
@@ -109,7 +110,11 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
     let racli_session_callers = calls
         .calls
         .iter()
-        .filter(|c| c.from.as_ref().is_some_and(|f| f.uri.ends_with("racli_session.rs")))
+        .filter(|c| {
+            c.from
+                .as_ref()
+                .is_some_and(|f| f.uri.ends_with("racli_session.rs"))
+        })
         .count();
     assert!(
         racli_session_callers >= 2,

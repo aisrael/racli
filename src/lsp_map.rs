@@ -225,7 +225,11 @@ pub(crate) fn call_hierarchy_item_from_proto(
         tags: None,
         detail: item.detail.clone(),
         uri,
-        range: item.range.as_ref().map(proto_range_to_range).unwrap_or_default(),
+        range: item
+            .range
+            .as_ref()
+            .map(proto_range_to_range)
+            .unwrap_or_default(),
         selection_range: item
             .selection_range
             .as_ref()

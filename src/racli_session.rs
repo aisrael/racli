@@ -219,7 +219,8 @@ impl RacliSession {
             vec![]
         } else {
             let resp: Option<Vec<lsp_types::CallHierarchyIncomingCall>> =
-                serde_json::from_value(value).map_err(|e| RacliRpcError::Internal(e.to_string()))?;
+                serde_json::from_value(value)
+                    .map_err(|e| RacliRpcError::Internal(e.to_string()))?;
             resp.unwrap_or_default()
                 .into_iter()
                 .map(crate::lsp_map::call_hierarchy_incoming_call_to_proto)
@@ -248,7 +249,8 @@ impl RacliSession {
             vec![]
         } else {
             let resp: Option<Vec<lsp_types::CallHierarchyOutgoingCall>> =
-                serde_json::from_value(value).map_err(|e| RacliRpcError::Internal(e.to_string()))?;
+                serde_json::from_value(value)
+                    .map_err(|e| RacliRpcError::Internal(e.to_string()))?;
             resp.unwrap_or_default()
                 .into_iter()
                 .map(crate::lsp_map::call_hierarchy_outgoing_call_to_proto)

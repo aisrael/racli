@@ -337,7 +337,14 @@ fn walk<'a>(
         for (next_item, ranges) in steps {
             let is_new = visited.insert(visit_key(&next_item));
             let children = if is_new && depth_remaining > 1 {
-                walk(backend, incoming, next_item.clone(), depth_remaining - 1, visited).await
+                walk(
+                    backend,
+                    incoming,
+                    next_item.clone(),
+                    depth_remaining - 1,
+                    visited,
+                )
+                .await
             } else {
                 Vec::new()
             };
@@ -428,7 +435,9 @@ pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
         }
     };
     let file_path = abs.display().to_string();
-    let backend = SocketBackend { socket: sock.clone() };
+    let backend = SocketBackend {
+        socket: sock.clone(),
+    };
 
     match tokio::time::timeout(
         Duration::from_secs(60),
@@ -480,7 +489,10 @@ fn print_call_hierarchy_json(result: &CallHierarchyOutput) {
 }
 
 fn print_call_hierarchy_text(result: &CallHierarchyOutput) {
-    println!("{} ({}) {}", result.item.name, result.item.kind, result.item.uri);
+    println!(
+        "{} ({}) {}",
+        result.item.name, result.item.kind, result.item.uri
+    );
     if let Some(incoming) = &result.incoming {
         println!("<- callers:");
         if incoming.is_empty() {
@@ -552,7 +564,11 @@ mod tests {
             &self,
             item: LspCallHierarchyItem,
         ) -> Result<Vec<LspCallHierarchyIncomingCall>, String> {
-            let callers = self.callers.get(item.name.as_str()).cloned().unwrap_or_default();
+            let callers = self
+                .callers
+                .get(item.name.as_str())
+                .cloned()
+                .unwrap_or_default();
             Ok(callers
                 .into_iter()
                 .map(|(name, line)| LspCallHierarchyIncomingCall {
