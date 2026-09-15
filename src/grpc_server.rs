@@ -11,6 +11,8 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
 use crate::logging;
+use crate::proto::racli::DocumentSymbolsRequest;
+use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionRequest;
 use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::FindReferencesRequest;
@@ -184,6 +186,24 @@ impl Racli for RacliGrpc {
         );
         self.session
             .find_references(inner.file_path, inner.line, inner.character)
+            .await
+            .map(Response::new)
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Runs LSP `textDocument/documentSymbol` and returns the hierarchical symbol outline for one file.
+    async fn document_symbols(
+        &self,
+        request: Request<DocumentSymbolsRequest>,
+    ) -> Result<Response<DocumentSymbolsResponse>, Status> {
+        let inner = request.into_inner();
+        tracing::debug!(
+            rpc = "Racli.DocumentSymbols",
+            file_path = %inner.file_path,
+            "gRPC endpoint invoked"
+        );
+        self.session
+            .document_symbols(inner.file_path)
             .await
             .map(Response::new)
             .map_err(racli_rpc_error_to_status)
