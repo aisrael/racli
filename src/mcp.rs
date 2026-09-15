@@ -4,6 +4,11 @@ mod mcp_proto_json;
 
 use std::sync::Arc;
 
+use crate::call_hierarchy;
+use crate::call_hierarchy::CallHierarchyError;
+use crate::call_hierarchy::CallHierarchyOutput;
+use crate::call_hierarchy::CallHierarchyRequestJson;
+use crate::call_hierarchy::Direction;
 use mcp_proto_json::FindDefinitionRequestJson;
 use mcp_proto_json::FindDefinitionResponseJson;
 use mcp_proto_json::FindReferencesRequestJson;
@@ -85,6 +90,15 @@ impl RacliMcpHandler {
             RacliRpcError::Internal(msg) => ErrorData::internal_error(msg, None),
         }
     }
+
+    fn call_hierarchy_error_to_mcp(err: CallHierarchyError) -> ErrorData {
+        match err {
+            CallHierarchyError::NoItem => {
+                ErrorData::invalid_params("no call hierarchy item at that position", None)
+            }
+            CallHierarchyError::Backend(msg) => ErrorData::internal_error(msg, None),
+        }
+    }
 }
 
 #[tool_router(router = tool_router)]
@@ -148,6 +162,32 @@ impl RacliMcpHandler {
             .await
             .map_err(Self::racli_rpc_error_to_mcp)?;
         Ok(Json(find_references_response_proto_to_json(&resp)))
+    }
+
+    /// Walks the call hierarchy (callers and/or callees) at a path + LSP position, resolving one
+    /// item via `prepareCallHierarchy` then recursing up to `depth` levels of
+    /// `incomingCalls`/`outgoingCalls`. Pair with `find_references` for full blast-radius /
+    /// rename-safety analysis: `find_references` finds every usage site, `call_hierarchy` follows
+    /// the call graph through those sites.
+    #[tool(
+        name = "call_hierarchy",
+        description = "Runs LSP prepareCallHierarchy then walks incoming/outgoingCalls up to `depth` levels (default 1) for file_path and 0-based line/character UTF-16. direction is incoming, outgoing, or both (default). Pair with find_references for full blast-radius / rename-safety analysis."
+    )]
+    async fn call_hierarchy(
+        &self,
+        Parameters(req): Parameters<CallHierarchyRequestJson>,
+    ) -> Result<Json<CallHierarchyOutput>, ErrorData> {
+        call_hierarchy::run_call_hierarchy(
+            self.session.as_ref(),
+            req.file_path,
+            req.line,
+            req.character,
+            req.direction.unwrap_or(Direction::Both),
+            req.depth.unwrap_or(1),
+        )
+        .await
+        .map(Json)
+        .map_err(Self::call_hierarchy_error_to_mcp)
     }
 }
 

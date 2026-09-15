@@ -3,13 +3,14 @@
 use std::collections::HashSet;
 use std::hash::Hash;
 
+use lsp_types::CallHierarchyItem;
 use lsp_types::OneOf;
 use lsp_types::SymbolInformation;
-use lsp_types::SymbolKind;
 use lsp_types::WorkspaceSymbol;
 use lsp_types::WorkspaceSymbolResponse;
 use serde_json::Value;
 
+use crate::lsp_map::symbol_kind_i32;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
 
@@ -62,6 +63,36 @@ impl Core {
     ) -> Result<Value, RustAnalyzerError> {
         ra.text_document_references(document_uri, line, character)
             .await
+    }
+
+    /// Runs LSP `textDocument/prepareCallHierarchy` on the live rust-analyzer session and returns the raw JSON `result`.
+    pub async fn prepare_call_hierarchy(
+        &self,
+        ra: &mut RustAnalyzerSession,
+        document_uri: String,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, RustAnalyzerError> {
+        ra.prepare_call_hierarchy(document_uri, line, character)
+            .await
+    }
+
+    /// Runs LSP `callHierarchy/incomingCalls` on the live rust-analyzer session and returns the raw JSON `result`.
+    pub async fn call_hierarchy_incoming_calls(
+        &self,
+        ra: &mut RustAnalyzerSession,
+        item: CallHierarchyItem,
+    ) -> Result<Value, RustAnalyzerError> {
+        ra.call_hierarchy_incoming_calls(item).await
+    }
+
+    /// Runs LSP `callHierarchy/outgoingCalls` on the live rust-analyzer session and returns the raw JSON `result`.
+    pub async fn call_hierarchy_outgoing_calls(
+        &self,
+        ra: &mut RustAnalyzerSession,
+        item: CallHierarchyItem,
+    ) -> Result<Value, RustAnalyzerError> {
+        ra.call_hierarchy_outgoing_calls(item).await
     }
 }
 
@@ -119,14 +150,6 @@ struct NestedSymbolDedupKey {
     kind: i32,
     uri: String,
     range: Option<(u32, u32, u32, u32)>,
-}
-
-/// Extracts the JSON number backing `SymbolKind` for stable hash keys (the struct field is crate-private).
-fn symbol_kind_i32(kind: SymbolKind) -> i32 {
-    serde_json::to_value(kind)
-        .ok()
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0) as i32
 }
 
 fn flat_dedup_key(si: &SymbolInformation) -> FlatSymbolDedupKey {
