@@ -11,6 +11,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
 use crate::logging;
+use crate::proto::racli::CallHierarchyCallsRequest;
 use crate::proto::racli::DocumentSymbolsRequest;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionRequest;
@@ -19,6 +20,10 @@ use crate::proto::racli::FindReferencesRequest;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
+use crate::proto::racli::IncomingCallsResponse;
+use crate::proto::racli::OutgoingCallsResponse;
+use crate::proto::racli::PrepareCallHierarchyRequest;
+use crate::proto::racli::PrepareCallHierarchyResponse;
 use crate::proto::racli::SearchRequest;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::racli_server::Racli;
@@ -186,6 +191,60 @@ impl Racli for RacliGrpc {
         );
         self.session
             .find_references(inner.file_path, inner.line, inner.character)
+            .await
+            .map(Response::new)
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Runs LSP `textDocument/prepareCallHierarchy` and returns candidate call hierarchy items.
+    async fn prepare_call_hierarchy(
+        &self,
+        request: Request<PrepareCallHierarchyRequest>,
+    ) -> Result<Response<PrepareCallHierarchyResponse>, Status> {
+        let inner = request.into_inner();
+        tracing::debug!(
+            rpc = "Racli.PrepareCallHierarchy",
+            file_path = %inner.file_path,
+            line = inner.line,
+            character = inner.character,
+            "gRPC endpoint invoked"
+        );
+        self.session
+            .prepare_call_hierarchy(inner.file_path, inner.line, inner.character)
+            .await
+            .map(Response::new)
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Runs LSP `callHierarchy/incomingCalls` for the given item and returns its callers.
+    async fn incoming_calls(
+        &self,
+        request: Request<CallHierarchyCallsRequest>,
+    ) -> Result<Response<IncomingCallsResponse>, Status> {
+        let inner = request.into_inner();
+        let item = inner
+            .item
+            .ok_or_else(|| Status::invalid_argument("item must be set"))?;
+        tracing::debug!(rpc = "Racli.IncomingCalls", name = %item.name, "gRPC endpoint invoked");
+        self.session
+            .incoming_calls(item)
+            .await
+            .map(Response::new)
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Runs LSP `callHierarchy/outgoingCalls` for the given item and returns its callees.
+    async fn outgoing_calls(
+        &self,
+        request: Request<CallHierarchyCallsRequest>,
+    ) -> Result<Response<OutgoingCallsResponse>, Status> {
+        let inner = request.into_inner();
+        let item = inner
+            .item
+            .ok_or_else(|| Status::invalid_argument("item must be set"))?;
+        tracing::debug!(rpc = "Racli.OutgoingCalls", name = %item.name, "gRPC endpoint invoked");
+        self.session
+            .outgoing_calls(item)
             .await
             .map(Response::new)
             .map_err(racli_rpc_error_to_status)

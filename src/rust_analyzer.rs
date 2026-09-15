@@ -4,6 +4,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use lsp_types::CallHierarchyIncomingCallsParams;
+use lsp_types::CallHierarchyItem;
+use lsp_types::CallHierarchyOutgoingCallsParams;
+use lsp_types::CallHierarchyPrepareParams;
 use lsp_types::ClientCapabilities;
 use lsp_types::ClientInfo;
 use lsp_types::DidChangeWatchedFilesClientCapabilities;
@@ -26,6 +30,9 @@ use lsp_types::WorkspaceFolder;
 use lsp_types::WorkspaceSymbolParams;
 use lsp_types::notification::DidChangeWatchedFiles;
 use lsp_types::notification::Notification;
+use lsp_types::request::CallHierarchyIncomingCalls;
+use lsp_types::request::CallHierarchyOutgoingCalls;
+use lsp_types::request::CallHierarchyPrepare;
 use lsp_types::request::DocumentSymbolRequest;
 use lsp_types::request::GotoDefinition;
 use lsp_types::request::References;
@@ -345,6 +352,72 @@ impl RustAnalyzerSession {
             },
         };
         let result = lsp.send_request::<References>(params).await?;
+        serde_json::to_value(result).map_err(RustAnalyzerError::from)
+    }
+
+    /// Sends LSP `textDocument/prepareCallHierarchy` for `document_uri` at `line` / `character` (0-based LSP position) and returns the JSON-RPC `result` (`null` or a list of candidate items).
+    pub async fn prepare_call_hierarchy(
+        &mut self,
+        document_uri: impl Into<String>,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, RustAnalyzerError> {
+        let uri_str = document_uri.into();
+        let uri: Uri = uri_str
+            .parse()
+            .map_err(|_| RustAnalyzerError::InvalidDocumentUrl)?;
+        let lsp = self
+            .lsp
+            .as_ref()
+            .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
+        let params = CallHierarchyPrepareParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+        let result = lsp.send_request::<CallHierarchyPrepare>(params).await?;
+        serde_json::to_value(result).map_err(RustAnalyzerError::from)
+    }
+
+    /// Sends LSP `callHierarchy/incomingCalls` for `item` (the exact item from `prepare_call_hierarchy`) and returns the JSON-RPC `result` (`null` or a list of callers).
+    pub async fn call_hierarchy_incoming_calls(
+        &mut self,
+        item: CallHierarchyItem,
+    ) -> Result<Value, RustAnalyzerError> {
+        let lsp = self
+            .lsp
+            .as_ref()
+            .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
+        let params = CallHierarchyIncomingCallsParams {
+            item,
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+        let result = lsp
+            .send_request::<CallHierarchyIncomingCalls>(params)
+            .await?;
+        serde_json::to_value(result).map_err(RustAnalyzerError::from)
+    }
+
+    /// Sends LSP `callHierarchy/outgoingCalls` for `item` (the exact item from `prepare_call_hierarchy`) and returns the JSON-RPC `result` (`null` or a list of callees).
+    pub async fn call_hierarchy_outgoing_calls(
+        &mut self,
+        item: CallHierarchyItem,
+    ) -> Result<Value, RustAnalyzerError> {
+        let lsp = self
+            .lsp
+            .as_ref()
+            .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
+        let params = CallHierarchyOutgoingCallsParams {
+            item,
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+        let result = lsp
+            .send_request::<CallHierarchyOutgoingCalls>(params)
+            .await?;
         serde_json::to_value(result).map_err(RustAnalyzerError::from)
     }
 

@@ -6,6 +6,7 @@ use clap::Parser;
 use clap::Subcommand;
 
 use crate::VERSION;
+use crate::call_hierarchy;
 use crate::client;
 use crate::document_symbols;
 use crate::effective_unix_socket_path;
@@ -51,6 +52,8 @@ enum Command {
     FindDefinition(find_definition::FindDefinitionArgs),
     /// List references to the symbol at a file position via rust-analyzer (LSP `textDocument/references`; always includes the declaration).
     FindReferences(find_references::FindReferencesArgs),
+    /// Walk the call hierarchy (callers/callees) at a file position via rust-analyzer (LSP `prepareCallHierarchy` + `incoming`/`outgoingCalls`).
+    CallHierarchy(call_hierarchy::CallHierarchyArgs),
     /// Print the hierarchical symbol outline for one file via rust-analyzer (LSP `textDocument/documentSymbol`).
     DocumentSymbols(document_symbols::DocumentSymbolsArgs),
 }
@@ -113,6 +116,10 @@ pub async fn run() -> Result<(), RunError> {
         Command::FindReferences(args) => {
             logging::init_client_tracing();
             find_references::run_cli_find_references(args).await
+        }
+        Command::CallHierarchy(args) => {
+            logging::init_client_tracing();
+            call_hierarchy::run_cli_call_hierarchy(args).await
         }
         Command::DocumentSymbols(args) => {
             logging::init_client_tracing();

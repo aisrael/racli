@@ -9,8 +9,12 @@ use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionResponse;
+use crate::proto::racli::IncomingCallsResponse;
+use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::LspServerInfo;
 use crate::proto::racli::LspWorkspaceSymbolResponse;
+use crate::proto::racli::OutgoingCallsResponse;
+use crate::proto::racli::PrepareCallHierarchyResponse;
 use crate::proto::racli::SearchResponse;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
@@ -155,6 +159,106 @@ impl RacliSession {
         };
 
         Ok(FindReferencesResponse { locations })
+    }
+
+    /// Resolves call hierarchy candidates at `file_path` + LSP position (`Racli.PrepareCallHierarchy`).
+    pub async fn prepare_call_hierarchy(
+        &self,
+        file_path: String,
+        line: u32,
+        character: u32,
+    ) -> Result<PrepareCallHierarchyResponse, RacliRpcError> {
+        let path = PathBuf::from(file_path.trim());
+        if path.as_os_str().is_empty() {
+            return Err(RacliRpcError::InvalidArgument(
+                "file_path must not be empty".into(),
+            ));
+        }
+        let abs = std::fs::canonicalize(&path).map_err(|e| {
+            RacliRpcError::InvalidArgument(format!("cannot resolve file path: {e}"))
+        })?;
+        let uri = crate::rust_analyzer::document_uri_from_path(&abs)
+            .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
+
+        let mut ra = self.rust_analyzer.lock().await;
+        let value = self
+            .core
+            .prepare_call_hierarchy(&mut ra, uri, line, character)
+            .await?;
+        drop(ra);
+
+        let items = if value.is_null() {
+            vec![]
+        } else {
+            let resp: Option<Vec<lsp_types::CallHierarchyItem>> = serde_json::from_value(value)
+                .map_err(|e| RacliRpcError::Internal(e.to_string()))?;
+            resp.unwrap_or_default()
+                .into_iter()
+                .map(crate::lsp_map::call_hierarchy_item_to_proto)
+                .collect()
+        };
+
+        Ok(PrepareCallHierarchyResponse { items })
+    }
+
+    /// Resolves callers of `item` (`Racli.IncomingCalls`); `item` must be the exact item returned by `prepare_call_hierarchy`.
+    pub async fn incoming_calls(
+        &self,
+        item: LspCallHierarchyItem,
+    ) -> Result<IncomingCallsResponse, RacliRpcError> {
+        let lsp_item = crate::lsp_map::call_hierarchy_item_from_proto(&item)
+            .map_err(RacliRpcError::InvalidArgument)?;
+
+        let mut ra = self.rust_analyzer.lock().await;
+        let value = self
+            .core
+            .call_hierarchy_incoming_calls(&mut ra, lsp_item)
+            .await?;
+        drop(ra);
+
+        let calls = if value.is_null() {
+            vec![]
+        } else {
+            let resp: Option<Vec<lsp_types::CallHierarchyIncomingCall>> =
+                serde_json::from_value(value)
+                    .map_err(|e| RacliRpcError::Internal(e.to_string()))?;
+            resp.unwrap_or_default()
+                .into_iter()
+                .map(crate::lsp_map::call_hierarchy_incoming_call_to_proto)
+                .collect()
+        };
+
+        Ok(IncomingCallsResponse { calls })
+    }
+
+    /// Resolves callees of `item` (`Racli.OutgoingCalls`); `item` must be the exact item returned by `prepare_call_hierarchy`.
+    pub async fn outgoing_calls(
+        &self,
+        item: LspCallHierarchyItem,
+    ) -> Result<OutgoingCallsResponse, RacliRpcError> {
+        let lsp_item = crate::lsp_map::call_hierarchy_item_from_proto(&item)
+            .map_err(RacliRpcError::InvalidArgument)?;
+
+        let mut ra = self.rust_analyzer.lock().await;
+        let value = self
+            .core
+            .call_hierarchy_outgoing_calls(&mut ra, lsp_item)
+            .await?;
+        drop(ra);
+
+        let calls = if value.is_null() {
+            vec![]
+        } else {
+            let resp: Option<Vec<lsp_types::CallHierarchyOutgoingCall>> =
+                serde_json::from_value(value)
+                    .map_err(|e| RacliRpcError::Internal(e.to_string()))?;
+            resp.unwrap_or_default()
+                .into_iter()
+                .map(crate::lsp_map::call_hierarchy_outgoing_call_to_proto)
+                .collect()
+        };
+
+        Ok(OutgoingCallsResponse { calls })
     }
 
     /// Runs LSP `textDocument/documentSymbol` for `file_path` (`Racli.DocumentSymbols`); file-scoped, no line/character.

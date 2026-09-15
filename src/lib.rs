@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+/// `racli call-hierarchy`: CLI arguments and the client-side call hierarchy walk (shared with MCP).
+pub mod call_hierarchy;
 /// CLI argument parsing and subcommand dispatch for the `racli` binary.
 mod cli;
 /// gRPC client helpers for talking to `racli server` over a Unix socket.

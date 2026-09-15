@@ -1,11 +1,15 @@
 //! Maps `lsp_types` workspace symbol responses into racli protobuf messages.
 
+use lsp_types::CallHierarchyIncomingCall;
+use lsp_types::CallHierarchyItem;
+use lsp_types::CallHierarchyOutgoingCall;
 use lsp_types::DocumentSymbol;
 use lsp_types::DocumentSymbolResponse;
 use lsp_types::GotoDefinitionResponse;
 use lsp_types::Location;
 use lsp_types::LocationLink;
 use lsp_types::OneOf;
+use lsp_types::Position;
 use lsp_types::Range;
 use lsp_types::SymbolInformation;
 use lsp_types::SymbolKind;
@@ -14,6 +18,9 @@ use lsp_types::WorkspaceLocation;
 use lsp_types::WorkspaceSymbol;
 use lsp_types::WorkspaceSymbolResponse;
 
+use crate::proto::racli::LspCallHierarchyIncomingCall;
+use crate::proto::racli::LspCallHierarchyItem;
+use crate::proto::racli::LspCallHierarchyOutgoingCall;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspLocation;
 use crate::proto::racli::LspPosition;
@@ -133,7 +140,34 @@ fn range_to_proto(range: Range) -> LspRange {
     }
 }
 
-fn symbol_kind_to_string(kind: SymbolKind) -> String {
+/// Inverse of [`range_to_proto`]: missing `start`/`end` map to position `(0, 0)`.
+fn proto_range_to_range(range: &LspRange) -> Range {
+    let pos = |p: &LspPosition| Position {
+        line: p.line,
+        character: p.character,
+    };
+    Range {
+        start: range.start.as_ref().map(pos).unwrap_or_default(),
+        end: range.end.as_ref().map(pos).unwrap_or_default(),
+    }
+}
+
+/// Extracts the JSON number backing `SymbolKind` for the wire (the struct field is crate-private).
+pub(crate) fn symbol_kind_i32(kind: SymbolKind) -> i32 {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32
+}
+
+/// Inverse of [`symbol_kind_i32`]. `SymbolKind` deserializes transparently from any `i32`, so this
+/// never fails.
+pub(crate) fn symbol_kind_from_i32(kind: i32) -> SymbolKind {
+    serde_json::from_value(serde_json::Value::from(kind))
+        .expect("SymbolKind deserializes transparently from any i32")
+}
+
+pub(crate) fn symbol_kind_to_string(kind: SymbolKind) -> String {
     use SymbolKind as K;
     match () {
         _ if kind == K::FILE => "FILE",
@@ -196,5 +230,72 @@ fn workspace_symbol_to_proto(ws: WorkspaceSymbol) -> LspWorkspaceSymbol {
         kind: symbol_kind_to_string(ws.kind),
         uri,
         range,
+    }
+}
+
+/// Builds a protobuf [`LspCallHierarchyItem`] from an LSP item, preserving `data` opaquely as JSON text.
+pub(crate) fn call_hierarchy_item_to_proto(item: CallHierarchyItem) -> LspCallHierarchyItem {
+    LspCallHierarchyItem {
+        name: item.name,
+        kind: symbol_kind_i32(item.kind),
+        uri: uri_to_string(&item.uri),
+        range: Some(range_to_proto(item.range)),
+        selection_range: Some(range_to_proto(item.selection_range)),
+        detail: item.detail,
+        data_json: item.data.and_then(|v| serde_json::to_string(&v).ok()),
+    }
+}
+
+/// Inverse of [`call_hierarchy_item_to_proto`]; fails only on an unparseable `uri` or `data_json`.
+pub(crate) fn call_hierarchy_item_from_proto(
+    item: &LspCallHierarchyItem,
+) -> Result<CallHierarchyItem, String> {
+    let uri: Uri = item
+        .uri
+        .parse()
+        .map_err(|_| format!("invalid call hierarchy item uri: {}", item.uri))?;
+    let data = item
+        .data_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|e| format!("invalid call hierarchy item data_json: {e}"))?;
+    Ok(CallHierarchyItem {
+        name: item.name.clone(),
+        kind: symbol_kind_from_i32(item.kind),
+        tags: None,
+        detail: item.detail.clone(),
+        uri,
+        range: item
+            .range
+            .as_ref()
+            .map(proto_range_to_range)
+            .unwrap_or_default(),
+        selection_range: item
+            .selection_range
+            .as_ref()
+            .map(proto_range_to_range)
+            .unwrap_or_default(),
+        data,
+    })
+}
+
+/// Maps an LSP incoming call (a caller) into its protobuf mirror.
+pub(crate) fn call_hierarchy_incoming_call_to_proto(
+    call: CallHierarchyIncomingCall,
+) -> LspCallHierarchyIncomingCall {
+    LspCallHierarchyIncomingCall {
+        from: Some(call_hierarchy_item_to_proto(call.from)),
+        from_ranges: call.from_ranges.into_iter().map(range_to_proto).collect(),
+    }
+}
+
+/// Maps an LSP outgoing call (a callee) into its protobuf mirror.
+pub(crate) fn call_hierarchy_outgoing_call_to_proto(
+    call: CallHierarchyOutgoingCall,
+) -> LspCallHierarchyOutgoingCall {
+    LspCallHierarchyOutgoingCall {
+        to: Some(call_hierarchy_item_to_proto(call.to)),
+        from_ranges: call.from_ranges.into_iter().map(range_to_proto).collect(),
     }
 }

@@ -11,6 +11,12 @@ service Racli {
   rpc FindDefinition (FindDefinitionRequest) returns (FindDefinitionResponse);
   // Runs LSP `textDocument/references` at a path and LSP position (0-based line/character); the server always includes the declaration.
   rpc FindReferences (FindReferencesRequest) returns (FindReferencesResponse);
+  // Runs LSP `textDocument/prepareCallHierarchy` at a path and LSP position (0-based line/character).
+  rpc PrepareCallHierarchy (PrepareCallHierarchyRequest) returns (PrepareCallHierarchyResponse);
+  // Runs LSP `callHierarchy/incomingCalls` for a call hierarchy item (callers of the item).
+  rpc IncomingCalls (CallHierarchyCallsRequest) returns (IncomingCallsResponse);
+  // Runs LSP `callHierarchy/outgoingCalls` for a call hierarchy item (callees of the item).
+  rpc OutgoingCalls (CallHierarchyCallsRequest) returns (OutgoingCallsResponse);
   // Runs LSP `textDocument/documentSymbol` for a single file (no line/character).
   rpc DocumentSymbols (DocumentSymbolsRequest) returns (DocumentSymbolsResponse);
 }
@@ -126,6 +132,59 @@ message FindReferencesRequest {
 // Result of `Racli.FindReferences`: all reference sites for the symbol (the declaration is always included).
 message FindReferencesResponse {
   repeated LspLocation locations = 1;
+}
+
+// Mirrors `lsp_types::CallHierarchyItem`. Round-trips opaquely through the client: a client must
+// hand back the exact item it received from `PrepareCallHierarchy` unmodified when calling
+// `IncomingCalls`/`OutgoingCalls`, so `kind` is the raw LSP `SymbolKind` number (not the display
+// string used elsewhere) and `data_json` is never interpreted client-side.
+message LspCallHierarchyItem {
+  string name = 1;
+  int32 kind = 2;
+  string uri = 3;
+  LspRange range = 4;             // whole item (e.g. the function body)
+  LspRange selection_range = 5;   // just the name
+  optional string detail = 6;
+  optional string data_json = 7;  // opaque passthrough, preserved from the LSP `data` field
+}
+
+// Parameters for `Racli.PrepareCallHierarchy` (absolute `file_path` resolved on the server).
+message PrepareCallHierarchyRequest {
+  string file_path = 1;
+  uint32 line = 2;
+  uint32 character = 3;
+}
+
+// Result of `Racli.PrepareCallHierarchy`: zero or more candidate items at the given position.
+message PrepareCallHierarchyResponse {
+  repeated LspCallHierarchyItem items = 1;
+}
+
+// Parameters for `Racli.IncomingCalls`/`Racli.OutgoingCalls`: the exact item from `PrepareCallHierarchy`.
+message CallHierarchyCallsRequest {
+  LspCallHierarchyItem item = 1;
+}
+
+// Mirrors `lsp_types::CallHierarchyIncomingCall`: a caller of the queried item.
+message LspCallHierarchyIncomingCall {
+  LspCallHierarchyItem from = 1;
+  repeated LspRange from_ranges = 2;
+}
+
+// Mirrors `lsp_types::CallHierarchyOutgoingCall`: a callee of the queried item.
+message LspCallHierarchyOutgoingCall {
+  LspCallHierarchyItem to = 1;
+  repeated LspRange from_ranges = 2;
+}
+
+// Result of `Racli.IncomingCalls`.
+message IncomingCallsResponse {
+  repeated LspCallHierarchyIncomingCall calls = 1;
+}
+
+// Result of `Racli.OutgoingCalls`.
+message OutgoingCallsResponse {
+  repeated LspCallHierarchyOutgoingCall calls = 1;
 }
 
 // Parameters for `Racli.DocumentSymbols` (absolute `file_path` resolved on the server).
