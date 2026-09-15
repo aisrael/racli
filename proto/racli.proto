@@ -17,6 +17,8 @@ service Racli {
   rpc IncomingCalls (CallHierarchyCallsRequest) returns (IncomingCallsResponse);
   // Runs LSP `callHierarchy/outgoingCalls` for a call hierarchy item (callees of the item).
   rpc OutgoingCalls (CallHierarchyCallsRequest) returns (OutgoingCallsResponse);
+  // Runs LSP `textDocument/documentSymbol` for a single file (no line/character).
+  rpc DocumentSymbols (DocumentSymbolsRequest) returns (DocumentSymbolsResponse);
 }
 
 // Empty request for GetVersion (no parameters).
@@ -68,6 +70,16 @@ message LspSymbolInformation {
   string kind = 2;
   string uri = 3;
   LspRange range = 4;
+}
+
+// Subset of LSP `DocumentSymbol` (hierarchical; `children` recurses for nested symbols, e.g. methods under an `impl`).
+message LspDocumentSymbol {
+  string name = 1;
+  optional string detail = 2;
+  string kind = 3;
+  LspRange range = 4;
+  LspRange selection_range = 5;
+  repeated LspDocumentSymbol children = 6;
 }
 
 // `WorkspaceSymbolResponse::Flat`: `Vec<SymbolInformation>`.
@@ -173,4 +185,14 @@ message IncomingCallsResponse {
 // Result of `Racli.OutgoingCalls`.
 message OutgoingCallsResponse {
   repeated LspCallHierarchyOutgoingCall calls = 1;
+}
+
+// Parameters for `Racli.DocumentSymbols` (absolute `file_path` resolved on the server).
+message DocumentSymbolsRequest {
+  string file_path = 1;
+}
+
+// Result of `Racli.DocumentSymbols`: top-level symbols in the file, each possibly with nested children.
+message DocumentSymbolsResponse {
+  repeated LspDocumentSymbol symbols = 1;
 }

@@ -94,6 +94,15 @@ impl Core {
     ) -> Result<Value, RustAnalyzerError> {
         ra.call_hierarchy_outgoing_calls(item).await
     }
+
+    /// Runs LSP `textDocument/documentSymbol` on the live rust-analyzer session and returns the raw JSON `result`.
+    pub async fn document_symbols(
+        &self,
+        ra: &mut RustAnalyzerSession,
+        document_uri: String,
+    ) -> Result<Value, RustAnalyzerError> {
+        ra.text_document_document_symbol(document_uri).await
+    }
 }
 
 /// Splits `query` on unescaped ASCII `|` into trimmed segments; `\|` produces a literal `|` in the segment.

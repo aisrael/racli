@@ -12,12 +12,15 @@ use lsp_types::ClientCapabilities;
 use lsp_types::ClientInfo;
 use lsp_types::DidChangeWatchedFilesClientCapabilities;
 use lsp_types::DidChangeWatchedFilesParams;
+use lsp_types::DocumentSymbolClientCapabilities;
+use lsp_types::DocumentSymbolParams;
 use lsp_types::GotoDefinitionParams;
 use lsp_types::InitializeParams;
 use lsp_types::PartialResultParams;
 use lsp_types::Position;
 use lsp_types::ReferenceContext;
 use lsp_types::ReferenceParams;
+use lsp_types::TextDocumentClientCapabilities;
 use lsp_types::TextDocumentIdentifier;
 use lsp_types::TextDocumentPositionParams;
 use lsp_types::Uri;
@@ -30,6 +33,7 @@ use lsp_types::notification::Notification;
 use lsp_types::request::CallHierarchyIncomingCalls;
 use lsp_types::request::CallHierarchyOutgoingCalls;
 use lsp_types::request::CallHierarchyPrepare;
+use lsp_types::request::DocumentSymbolRequest;
 use lsp_types::request::GotoDefinition;
 use lsp_types::request::References;
 use lsp_types::request::WorkspaceSymbolRequest;
@@ -43,12 +47,21 @@ use crate::lsp_client::LspClient;
 use crate::lsp_client::transport::io_transport;
 use crate::proto::racli::LspServerInfo;
 
-/// Client capabilities advertised to rust-analyzer during LSP `initialize` (includes watched-files dynamic registration).
+/// Client capabilities advertised to rust-analyzer during LSP `initialize` (includes watched-files
+/// dynamic registration and hierarchical `textDocument/documentSymbol` support — without the latter,
+/// servers fall back to a flat `SymbolInformation[]` response instead of a nested `DocumentSymbol[]` tree).
 fn racli_lsp_client_capabilities() -> ClientCapabilities {
     ClientCapabilities {
         workspace: Some(WorkspaceClientCapabilities {
             did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
                 dynamic_registration: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        text_document: Some(TextDocumentClientCapabilities {
+            document_symbol: Some(DocumentSymbolClientCapabilities {
+                hierarchical_document_symbol_support: Some(true),
                 ..Default::default()
             }),
             ..Default::default()
@@ -408,12 +421,34 @@ impl RustAnalyzerSession {
         serde_json::to_value(result).map_err(RustAnalyzerError::from)
     }
 
+    /// Sends LSP `textDocument/documentSymbol` for `document_uri` and returns the JSON-RPC `result` (`null` or a hierarchical/flat symbol payload).
+    pub async fn text_document_document_symbol(
+        &mut self,
+        document_uri: impl Into<String>,
+    ) -> Result<Value, RustAnalyzerError> {
+        let uri_str = document_uri.into();
+        let uri: Uri = uri_str
+            .parse()
+            .map_err(|_| RustAnalyzerError::InvalidDocumentUrl)?;
+        let lsp = self
+            .lsp
+            .as_ref()
+            .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
+        let params = DocumentSymbolParams {
+            text_document: TextDocumentIdentifier { uri },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+        let result = lsp.send_request::<DocumentSymbolRequest>(params).await?;
+        serde_json::to_value(result).map_err(RustAnalyzerError::from)
+    }
+
     /// Sends LSP `workspace/didChangeWatchedFiles` so the server can refresh state for filesystem changes.
     pub async fn notify_did_change_watched_files(
         &mut self,
         params: DidChangeWatchedFilesParams,
     ) -> Result<(), RustAnalyzerError> {
-        tracing::debug!(
+        tracing::trace!(
             lsp_method = DidChangeWatchedFiles::METHOD,
             change_count = params.changes.len(),
             changes = ?params.changes,

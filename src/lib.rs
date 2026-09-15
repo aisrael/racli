@@ -6,6 +6,8 @@ pub mod call_hierarchy;
 mod cli;
 /// gRPC client helpers for talking to `racli server` over a Unix socket.
 pub mod client;
+/// `racli document-symbols`: CLI arguments and formatting for LSP document-symbol outline results.
+pub mod document_symbols;
 /// `racli find-definition`: CLI arguments and formatting for LSP go-to-definition results.
 pub mod find_definition;
 /// `racli find-references`: CLI arguments and formatting for LSP find-references results.

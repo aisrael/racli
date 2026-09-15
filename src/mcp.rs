@@ -9,6 +9,8 @@ use crate::call_hierarchy::CallHierarchyError;
 use crate::call_hierarchy::CallHierarchyOutput;
 use crate::call_hierarchy::CallHierarchyRequestJson;
 use crate::call_hierarchy::Direction;
+use mcp_proto_json::DocumentSymbolsRequestJson;
+use mcp_proto_json::DocumentSymbolsResponseJson;
 use mcp_proto_json::FindDefinitionRequestJson;
 use mcp_proto_json::FindDefinitionResponseJson;
 use mcp_proto_json::FindReferencesRequestJson;
@@ -16,6 +18,7 @@ use mcp_proto_json::FindReferencesResponseJson;
 use mcp_proto_json::GetVersionResponseJson;
 use mcp_proto_json::SearchRequestJson;
 use mcp_proto_json::SearchResponseJson;
+use mcp_proto_json::document_symbols_response_proto_to_json;
 use mcp_proto_json::find_definition_response_proto_to_json;
 use mcp_proto_json::find_references_response_proto_to_json;
 use mcp_proto_json::get_version_response_proto_to_json;
@@ -188,6 +191,23 @@ impl RacliMcpHandler {
         .await
         .map(Json)
         .map_err(Self::call_hierarchy_error_to_mcp)
+    }
+
+    /// Lists the hierarchical symbol outline for a single file (`Racli.DocumentSymbols`).
+    #[tool(
+        name = "document_symbols",
+        description = "Runs LSP textDocument/documentSymbol for file_path and returns a hierarchical symbol outline (mirrors gRPC Racli.DocumentSymbols)."
+    )]
+    async fn document_symbols(
+        &self,
+        Parameters(req): Parameters<DocumentSymbolsRequestJson>,
+    ) -> Result<Json<DocumentSymbolsResponseJson>, ErrorData> {
+        let resp = self
+            .session
+            .document_symbols(req.file_path)
+            .await
+            .map_err(Self::racli_rpc_error_to_mcp)?;
+        Ok(Json(document_symbols_response_proto_to_json(&resp)))
     }
 }
 

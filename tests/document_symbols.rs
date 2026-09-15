@@ -1,8 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use racli::client::incoming_calls;
-use racli::client::prepare_call_hierarchy;
+use racli::client::document_symbols;
 use racli::client::search;
 use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
@@ -46,10 +45,9 @@ async fn search_until_non_empty(sock: &Path) {
     }
 }
 
-/// Integration test: gRPC `PrepareCallHierarchy` + `IncomingCalls` resolves
-/// `document_uri_from_path` in `src/rust_analyzer.rs` to its callers in `src/racli_session.rs`.
+/// Integration test: gRPC `DocumentSymbols` returns `Core` in `src/server.rs` with its methods present in its subtree.
 #[tokio::test]
-async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
+async fn grpc_document_symbols_server_rs_core_struct() {
     if std::process::Command::new("rust-analyzer")
         .arg("--version")
         .status()
@@ -78,49 +76,48 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
 
     search_until_non_empty(sock.as_path()).await;
 
-    let rust_analyzer_rs = std::env::current_dir()
-        .expect("cwd")
-        .join("src/rust_analyzer.rs");
-    let file_path = rust_analyzer_rs
-        .canonicalize()
-        .expect("canonicalize src/rust_analyzer.rs");
+    let server_rs = std::env::current_dir().expect("cwd").join("src/server.rs");
+    let file_path = server_rs.canonicalize().expect("canonicalize server.rs");
 
-    // 0-based LSP position on `document_uri_from_path` in `pub fn document_uri_from_path(...)`.
-    let prepared =
-        prepare_call_hierarchy(sock.as_path(), file_path.to_string_lossy().as_ref(), 517, 7)
-            .await
-            .expect("prepare_call_hierarchy");
-
-    assert!(
-        !prepared.items.is_empty(),
-        "expected at least one call hierarchy item for document_uri_from_path"
-    );
-    let item = prepared.items[0].clone();
-    assert_eq!(item.name, "document_uri_from_path");
-
-    let calls = incoming_calls(sock.as_path(), item)
+    let resp = document_symbols(sock.as_path(), file_path.to_string_lossy().as_ref())
         .await
-        .expect("incoming_calls");
+        .expect("document_symbols");
 
     assert!(
-        calls.calls.len() >= 2,
-        "expected multiple callers of document_uri_from_path, got {:?}",
-        calls.calls
+        !resp.symbols.is_empty(),
+        "expected at least one top-level symbol in src/server.rs"
     );
-    let racli_session_callers = calls
-        .calls
-        .iter()
-        .filter(|c| {
-            c.from
-                .as_ref()
-                .is_some_and(|f| f.uri.ends_with("racli_session.rs"))
-        })
-        .count();
+
+    // Flatten the tree (depth-first) so `Core`'s methods are found whether rust-analyzer nests
+    // them directly under the `Core` struct symbol or under an intermediate `impl` symbol.
+    fn collect_names<'a>(
+        symbols: &'a [racli::proto::racli::LspDocumentSymbol],
+        out: &mut Vec<&'a str>,
+    ) {
+        for s in symbols {
+            out.push(s.name.as_str());
+            collect_names(&s.children, out);
+        }
+    }
+    let mut all_names = Vec::new();
+    collect_names(&resp.symbols, &mut all_names);
+
     assert!(
-        racli_session_callers >= 2,
-        "expected multiple callers in racli_session.rs, got {:?}",
-        calls.calls
+        all_names.contains(&"Core"),
+        "expected a `Core` symbol, got {all_names:?}"
     );
+    for expected in [
+        "version",
+        "search",
+        "find_definition",
+        "find_references",
+        "document_symbols",
+    ] {
+        assert!(
+            all_names.contains(&expected),
+            "expected symbol `{expected}` somewhere in the tree, got {all_names:?}"
+        );
+    }
 
     let _ = stop_tx.send(());
 
