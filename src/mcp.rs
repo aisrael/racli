@@ -35,7 +35,7 @@ use rmcp::handler::server::wrapper::Json;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::Implementation;
 use rmcp::model::ServerCapabilities;
-use rmcp::model::ServerInfo;
+use rmcp::model::ServerConfig;
 use rmcp::tool;
 use rmcp::tool_handler;
 use rmcp::tool_router;
@@ -233,8 +233,8 @@ impl RacliMcpHandler {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for RacliMcpHandler {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(env!("CARGO_PKG_NAME"), crate::VERSION))
     }
 }
