@@ -11,6 +11,8 @@ service Racli {
   rpc FindDefinition (FindDefinitionRequest) returns (FindDefinitionResponse);
   // Runs LSP `textDocument/references` at a path and LSP position (0-based line/character); the server always includes the declaration.
   rpc FindReferences (FindReferencesRequest) returns (FindReferencesResponse);
+  // Runs LSP `textDocument/implementation` at a path and LSP position (0-based line/character).
+  rpc FindImplementations (FindImplementationsRequest) returns (FindImplementationsResponse);
   // Runs LSP `textDocument/prepareCallHierarchy` at a path and LSP position (0-based line/character).
   rpc PrepareCallHierarchy (PrepareCallHierarchyRequest) returns (PrepareCallHierarchyResponse);
   // Runs LSP `callHierarchy/incomingCalls` for a call hierarchy item (callers of the item).
@@ -131,6 +133,18 @@ message FindReferencesRequest {
 
 // Result of `Racli.FindReferences`: all reference sites for the symbol (the declaration is always included).
 message FindReferencesResponse {
+  repeated LspLocation locations = 1;
+}
+
+// Parameters for `Racli.FindImplementations` (absolute `file_path` resolved on the server).
+message FindImplementationsRequest {
+  string file_path = 1;
+  uint32 line = 2;
+  uint32 character = 3;
+}
+
+// Result of `Racli.FindImplementations`: zero or more implementation sites (scalar/array/link flattened).
+message FindImplementationsResponse {
   repeated LspLocation locations = 1;
 }
 

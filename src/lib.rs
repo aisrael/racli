@@ -10,6 +10,8 @@ pub mod client;
 pub mod document_symbols;
 /// `racli find-definition`: CLI arguments and formatting for LSP go-to-definition results.
 pub mod find_definition;
+/// `racli find-implementations`: CLI arguments and formatting for LSP go-to-implementation results.
+pub mod find_implementations;
 /// `racli find-references`: CLI arguments and formatting for LSP find-references results.
 pub mod find_references;
 /// Unix-socket gRPC server for `racli server`.

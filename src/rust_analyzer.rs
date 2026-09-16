@@ -35,6 +35,8 @@ use lsp_types::request::CallHierarchyOutgoingCalls;
 use lsp_types::request::CallHierarchyPrepare;
 use lsp_types::request::DocumentSymbolRequest;
 use lsp_types::request::GotoDefinition;
+use lsp_types::request::GotoImplementation;
+use lsp_types::request::GotoImplementationParams;
 use lsp_types::request::References;
 use lsp_types::request::WorkspaceSymbolRequest;
 use serde_json::Value;
@@ -322,6 +324,33 @@ impl RustAnalyzerSession {
             partial_result_params: PartialResultParams::default(),
         };
         let result = lsp.send_request::<GotoDefinition>(params).await?;
+        serde_json::to_value(result).map_err(RustAnalyzerError::from)
+    }
+
+    /// Sends LSP `textDocument/implementation` for `document_uri` at `line` / `character` (0-based LSP position) and returns the JSON-RPC `result` (`null` or a location payload); on a trait/type this resolves its `impl` blocks, on a trait method it resolves the per-`impl` overrides.
+    pub async fn text_document_implementation(
+        &mut self,
+        document_uri: impl Into<String>,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, RustAnalyzerError> {
+        let uri_str = document_uri.into();
+        let uri: Uri = uri_str
+            .parse()
+            .map_err(|_| RustAnalyzerError::InvalidDocumentUrl)?;
+        let lsp = self
+            .lsp
+            .as_ref()
+            .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
+        let params = GotoImplementationParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+        let result = lsp.send_request::<GotoImplementation>(params).await?;
         serde_json::to_value(result).map_err(RustAnalyzerError::from)
     }
 

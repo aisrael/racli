@@ -11,6 +11,7 @@ use crate::client;
 use crate::document_symbols;
 use crate::effective_unix_socket_path;
 use crate::find_definition;
+use crate::find_implementations;
 use crate::find_references;
 use crate::grpc_server::GrpcServerError;
 use crate::grpc_server::run_grpc_unix_socket_interactive;
@@ -52,6 +53,8 @@ enum Command {
     FindDefinition(find_definition::FindDefinitionArgs),
     /// List references to the symbol at a file position via rust-analyzer (LSP `textDocument/references`; always includes the declaration).
     FindReferences(find_references::FindReferencesArgs),
+    /// Resolve trait/type implementations at a file position via rust-analyzer (LSP `textDocument/implementation`).
+    FindImplementations(find_implementations::FindImplementationsArgs),
     /// Walk the call hierarchy (callers/callees) at a file position via rust-analyzer (LSP `prepareCallHierarchy` + `incoming`/`outgoingCalls`).
     CallHierarchy(call_hierarchy::CallHierarchyArgs),
     /// Print the hierarchical symbol outline for one file via rust-analyzer (LSP `textDocument/documentSymbol`).
@@ -116,6 +119,10 @@ pub async fn run() -> Result<(), RunError> {
         Command::FindReferences(args) => {
             logging::init_client_tracing();
             find_references::run_cli_find_references(args).await
+        }
+        Command::FindImplementations(args) => {
+            logging::init_client_tracing();
+            find_implementations::run_cli_find_implementations(args).await
         }
         Command::CallHierarchy(args) => {
             logging::init_client_tracing();

@@ -26,3 +26,15 @@ mod raw {
         pub fn unlink(path: *const c_char) -> c_int;
     }
 }
+
+pub trait Named {
+    fn name(&self) -> &str;
+}
+
+pub struct Fifo;
+
+impl Named for Fifo {
+    fn name(&self) -> &str {
+        "queue"
+    }
+}
