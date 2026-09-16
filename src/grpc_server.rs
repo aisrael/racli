@@ -16,6 +16,8 @@ use crate::proto::racli::DocumentSymbolsRequest;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionRequest;
 use crate::proto::racli::FindDefinitionResponse;
+use crate::proto::racli::FindImplementationsRequest;
+use crate::proto::racli::FindImplementationsResponse;
 use crate::proto::racli::FindReferencesRequest;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionRequest;
@@ -171,6 +173,26 @@ impl Racli for RacliGrpc {
         );
         self.session
             .find_definition(inner.file_path, inner.line, inner.character)
+            .await
+            .map(Response::new)
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Runs LSP `textDocument/implementation` and returns flattened implementation locations.
+    async fn find_implementations(
+        &self,
+        request: Request<FindImplementationsRequest>,
+    ) -> Result<Response<FindImplementationsResponse>, Status> {
+        let inner = request.into_inner();
+        tracing::debug!(
+            rpc = "Racli.FindImplementations",
+            file_path = %inner.file_path,
+            line = inner.line,
+            character = inner.character,
+            "gRPC endpoint invoked"
+        );
+        self.session
+            .find_implementations(inner.file_path, inner.line, inner.character)
             .await
             .map(Response::new)
             .map_err(racli_rpc_error_to_status)

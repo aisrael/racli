@@ -1,8 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use racli::client::incoming_calls;
-use racli::client::prepare_call_hierarchy;
+use racli::client::find_implementations;
 use racli::client::search;
 use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
@@ -46,10 +45,9 @@ async fn search_until_non_empty(sock: &Path) {
     }
 }
 
-/// Integration test: gRPC `PrepareCallHierarchy` + `IncomingCalls` resolves
-/// `document_uri_from_path` in `src/rust_analyzer.rs` to its callers in `src/racli_session.rs`.
+/// Integration test: gRPC `FindImplementations` resolves `CallHierarchyBackend` in `src/call_hierarchy.rs` to its impl blocks.
 #[tokio::test]
-async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
+async fn grpc_find_implementations_call_hierarchy_backend() {
     if std::process::Command::new("rust-analyzer")
         .arg("--version")
         .status()
@@ -78,48 +76,32 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
 
     search_until_non_empty(sock.as_path()).await;
 
-    let rust_analyzer_rs = std::env::current_dir()
+    let call_hierarchy_rs = std::env::current_dir()
         .expect("cwd")
-        .join("src/rust_analyzer.rs");
-    let file_path = rust_analyzer_rs
+        .join("src/call_hierarchy.rs");
+    let file_path = call_hierarchy_rs
         .canonicalize()
-        .expect("canonicalize src/rust_analyzer.rs");
+        .expect("canonicalize call_hierarchy.rs");
 
-    // 0-based LSP position on `document_uri_from_path` in `pub fn document_uri_from_path(...)`.
-    let prepared =
-        prepare_call_hierarchy(sock.as_path(), file_path.to_string_lossy().as_ref(), 546, 7)
-            .await
-            .expect("prepare_call_hierarchy");
-
-    assert!(
-        !prepared.items.is_empty(),
-        "expected at least one call hierarchy item for document_uri_from_path"
-    );
-    let item = prepared.items[0].clone();
-    assert_eq!(item.name, "document_uri_from_path");
-
-    let calls = incoming_calls(sock.as_path(), item)
+    // 0-based LSP position on `CallHierarchyBackend` in `pub trait CallHierarchyBackend: Send + Sync {`.
+    let resp = find_implementations(sock.as_path(), file_path.to_string_lossy().as_ref(), 68, 10)
         .await
-        .expect("incoming_calls");
+        .expect("find_implementations");
 
+    let mut saw_call_hierarchy = false;
+    for loc in &resp.locations {
+        if loc.uri.ends_with("call_hierarchy.rs") {
+            saw_call_hierarchy = true;
+            assert!(
+                loc.range.is_some(),
+                "expected range on implementation location"
+            );
+        }
+    }
     assert!(
-        calls.calls.len() >= 2,
-        "expected multiple callers of document_uri_from_path, got {:?}",
-        calls.calls
-    );
-    let racli_session_callers = calls
-        .calls
-        .iter()
-        .filter(|c| {
-            c.from
-                .as_ref()
-                .is_some_and(|f| f.uri.ends_with("racli_session.rs"))
-        })
-        .count();
-    assert!(
-        racli_session_callers >= 2,
-        "expected multiple callers in racli_session.rs, got {:?}",
-        calls.calls
+        saw_call_hierarchy,
+        "expected at least one implementation in call_hierarchy.rs, got {:?}",
+        resp.locations
     );
 
     let _ = stop_tx.send(());

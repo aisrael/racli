@@ -83,6 +83,7 @@ fn main() {
         server(PATH);
     }
 
+    println!("{}", sys::Named::name(&sys::Fifo));
 }
 
 extern "C" fn goodbye(_: libc::c_int) {

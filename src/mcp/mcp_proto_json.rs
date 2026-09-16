@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionResponse;
+use crate::proto::racli::FindImplementationsResponse;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::LspDocumentSymbol;
@@ -46,6 +47,18 @@ pub struct FindDefinitionRequestJson {
 #[serde(rename_all = "camelCase")]
 pub struct FindReferencesRequestJson {
     /// Resolved on the server; same rules as gRPC [`crate::proto::racli::FindReferencesRequest::file_path`].
+    pub file_path: String,
+    /// Zero-based line (LSP `Position`).
+    pub line: u32,
+    /// Zero-based UTF-16 character offset on the line.
+    pub character: u32,
+}
+
+/// `FindImplementationsRequest` JSON body for MCP `find_implementations`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FindImplementationsRequestJson {
+    /// Resolved on the server; same rules as gRPC [`crate::proto::racli::FindImplementationsRequest::file_path`].
     pub file_path: String,
     /// Zero-based line (LSP `Position`).
     pub line: u32,
@@ -160,6 +173,12 @@ pub struct FindDefinitionResponseJson {
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FindReferencesResponseJson {
+    pub locations: Vec<LspLocationJson>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FindImplementationsResponseJson {
     pub locations: Vec<LspLocationJson>,
 }
 
@@ -312,6 +331,15 @@ pub fn find_references_response_proto_to_json(
     p: &FindReferencesResponse,
 ) -> FindReferencesResponseJson {
     FindReferencesResponseJson {
+        locations: p.locations.iter().map(lsp_location_proto_to_json).collect(),
+    }
+}
+
+/// Builds [`FindImplementationsResponseJson`] from the gRPC protobuf struct.
+pub fn find_implementations_response_proto_to_json(
+    p: &FindImplementationsResponse,
+) -> FindImplementationsResponseJson {
+    FindImplementationsResponseJson {
         locations: p.locations.iter().map(lsp_location_proto_to_json).collect(),
     }
 }

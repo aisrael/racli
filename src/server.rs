@@ -53,6 +53,18 @@ impl Core {
             .await
     }
 
+    /// Runs LSP `textDocument/implementation` on the live rust-analyzer session and returns the raw JSON `result`.
+    pub async fn find_implementations(
+        &self,
+        ra: &mut RustAnalyzerSession,
+        document_uri: String,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, RustAnalyzerError> {
+        ra.text_document_implementation(document_uri, line, character)
+            .await
+    }
+
     /// Runs LSP `textDocument/references` on the live rust-analyzer session and returns the raw JSON `result`.
     pub async fn find_references(
         &self,

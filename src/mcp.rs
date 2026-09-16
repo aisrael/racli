@@ -13,6 +13,8 @@ use mcp_proto_json::DocumentSymbolsRequestJson;
 use mcp_proto_json::DocumentSymbolsResponseJson;
 use mcp_proto_json::FindDefinitionRequestJson;
 use mcp_proto_json::FindDefinitionResponseJson;
+use mcp_proto_json::FindImplementationsRequestJson;
+use mcp_proto_json::FindImplementationsResponseJson;
 use mcp_proto_json::FindReferencesRequestJson;
 use mcp_proto_json::FindReferencesResponseJson;
 use mcp_proto_json::GetVersionResponseJson;
@@ -20,6 +22,7 @@ use mcp_proto_json::SearchRequestJson;
 use mcp_proto_json::SearchResponseJson;
 use mcp_proto_json::document_symbols_response_proto_to_json;
 use mcp_proto_json::find_definition_response_proto_to_json;
+use mcp_proto_json::find_implementations_response_proto_to_json;
 use mcp_proto_json::find_references_response_proto_to_json;
 use mcp_proto_json::get_version_response_proto_to_json;
 use mcp_proto_json::search_response_proto_to_json;
@@ -165,6 +168,23 @@ impl RacliMcpHandler {
             .await
             .map_err(Self::racli_rpc_error_to_mcp)?;
         Ok(Json(find_references_response_proto_to_json(&resp)))
+    }
+
+    /// Resolves trait/type implementations (or trait-method overrides) at a path + LSP position (`Racli.FindImplementations`).
+    #[tool(
+        name = "find_implementations",
+        description = "Runs LSP textDocument/implementation for file_path and 0-based line/character UTF-16 (mirrors gRPC Racli.FindImplementations). On a trait or type, returns its impl blocks; on a trait method, returns per-impl overrides; invoked from inside an impl block itself, typically returns nothing."
+    )]
+    async fn find_implementations(
+        &self,
+        Parameters(req): Parameters<FindImplementationsRequestJson>,
+    ) -> Result<Json<FindImplementationsResponseJson>, ErrorData> {
+        let resp = self
+            .session
+            .find_implementations(req.file_path, req.line, req.character)
+            .await
+            .map_err(Self::racli_rpc_error_to_mcp)?;
+        Ok(Json(find_implementations_response_proto_to_json(&resp)))
     }
 
     /// Walks the call hierarchy (callers and/or callees) at a path + LSP position, resolving one

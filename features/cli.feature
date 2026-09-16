@@ -22,4 +22,5 @@ Feature: CLI basics
     And the output should contain "search"
     And the output should contain "find-definition"
     And the output should contain "find-references"
+    And the output should contain "find-implementations"
     And the output should contain "call-hierarchy"
