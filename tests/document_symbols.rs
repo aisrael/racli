@@ -5,6 +5,7 @@ use racli::client::document_symbols;
 use racli::client::search;
 use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
+use racli::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use tempfile::tempdir;
 
 async fn wait_until_socket_path_exists(sock: &Path) {
@@ -65,7 +66,7 @@ async fn grpc_document_symbols_server_rs_core_struct() {
 
     let sock_path = sock.clone();
     let server = tokio::spawn(async move {
-        run_grpc_unix_socket_until_shutdown(&sock_path, async {
+        run_grpc_unix_socket_until_shutdown(&sock_path, DEFAULT_SYMBOL_SEARCH_LIMIT, async {
             let _ = stop_rx.await;
         })
         .await

@@ -10,6 +10,9 @@ use serde::Serialize;
 use crate::client;
 use crate::effective_unix_socket_path;
 use crate::proto::racli::lsp_workspace_symbol_response::Payload;
+use crate::rust_analyzer::SymbolSearchKind;
+use crate::rust_analyzer::SymbolSearchOptions;
+use crate::rust_analyzer::SymbolSearchScope;
 
 /// How `racli search` prints results (default is JSON).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -37,6 +40,12 @@ pub struct SearchArgs {
     /// Select how search results are printed (default: json).
     #[arg(long, value_enum)]
     pub output_format: Option<SearchOutputFormat>,
+    /// Symbol kinds to return (default: rust-analyzer's `only-types`); `all-symbols` adds functions, methods, constants, and fields.
+    #[arg(long, value_enum)]
+    pub kind: Option<SymbolSearchKind>,
+    /// Crates to search (default: rust-analyzer's `workspace`); `workspace-and-dependencies` adds dependency crates.
+    #[arg(long, value_enum)]
+    pub scope: Option<SymbolSearchScope>,
     /// Workspace symbol query: unescaped `|` separates alternative substring patterns (OR); use `\|` for a literal pipe (not full regex syntax).
     pub query: String,
 }
@@ -74,7 +83,16 @@ impl SearchArgs {
 pub async fn run_cli_search(args: SearchArgs) {
     let sock = effective_unix_socket_path();
     let sock_display = sock.display().to_string();
-    match tokio::time::timeout(Duration::from_secs(60), client::search(&sock, &args.query)).await {
+    let options = SymbolSearchOptions {
+        kind: args.kind,
+        scope: args.scope,
+    };
+    match tokio::time::timeout(
+        Duration::from_secs(60),
+        client::search_with_options(&sock, &args.query, options),
+    )
+    .await
+    {
         Ok(Ok(resp)) => match args.print_kind() {
             SearchPrintKind::Text => print_search_response(resp),
             SearchPrintKind::Json => print_search_response_json(resp),

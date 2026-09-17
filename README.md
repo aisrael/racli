@@ -43,6 +43,8 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 
 `racli server` binds the gRPC Unix socket (default `/tmp/racli.sock`) and, when `rust-analyzer` is available on your `PATH`, spawns it as a child in the current working directory and completes the LSP `initialize` handshake described above.
 
+`--symbol-search-limit <N>` (also accepted by `racli mcp`) caps how many results rust-analyzer returns per `workspace/symbol` query (default `1000`; rust-analyzer's own default is `128`). It is sent to rust-analyzer as `workspace.symbol.search.limit` during `initialize`, and applies to each `|`-separated pattern separately.
+
 ## Client commands
 
 These subcommands expect a running `racli server` at the default Unix socket path unless noted otherwise.
@@ -52,6 +54,8 @@ These subcommands expect a running `racli server` at the default Unix socket pat
 Runs LSP [`workspace/symbol`](https://rust-analyzer.github.io/book/features.html#workspace-symbol) through the server: the client calls gRPC `Search`, the server forwards the query to rust-analyzer, and the reply is a structured [`WorkspaceSymbolResponse`](proto/racli.proto) mirroring `lsp_types::WorkspaceSymbolResponse` (either a **flat** list of symbol information or a **nested** list of workspace symbols). Symbols are scoped to the server's current working directory when `racli server` was started. By default, output is **JSON** (one array of symbol objects); use `--text` or `--csv` (or `--output-format`) for plain text or CSV. The default Unix socket is `/tmp/racli.sock` (same as `racli version`).
 
 Separate alternative patterns with a single unescaped `|` (similar to `grep -E`), for example `racli search 'Foo|Bar'`. Each pattern is still a plain substring for rust-analyzer, not a full regular expression. A literal `|` in a pattern must be written as `\|` (a backslash before the pipe). Example: `racli search 'a\|b|c'` searches for the substring `a|b` and for `c`, then merges and dedupes the combined results.
+
+By default rust-analyzer returns only types (modules, structs, enums, traits, type aliases) from workspace crates. `--kind all-symbols` adds functions, methods, constants, statics, and fields, and `--scope workspace-and-dependencies` adds dependency crates and the standard library. An empty query (`racli search ''`) lists every matching symbol up to the server's `--symbol-search-limit`. The MCP `search` tool takes the same options as `kind` (`only_types` / `all_symbols`) and `scope` (`workspace` / `workspace_and_dependencies`).
 
 ### `racli find-definition <PATH> --line <N> --character <N>`
 

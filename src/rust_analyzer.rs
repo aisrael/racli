@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use clap::ValueEnum;
 use lsp_types::CallHierarchyIncomingCallsParams;
 use lsp_types::CallHierarchyItem;
 use lsp_types::CallHierarchyOutgoingCallsParams;
@@ -27,7 +28,7 @@ use lsp_types::Uri;
 use lsp_types::WorkDoneProgressParams;
 use lsp_types::WorkspaceClientCapabilities;
 use lsp_types::WorkspaceFolder;
-use lsp_types::WorkspaceSymbolParams;
+use lsp_types::WorkspaceSymbolResponse;
 use lsp_types::notification::DidChangeWatchedFiles;
 use lsp_types::notification::Notification;
 use lsp_types::request::CallHierarchyIncomingCalls;
@@ -38,7 +39,11 @@ use lsp_types::request::GotoDefinition;
 use lsp_types::request::GotoImplementation;
 use lsp_types::request::GotoImplementationParams;
 use lsp_types::request::References;
+use lsp_types::request::Request;
 use lsp_types::request::WorkspaceSymbolRequest;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Child;
 use tokio::process::Command;
@@ -48,6 +53,83 @@ use url::Url;
 use crate::lsp_client::LspClient;
 use crate::lsp_client::transport::io_transport;
 use crate::proto::racli::LspServerInfo;
+
+/// Default `workspace.symbol.search.limit` sent to rust-analyzer at startup (rust-analyzer's own default is 128).
+pub const DEFAULT_SYMBOL_SEARCH_LIMIT: u32 = 1000;
+
+/// Which symbol kinds rust-analyzer's `workspace/symbol` returns (its `searchKind` LSP extension).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolSearchKind {
+    /// Types only (modules, structs, enums, traits, type aliases); rust-analyzer's default.
+    OnlyTypes,
+    /// All symbols, including functions, methods, constants, statics, and fields.
+    AllSymbols,
+}
+
+/// Which crates rust-analyzer's `workspace/symbol` searches (its `searchScope` LSP extension).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolSearchScope {
+    /// Workspace crates only; rust-analyzer's default.
+    Workspace,
+    /// Workspace crates plus their dependencies (including the standard library).
+    WorkspaceAndDependencies,
+}
+
+/// Per-request `workspace/symbol` overrides; `None` leaves rust-analyzer's configured default in effect.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SymbolSearchOptions {
+    /// Symbol kinds to return.
+    pub kind: Option<SymbolSearchKind>,
+    /// Crates to search.
+    pub scope: Option<SymbolSearchScope>,
+}
+
+/// `workspace/symbol` params including rust-analyzer's `searchKind` / `searchScope` extension fields.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RaWorkspaceSymbolParams {
+    query: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search_scope: Option<String>,
+}
+
+impl RaWorkspaceSymbolParams {
+    /// Builds params for `query`, mapping `options` to rust-analyzer's camelCase extension values.
+    fn new(query: String, options: SymbolSearchOptions) -> Self {
+        let search_kind = options.kind.map(|k| {
+            match k {
+                SymbolSearchKind::OnlyTypes => "onlyTypes",
+                SymbolSearchKind::AllSymbols => "allSymbols",
+            }
+            .to_string()
+        });
+        let search_scope = options.scope.map(|s| {
+            match s {
+                SymbolSearchScope::Workspace => "workspace",
+                SymbolSearchScope::WorkspaceAndDependencies => "workspaceAndDependencies",
+            }
+            .to_string()
+        });
+        Self {
+            query,
+            search_kind,
+            search_scope,
+        }
+    }
+}
+
+/// `workspace/symbol` request typed with [`RaWorkspaceSymbolParams`] instead of the plain LSP params.
+enum RaWorkspaceSymbolRequest {}
+
+impl Request for RaWorkspaceSymbolRequest {
+    type Params = RaWorkspaceSymbolParams;
+    type Result = Option<WorkspaceSymbolResponse>;
+    const METHOD: &'static str = WorkspaceSymbolRequest::METHOD;
+}
 
 /// Client capabilities advertised to rust-analyzer during LSP `initialize` (includes watched-files
 /// dynamic registration and hierarchical `textDocument/documentSymbol` support — without the latter,
@@ -131,8 +213,11 @@ pub struct RustAnalyzerSession {
 }
 
 impl RustAnalyzerSession {
-    /// Spawns `rust-analyzer` in `workspace_root`, sends `initialize` and `initialized`, and returns a live session.
-    pub async fn spawn(workspace_root: &Path) -> Result<Self, RustAnalyzerError> {
+    /// Spawns `rust-analyzer` in `workspace_root`, sends `initialize` (capping `workspace/symbol` at `symbol_search_limit`) and `initialized`, and returns a live session.
+    pub async fn spawn(
+        workspace_root: &Path,
+        symbol_search_limit: u32,
+    ) -> Result<Self, RustAnalyzerError> {
         let root_uri_str = workspace_uri(workspace_root)?;
         let root_uri: Uri = root_uri_str
             .parse()
@@ -178,6 +263,9 @@ impl RustAnalyzerSession {
             process_id: None,
             root_uri: Some(root_uri.clone()),
             capabilities: racli_lsp_client_capabilities(),
+            initialization_options: Some(serde_json::json!({
+                "workspace": { "symbol": { "search": { "limit": symbol_search_limit } } }
+            })),
             client_info: Some(ClientInfo {
                 name: "racli".into(),
                 version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -282,20 +370,21 @@ impl RustAnalyzerSession {
         Ok(())
     }
 
-    /// Sends LSP `workspace/symbol` with the given query and returns the JSON-RPC `result` (often an array or `null`).
+    /// Sends LSP `workspace/symbol` with the given query and kind/scope overrides and returns the JSON-RPC `result` (often an array or `null`).
     pub async fn workspace_symbol(
         &mut self,
         query: impl Into<String>,
+        options: SymbolSearchOptions,
     ) -> Result<Value, RustAnalyzerError> {
         let lsp = self
             .lsp
             .as_ref()
             .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
         let result = lsp
-            .send_request::<WorkspaceSymbolRequest>(WorkspaceSymbolParams {
-                query: query.into(),
-                ..Default::default()
-            })
+            .send_request::<RaWorkspaceSymbolRequest>(RaWorkspaceSymbolParams::new(
+                query.into(),
+                options,
+            ))
             .await?;
         serde_json::to_value(result).map_err(RustAnalyzerError::from)
     }
