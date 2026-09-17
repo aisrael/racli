@@ -1,4 +1,5 @@
-//! Compares plain `grep` against `racli search` for substring queries (workspace: racli's own source tree).
+//! Compares plain `grep` against `racli search` (default types-only, and `--kind all-symbols`)
+//! for substring queries (workspace: racli's own source tree).
 
 mod support;
 
@@ -52,7 +53,26 @@ fn racli_search_cli(racli: &Path, socket: &Path, query: &str) {
     assert!(status.success(), "racli search failed with {status:?}");
 }
 
-/// Registers Criterion benches comparing `grep` and `racli search` per query string.
+/// Runs `racli search --kind all-symbols` for `query` against `socket` (discards output).
+fn racli_search_all_symbols_cli(racli: &Path, socket: &Path, query: &str) {
+    let status = Command::new(racli)
+        .arg("search")
+        .arg("--kind")
+        .arg("all-symbols")
+        .arg(query)
+        .env("RACLI_UNIX_SOCKET", socket)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("spawn racli search --kind all-symbols");
+    assert!(
+        status.success(),
+        "racli search --kind all-symbols failed with {status:?}"
+    );
+}
+
+/// Registers Criterion benches comparing `grep`, default `racli search` (types only), and
+/// `racli search --kind all-symbols` per query string.
 fn bench_grep_vs_racli(c: &mut Criterion, racli: &Path, socket: &Path, workspace: &Path) {
     let mut group = c.benchmark_group("grep_vs_racli_search");
     for query in QUERIES {
@@ -64,6 +84,11 @@ fn bench_grep_vs_racli(c: &mut Criterion, racli: &Path, socket: &Path, workspace
         group.bench_function(BenchmarkId::new("racli_search", *query), |b| {
             b.iter(|| {
                 racli_search_cli(black_box(racli), black_box(socket), black_box(query));
+            });
+        });
+        group.bench_function(BenchmarkId::new("racli_search_all_symbols", *query), |b| {
+            b.iter(|| {
+                racli_search_all_symbols_cli(black_box(racli), black_box(socket), black_box(query));
             });
         });
     }
