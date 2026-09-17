@@ -17,6 +17,7 @@ use crate::grpc_server::GrpcServerError;
 use crate::grpc_server::run_grpc_unix_socket_interactive;
 use crate::logging;
 use crate::mcp;
+use crate::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use crate::search;
 
 /// Top-level error returned by [`run`] for any server, listener, or MCP failure.
@@ -44,7 +45,7 @@ enum Command {
     /// Start the gRPC server on the Unix socket.
     Server(ServerArgs),
     /// MCP stdio transport (`rmcp`); rust-analyzer and file watching run in-process (no Unix socket).
-    Mcp,
+    Mcp(McpArgs),
     /// Print versions (client-side and, via gRPC, server-side).
     Version,
     /// Search workspace symbols via rust-analyzer (LSP `workspace/symbol`).
@@ -67,6 +68,17 @@ pub struct ServerArgs {
     /// Optional TCP port (not used for the current Unix-socket-only servers).
     #[arg(short, long)]
     pub port: Option<u16>,
+    /// Maximum number of results rust-analyzer returns per `workspace/symbol` query.
+    #[arg(long, default_value_t = DEFAULT_SYMBOL_SEARCH_LIMIT, value_parser = clap::value_parser!(u32).range(1..))]
+    pub symbol_search_limit: u32,
+}
+
+/// Arguments for `racli mcp`.
+#[derive(Parser)]
+pub struct McpArgs {
+    /// Maximum number of results rust-analyzer returns per `workspace/symbol` query.
+    #[arg(long, default_value_t = DEFAULT_SYMBOL_SEARCH_LIMIT, value_parser = clap::value_parser!(u32).range(1..))]
+    pub symbol_search_limit: u32,
 }
 
 /// The actual `racli` entrypoint
@@ -74,11 +86,15 @@ pub async fn run() -> Result<(), RunError> {
     let args = Args::parse();
 
     match args.command {
-        Command::Server(_opts) => {
-            run_grpc_unix_socket_interactive(effective_unix_socket_path()).await?;
+        Command::Server(opts) => {
+            run_grpc_unix_socket_interactive(
+                effective_unix_socket_path(),
+                opts.symbol_search_limit,
+            )
+            .await?;
         }
-        Command::Mcp => {
-            mcp::run_stdio().await?;
+        Command::Mcp(opts) => {
+            mcp::run_stdio(opts.symbol_search_limit).await?;
         }
         Command::Version => {
             logging::init_client_tracing();

@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::lsp_map::symbol_kind_i32;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
+use crate::rust_analyzer::SymbolSearchOptions;
 
 /// Holds stateless helpers shared by gRPC handlers (e.g. [`Core::version`]).
 #[derive(Clone, Copy, Debug, Default)]
@@ -28,17 +29,19 @@ impl Core {
     ///
     /// Unescaped `|` splits the query into multiple patterns (each non-empty segment is searched; results are merged and deduped).
     /// Use `\|` for a literal pipe. This is substring alternation, not full regular-expression syntax.
+    /// `options` (symbol kind / crate scope) applies to every segment.
     pub async fn search(
         &self,
         ra: &mut RustAnalyzerSession,
         query: String,
+        options: SymbolSearchOptions,
     ) -> Result<Value, RustAnalyzerError> {
         let segments = split_search_query_into_segments(&query);
         if segments.len() == 1 {
-            return ra.workspace_symbol(segments[0].clone()).await;
+            return ra.workspace_symbol(segments[0].clone(), options).await;
         }
 
-        search_merge_multiple_patterns(ra, segments).await
+        search_merge_multiple_patterns(ra, segments, options).await
     }
 
     /// Runs LSP `textDocument/definition` on the live rust-analyzer session and returns the raw JSON `result`.
@@ -242,6 +245,7 @@ enum WsMergeState {
 async fn search_merge_multiple_patterns(
     ra: &mut RustAnalyzerSession,
     segments: Vec<String>,
+    options: SymbolSearchOptions,
 ) -> Result<Value, RustAnalyzerError> {
     let mut state = WsMergeState::Empty;
 
@@ -257,7 +261,7 @@ async fn search_merge_multiple_patterns(
             segment_query = %segment_query,
             "merged multi-pattern search: LSP workspace/symbol segment"
         );
-        let value = ra.workspace_symbol(seg).await?;
+        let value = ra.workspace_symbol(seg, options).await?;
         let parsed = workspace_symbol_value_to_option(value)?;
 
         let segment_result_count = match &parsed {
