@@ -21,6 +21,8 @@ use crate::proto::racli::LspWorkspaceSymbolList;
 use crate::proto::racli::LspWorkspaceSymbolResponse;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::lsp_workspace_symbol_response;
+use crate::rust_analyzer::SymbolSearchKind;
+use crate::rust_analyzer::SymbolSearchScope;
 
 /// `SearchRequest` JSON body for MCP `search`.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -28,6 +30,12 @@ use crate::proto::racli::lsp_workspace_symbol_response;
 pub struct SearchRequestJson {
     /// Passed to LSP `workspace/symbol`; `|` separates alternative substring patterns (`proto/racli.proto`).
     pub query: String,
+    /// `only_types` (default: modules, structs, enums, traits, type aliases) or `all_symbols` (also functions, methods, constants, fields).
+    #[serde(default)]
+    pub kind: Option<SymbolSearchKind>,
+    /// `workspace` (default) or `workspace_and_dependencies` (also dependency crates and the standard library).
+    #[serde(default)]
+    pub scope: Option<SymbolSearchScope>,
 }
 
 /// `FindDefinitionRequest` JSON body for MCP `find_definition`.
@@ -393,5 +401,22 @@ mod tests {
             v["lspServerInfo"]["name"],
             serde_json::json!("rust-analyzer")
         );
+    }
+
+    #[test]
+    fn search_request_json_parses_optional_kind_and_scope() {
+        let req: SearchRequestJson = serde_json::from_value(serde_json::json!({
+            "query": "Foo",
+            "kind": "all_symbols",
+            "scope": "workspace_and_dependencies"
+        }))
+        .unwrap();
+        assert_eq!(req.kind, Some(SymbolSearchKind::AllSymbols));
+        assert_eq!(req.scope, Some(SymbolSearchScope::WorkspaceAndDependencies));
+
+        let req: SearchRequestJson =
+            serde_json::from_value(serde_json::json!({ "query": "Foo" })).unwrap();
+        assert_eq!(req.kind, None);
+        assert_eq!(req.scope, None);
     }
 }

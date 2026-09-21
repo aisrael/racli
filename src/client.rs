@@ -23,7 +23,12 @@ use crate::proto::racli::PrepareCallHierarchyRequest;
 use crate::proto::racli::PrepareCallHierarchyResponse;
 use crate::proto::racli::SearchRequest;
 use crate::proto::racli::SearchResponse;
+use crate::proto::racli::SymbolSearchKind as ProtoSymbolSearchKind;
+use crate::proto::racli::SymbolSearchScope as ProtoSymbolSearchScope;
 use crate::proto::racli::racli_client::RacliClient;
+use crate::rust_analyzer::SymbolSearchKind;
+use crate::rust_analyzer::SymbolSearchOptions;
+use crate::rust_analyzer::SymbolSearchScope;
 
 /// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `GetVersion`.
 #[derive(Debug, thiserror::Error)]
@@ -129,10 +134,19 @@ pub async fn get_version(socket_path: &Path) -> Result<GetVersionResponse, Clien
     Ok(resp.into_inner())
 }
 
-/// Calls `Search` on the server at `socket_path` with 10s connect and 60s per-request timeout (LSP `workspace/symbol` can be slow).
+/// Calls `Search` on the server at `socket_path` with the server's default symbol kind and scope (see [`search_with_options`]).
 pub async fn search(
     socket_path: &Path,
     query: impl AsRef<str>,
+) -> Result<SearchResponse, ClientSearchError> {
+    search_with_options(socket_path, query, SymbolSearchOptions::default()).await
+}
+
+/// Calls `Search` on the server at `socket_path` with kind/scope overrides, 10s connect and 60s per-request timeout (LSP `workspace/symbol` can be slow).
+pub async fn search_with_options(
+    socket_path: &Path,
+    query: impl AsRef<str>,
+    options: SymbolSearchOptions,
 ) -> Result<SearchResponse, ClientSearchError> {
     let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
 
@@ -146,6 +160,20 @@ pub async fn search(
     let resp = client
         .search(SearchRequest {
             query: query.as_ref().to_string(),
+            kind: options
+                .kind
+                .map_or(ProtoSymbolSearchKind::Unspecified, |k| match k {
+                    SymbolSearchKind::OnlyTypes => ProtoSymbolSearchKind::OnlyTypes,
+                    SymbolSearchKind::AllSymbols => ProtoSymbolSearchKind::AllSymbols,
+                }) as i32,
+            scope: options
+                .scope
+                .map_or(ProtoSymbolSearchScope::Unspecified, |s| match s {
+                    SymbolSearchScope::Workspace => ProtoSymbolSearchScope::Workspace,
+                    SymbolSearchScope::WorkspaceAndDependencies => {
+                        ProtoSymbolSearchScope::WorkspaceAndDependencies
+                    }
+                }) as i32,
         })
         .await?;
 

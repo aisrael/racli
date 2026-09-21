@@ -6,6 +6,7 @@ use racli::client::prepare_call_hierarchy;
 use racli::client::search;
 use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
+use racli::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use tempfile::tempdir;
 
 async fn wait_until_socket_path_exists(sock: &Path) {
@@ -67,7 +68,7 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
 
     let sock_path = sock.clone();
     let server = tokio::spawn(async move {
-        run_grpc_unix_socket_until_shutdown(&sock_path, async {
+        run_grpc_unix_socket_until_shutdown(&sock_path, DEFAULT_SYMBOL_SEARCH_LIMIT, async {
             let _ = stop_rx.await;
         })
         .await
@@ -87,7 +88,7 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
 
     // 0-based LSP position on `document_uri_from_path` in `pub fn document_uri_from_path(...)`.
     let prepared =
-        prepare_call_hierarchy(sock.as_path(), file_path.to_string_lossy().as_ref(), 546, 7)
+        prepare_call_hierarchy(sock.as_path(), file_path.to_string_lossy().as_ref(), 635, 7)
             .await
             .expect("prepare_call_hierarchy");
 

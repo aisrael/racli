@@ -1,4 +1,6 @@
-//! Compares plain `grep` against `racli search` for substring queries (workspace: racli's own source tree).
+//! Compares `racli search` against a grep approximation, both by default (types only, via plain
+//! substring `grep`) and with `--kind all-symbols` (via a declaration-keyword `grep -E`), for
+//! substring queries (workspace: racli's own source tree).
 
 mod support;
 
@@ -39,6 +41,29 @@ fn grep_rs_substring(root: &Path, query: &str) {
     );
 }
 
+/// Runs `grep -rnE` for a Rust declaration of any symbol kind (function, struct, enum, trait,
+/// type alias, const, static, or module) named `query` under `root`, approximating rust-analyzer's
+/// `--kind all-symbols` `workspace/symbol` search without parsing (struct/enum fields are not
+/// matched; discards output).
+fn grep_rs_all_symbols_declaration(root: &Path, query: &str) {
+    let pattern = format!(r"\b(fn|struct|enum|trait|type|const|static|mod)\s+{query}\b");
+    let status = Command::new("grep")
+        .arg("-r")
+        .arg("-n")
+        .arg("-E")
+        .arg("--include=*.rs")
+        .arg(pattern)
+        .arg(root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("spawn grep");
+    assert!(
+        status.success() || status.code() == Some(1),
+        "grep failed with {status:?}"
+    );
+}
+
 /// Runs `racli search` for `query` against `socket` (discards output).
 fn racli_search_cli(racli: &Path, socket: &Path, query: &str) {
     let status = Command::new(racli)
@@ -52,7 +77,27 @@ fn racli_search_cli(racli: &Path, socket: &Path, query: &str) {
     assert!(status.success(), "racli search failed with {status:?}");
 }
 
-/// Registers Criterion benches comparing `grep` and `racli search` per query string.
+/// Runs `racli search --kind all-symbols` for `query` against `socket` (discards output).
+fn racli_search_all_symbols_cli(racli: &Path, socket: &Path, query: &str) {
+    let status = Command::new(racli)
+        .arg("search")
+        .arg("--kind")
+        .arg("all-symbols")
+        .arg(query)
+        .env("RACLI_UNIX_SOCKET", socket)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("spawn racli search --kind all-symbols");
+    assert!(
+        status.success(),
+        "racli search --kind all-symbols failed with {status:?}"
+    );
+}
+
+/// Registers Criterion benches comparing `grep` against `racli search`, both by default
+/// (types only) and with `--kind all-symbols` (using [`grep_rs_all_symbols_declaration`] as the
+/// `grep` approximation for the latter), per query string.
 fn bench_grep_vs_racli(c: &mut Criterion, racli: &Path, socket: &Path, workspace: &Path) {
     let mut group = c.benchmark_group("grep_vs_racli_search");
     for query in QUERIES {
@@ -64,6 +109,16 @@ fn bench_grep_vs_racli(c: &mut Criterion, racli: &Path, socket: &Path, workspace
         group.bench_function(BenchmarkId::new("racli_search", *query), |b| {
             b.iter(|| {
                 racli_search_cli(black_box(racli), black_box(socket), black_box(query));
+            });
+        });
+        group.bench_function(BenchmarkId::new("grep_all_symbols", *query), |b| {
+            b.iter(|| {
+                grep_rs_all_symbols_declaration(black_box(workspace), black_box(query));
+            });
+        });
+        group.bench_function(BenchmarkId::new("racli_search_all_symbols", *query), |b| {
+            b.iter(|| {
+                racli_search_all_symbols_cli(black_box(racli), black_box(socket), black_box(query));
             });
         });
     }

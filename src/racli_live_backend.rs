@@ -29,9 +29,13 @@ pub struct RacliLiveBackend {
 }
 
 impl RacliLiveBackend {
-    /// Spawns `rust-analyzer` under `workspace_root`, completes LSP init, starts the workspace watcher, and builds [`RacliSession`].
-    pub async fn start(workspace_root: PathBuf) -> Result<Self, RacliBackendStartError> {
-        let rust_analyzer = RustAnalyzerSession::spawn(&workspace_root).await?;
+    /// Spawns `rust-analyzer` under `workspace_root` (capping `workspace/symbol` at `symbol_search_limit`), completes LSP init, starts the workspace watcher, and builds [`RacliSession`].
+    pub async fn start(
+        workspace_root: PathBuf,
+        symbol_search_limit: u32,
+    ) -> Result<Self, RacliBackendStartError> {
+        let rust_analyzer =
+            RustAnalyzerSession::spawn(&workspace_root, symbol_search_limit).await?;
         let ra = Arc::new(Mutex::new(rust_analyzer));
 
         let watcher = spawn_workspace_file_watcher(workspace_root, Arc::clone(&ra));

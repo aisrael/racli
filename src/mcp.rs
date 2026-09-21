@@ -47,6 +47,7 @@ use crate::racli_live_backend::RacliLiveBackend;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
 use crate::rust_analyzer::RustAnalyzerError;
+use crate::rust_analyzer::SymbolSearchOptions;
 
 /// Failures during the MCP lifecycle on stdio or the embedded workspace backend.
 #[derive(Debug, thiserror::Error)]
@@ -122,7 +123,7 @@ impl RacliMcpHandler {
     /// Runs workspace symbol resolution (`Racli.Search`).
     #[tool(
         name = "search",
-        description = "Runs LSP workspace/symbol via rust-analyzer with the racli merged query semantics (mirrors gRPC Racli.Search)."
+        description = "Runs LSP workspace/symbol via rust-analyzer with the racli merged query semantics (mirrors gRPC Racli.Search). An empty query lists all symbols up to the server's result limit; set kind to all_symbols to include functions, methods, constants, and fields, and scope to workspace_and_dependencies to include dependency crates."
     )]
     async fn search_symbols(
         &self,
@@ -130,7 +131,13 @@ impl RacliMcpHandler {
     ) -> Result<Json<SearchResponseJson>, ErrorData> {
         let resp = self
             .session
-            .search(req.query)
+            .search(
+                req.query,
+                SymbolSearchOptions {
+                    kind: req.kind,
+                    scope: req.scope,
+                },
+            )
             .await
             .map_err(Self::racli_rpc_error_to_mcp)?;
         Ok(Json(search_response_proto_to_json(&resp)))
@@ -239,8 +246,8 @@ impl ServerHandler for RacliMcpHandler {
     }
 }
 
-/// Serves MCP on stdin/stdout after starting rust-analyzer and the workspace file watcher in-process.
-pub async fn run_stdio() -> Result<(), ServerError> {
+/// Serves MCP on stdin/stdout after starting rust-analyzer (capping `workspace/symbol` at `symbol_search_limit`) and the workspace file watcher in-process.
+pub async fn run_stdio(symbol_search_limit: u32) -> Result<(), ServerError> {
     let _log_guard = init_grpc_server_tracing();
 
     // Install the shutdown signal handlers before any of the (potentially slow) startup work
@@ -258,7 +265,7 @@ pub async fn run_stdio() -> Result<(), ServerError> {
         "racli MCP server starting on stdio (embedded rust-analyzer)"
     );
 
-    let backend = RacliLiveBackend::start(cwd).await?;
+    let backend = RacliLiveBackend::start(cwd, symbol_search_limit).await?;
 
     let handler = RacliMcpHandler::new(backend.session().clone());
     let running = match handler

@@ -17,8 +17,13 @@ use crate::proto::racli::LspWorkspaceSymbolResponse;
 use crate::proto::racli::OutgoingCallsResponse;
 use crate::proto::racli::PrepareCallHierarchyResponse;
 use crate::proto::racli::SearchResponse;
+use crate::proto::racli::SymbolSearchKind as ProtoSymbolSearchKind;
+use crate::proto::racli::SymbolSearchScope as ProtoSymbolSearchScope;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
+use crate::rust_analyzer::SymbolSearchKind;
+use crate::rust_analyzer::SymbolSearchOptions;
+use crate::rust_analyzer::SymbolSearchScope;
 use crate::server::Core;
 
 /// Mirrors gRPC [`tonic::Status`] intent for callers that are not tonic-specific.
@@ -36,6 +41,36 @@ impl From<RustAnalyzerError> for RacliRpcError {
     fn from(value: RustAnalyzerError) -> Self {
         RacliRpcError::Internal(value.to_string())
     }
+}
+
+/// Converts protobuf `SearchRequest.kind` / `scope` enum values into [`SymbolSearchOptions`] (unspecified becomes `None`).
+pub fn symbol_search_options_from_proto(
+    kind: i32,
+    scope: i32,
+) -> Result<SymbolSearchOptions, RacliRpcError> {
+    let kind = match ProtoSymbolSearchKind::try_from(kind) {
+        Ok(ProtoSymbolSearchKind::Unspecified) => None,
+        Ok(ProtoSymbolSearchKind::OnlyTypes) => Some(SymbolSearchKind::OnlyTypes),
+        Ok(ProtoSymbolSearchKind::AllSymbols) => Some(SymbolSearchKind::AllSymbols),
+        Err(_) => {
+            return Err(RacliRpcError::InvalidArgument(format!(
+                "unknown symbol search kind: {kind}"
+            )));
+        }
+    };
+    let scope = match ProtoSymbolSearchScope::try_from(scope) {
+        Ok(ProtoSymbolSearchScope::Unspecified) => None,
+        Ok(ProtoSymbolSearchScope::Workspace) => Some(SymbolSearchScope::Workspace),
+        Ok(ProtoSymbolSearchScope::WorkspaceAndDependencies) => {
+            Some(SymbolSearchScope::WorkspaceAndDependencies)
+        }
+        Err(_) => {
+            return Err(RacliRpcError::InvalidArgument(format!(
+                "unknown symbol search scope: {scope}"
+            )));
+        }
+    };
+    Ok(SymbolSearchOptions { kind, scope })
 }
 
 /// Shared [`Core`] plus a live rust-analyzer LSP session (`Arc<Mutex<RustAnalyzerSession>>`).
@@ -69,10 +104,14 @@ impl RacliSession {
         }
     }
 
-    /// Runs workspace symbol search (`Racli.Search`).
-    pub async fn search(&self, query: String) -> Result<SearchResponse, RacliRpcError> {
+    /// Runs workspace symbol search (`Racli.Search`) with optional kind/scope overrides.
+    pub async fn search(
+        &self,
+        query: String,
+        options: SymbolSearchOptions,
+    ) -> Result<SearchResponse, RacliRpcError> {
         let mut ra = self.rust_analyzer.lock().await;
-        let value = self.core.search(&mut ra, query).await?;
+        let value = self.core.search(&mut ra, query, options).await?;
         drop(ra);
 
         let ws: LspWorkspaceSymbolResponse = if value.is_null() {

@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use racli::client::get_version;
 use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
+use racli::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use tempfile::tempdir;
 
 /// Integration test: temporary UDS, gRPC `GetVersion` matches `CARGO_PKG_VERSION`, then server shuts down cleanly.
@@ -24,7 +25,7 @@ async fn grpc_get_version_round_trip() {
 
     let sock_path = sock.clone();
     let server = tokio::spawn(async move {
-        run_grpc_unix_socket_until_shutdown(&sock_path, async {
+        run_grpc_unix_socket_until_shutdown(&sock_path, DEFAULT_SYMBOL_SEARCH_LIMIT, async {
             let _ = stop_rx.await;
         })
         .await

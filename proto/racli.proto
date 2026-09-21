@@ -102,9 +102,27 @@ message LspWorkspaceSymbolResponse {
   }
 }
 
+// rust-analyzer `workspace/symbol` `searchKind` extension; unspecified uses rust-analyzer's default (types only).
+enum SymbolSearchKind {
+  SYMBOL_SEARCH_KIND_UNSPECIFIED = 0;
+  SYMBOL_SEARCH_KIND_ONLY_TYPES = 1;
+  SYMBOL_SEARCH_KIND_ALL_SYMBOLS = 2;
+}
+
+// rust-analyzer `workspace/symbol` `searchScope` extension; unspecified uses rust-analyzer's default (workspace only).
+enum SymbolSearchScope {
+  SYMBOL_SEARCH_SCOPE_UNSPECIFIED = 0;
+  SYMBOL_SEARCH_SCOPE_WORKSPACE = 1;
+  SYMBOL_SEARCH_SCOPE_WORKSPACE_AND_DEPENDENCIES = 2;
+}
+
 // Parameters for `Racli.Search`.
 message SearchRequest {
   string query = 1;
+  // Which symbol kinds to return.
+  SymbolSearchKind kind = 2;
+  // Which crates to search.
+  SymbolSearchScope scope = 3;
 }
 
 // Result of `Racli.Search` wrapping an LSP-shaped workspace symbol payload.

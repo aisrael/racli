@@ -34,6 +34,7 @@ use crate::racli_live_backend::RacliBackendStartError;
 use crate::racli_live_backend::RacliLiveBackend;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
+use crate::racli_session::symbol_search_options_from_proto;
 use tonic::Request;
 use tonic::Response;
 use tonic::Status;
@@ -149,10 +150,18 @@ impl Racli for RacliGrpc {
         &self,
         request: Request<SearchRequest>,
     ) -> Result<Response<SearchResponse>, Status> {
-        let query = request.into_inner().query;
-        tracing::debug!(rpc = "Racli.Search", %query, "gRPC endpoint invoked");
+        let inner = request.into_inner();
+        tracing::debug!(
+            rpc = "Racli.Search",
+            query = %inner.query,
+            kind = inner.kind,
+            scope = inner.scope,
+            "gRPC endpoint invoked"
+        );
+        let options = symbol_search_options_from_proto(inner.kind, inner.scope)
+            .map_err(racli_rpc_error_to_status)?;
         self.session
-            .search(query)
+            .search(inner.query, options)
             .await
             .map(Response::new)
             .map_err(racli_rpc_error_to_status)
@@ -330,18 +339,21 @@ pub(crate) fn install_unix_shutdown_signals() -> impl Future<Output = ()> + Send
 /// Serves gRPC on `socket_path` until SIGINT or SIGTERM, then deletes the bound pathname.
 pub async fn run_grpc_unix_socket_interactive<P: AsRef<Path>>(
     socket_path: P,
+    symbol_search_limit: u32,
 ) -> Result<(), GrpcServerError> {
     // Install the signal handlers before any of the (potentially slow) startup work inside
     // `run_grpc_unix_socket_until_shutdown` (spawning and initializing rust-analyzer), so a
     // Ctrl+C during startup is caught instead of killing the process outright.
     let shutdown = install_unix_shutdown_signals();
-    run_grpc_unix_socket_until_shutdown(socket_path, shutdown).await
+    run_grpc_unix_socket_until_shutdown(socket_path, symbol_search_limit, shutdown).await
 }
 
 /// Serves Racli gRPC on `socket_path` until `shutdown` completes, removes the socket file, and returns.
+/// `symbol_search_limit` caps rust-analyzer `workspace/symbol` results per query.
 /// Prefer this in tests with an oneshot `shutdown`; use [`run_grpc_unix_socket_interactive`] for signal-driven CLI shutdown.
 pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
     socket_path: P,
+    symbol_search_limit: u32,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), GrpcServerError> {
     let _log_guard = init_grpc_server_tracing();
@@ -351,7 +363,7 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
     let _ = std::fs::remove_file(socket_path);
 
     let cwd = std::env::current_dir().map_err(|source| GrpcServerError::CurrentDir { source })?;
-    let backend = match RacliLiveBackend::start(cwd).await {
+    let backend = match RacliLiveBackend::start(cwd, symbol_search_limit).await {
         Ok(b) => b,
         Err(e) => {
             let _ = std::fs::remove_file(&path_buf);

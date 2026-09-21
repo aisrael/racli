@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use racli::racli_live_backend::RacliLiveBackend;
+use racli::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use tempfile::tempdir;
 
 /// Integration test: [`RacliLiveBackend`] returns the crate version and rust-analyzer serverInfo, then shuts down cleanly.
@@ -19,10 +20,13 @@ async fn live_backend_get_version_round_trip() {
     let dir = tempdir().expect("temp dir");
     let root = dir.path().to_path_buf();
 
-    let backend = tokio::time::timeout(Duration::from_secs(120), RacliLiveBackend::start(root))
-        .await
-        .expect("backend start should finish within timeout")
-        .expect("RacliLiveBackend::start");
+    let backend = tokio::time::timeout(
+        Duration::from_secs(120),
+        RacliLiveBackend::start(root, DEFAULT_SYMBOL_SEARCH_LIMIT),
+    )
+    .await
+    .expect("backend start should finish within timeout")
+    .expect("RacliLiveBackend::start");
 
     let resp = backend.session().get_version();
     assert_eq!(resp.version, env!("CARGO_PKG_VERSION"));
