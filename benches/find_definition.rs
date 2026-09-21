@@ -28,31 +28,31 @@ struct DefinitionQuery {
 const QUERIES: &[DefinitionQuery] = &[
     DefinitionQuery {
         file: "src/racli_session.rs",
-        line: 38,
+        line: 79,
         character: 29,
         symbol: "RustAnalyzerSession",
     },
     DefinitionQuery {
         file: "src/grpc_server.rs",
-        line: 121,
+        line: 131,
         character: 17,
         symbol: "RacliSession",
     },
     DefinitionQuery {
         file: "src/racli_session.rs",
-        line: 36,
+        line: 77,
         character: 10,
         symbol: "Core",
     },
     DefinitionQuery {
         file: "src/cli.rs",
-        line: 68,
-        character: 45,
+        line: 90,
+        character: 16,
         symbol: "effective_unix_socket_path",
     },
     DefinitionQuery {
         file: "src/rust_analyzer.rs",
-        line: 88,
+        line: 192,
         character: 35,
         symbol: "LspError",
     },
@@ -184,7 +184,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::find_definition(sock, &racli_session_rs, 38, 29),
+                        racli::client::find_definition(sock, &racli_session_rs, 79, 29),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.locations.is_empty()
