@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+/// ractor supervision tree that sequences startup/shutdown of rust-analyzer, the file watcher, and the gRPC/MCP front end.
+mod actors;
 /// `racli call-hierarchy`: CLI arguments and the client-side call hierarchy walk (shared with MCP).
 pub mod call_hierarchy;
 /// CLI argument parsing and subcommand dispatch for the `racli` binary.

@@ -1,10 +1,11 @@
 //! Shared backend for gRPC [`crate::grpc_server::RacliGrpc`].
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use ractor::ActorRef;
+use ractor::RactorErr;
 
+use crate::actors::rust_analyzer::RustAnalyzerMsg;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::FindImplementationsResponse;
@@ -20,7 +21,6 @@ use crate::proto::racli::SearchResponse;
 use crate::proto::racli::SymbolSearchKind as ProtoSymbolSearchKind;
 use crate::proto::racli::SymbolSearchScope as ProtoSymbolSearchScope;
 use crate::rust_analyzer::RustAnalyzerError;
-use crate::rust_analyzer::RustAnalyzerSession;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
@@ -40,6 +40,12 @@ pub enum RacliRpcError {
 impl From<RustAnalyzerError> for RacliRpcError {
     fn from(value: RustAnalyzerError) -> Self {
         RacliRpcError::Internal(value.to_string())
+    }
+}
+
+impl<T> From<RactorErr<T>> for RacliRpcError {
+    fn from(value: RactorErr<T>) -> Self {
+        RacliRpcError::Internal(format!("rust-analyzer actor unavailable: {value}"))
     }
 }
 
@@ -73,19 +79,19 @@ pub fn symbol_search_options_from_proto(
     Ok(SymbolSearchOptions { kind, scope })
 }
 
-/// Shared [`Core`] plus a live rust-analyzer LSP session (`Arc<Mutex<RustAnalyzerSession>>`).
+/// Shared [`Core`] plus a handle to the rust-analyzer actor that owns the live LSP session.
 pub struct RacliSession {
     core: Core,
     lsp_server_info: LspServerInfo,
-    rust_analyzer: Arc<Mutex<RustAnalyzerSession>>,
+    rust_analyzer: ActorRef<RustAnalyzerMsg>,
 }
 
 impl RacliSession {
-    /// Builds a session using an already-running LSP handshake and shared `Arc` to the analyzer mutex.
-    pub fn new(
+    /// Builds a session from an initialized rust-analyzer actor and its LSP `serverInfo`.
+    pub(crate) fn new(
         core: Core,
         lsp_server_info: LspServerInfo,
-        rust_analyzer: Arc<Mutex<RustAnalyzerSession>>,
+        rust_analyzer: ActorRef<RustAnalyzerMsg>,
     ) -> Self {
         Self {
             core,
@@ -110,9 +116,11 @@ impl RacliSession {
         query: String,
         options: SymbolSearchOptions,
     ) -> Result<SearchResponse, RacliRpcError> {
-        let mut ra = self.rust_analyzer.lock().await;
-        let value = self.core.search(&mut ra, query, options).await?;
-        drop(ra);
+        let value = ractor::call!(self.rust_analyzer, |reply| RustAnalyzerMsg::Search {
+            query,
+            options,
+            reply,
+        })??;
 
         let ws: LspWorkspaceSymbolResponse = if value.is_null() {
             LspWorkspaceSymbolResponse { payload: None }
@@ -146,12 +154,14 @@ impl RacliSession {
         let uri = crate::rust_analyzer::document_uri_from_path(&abs)
             .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
 
-        let mut ra = self.rust_analyzer.lock().await;
-        let value = self
-            .core
-            .find_definition(&mut ra, uri, line, character)
-            .await?;
-        drop(ra);
+        let value = ractor::call!(self.rust_analyzer, |reply| {
+            RustAnalyzerMsg::FindDefinition {
+                uri,
+                line,
+                character,
+                reply,
+            }
+        })??;
 
         let locations = if value.is_null() {
             vec![]
@@ -183,12 +193,14 @@ impl RacliSession {
         let uri = crate::rust_analyzer::document_uri_from_path(&abs)
             .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
 
-        let mut ra = self.rust_analyzer.lock().await;
-        let value = self
-            .core
-            .find_implementations(&mut ra, uri, line, character)
-            .await?;
-        drop(ra);
+        let value = ractor::call!(self.rust_analyzer, |reply| {
+            RustAnalyzerMsg::FindImplementations {
+                uri,
+                line,
+                character,
+                reply,
+            }
+        })??;
 
         let locations = if value.is_null() {
             vec![]
@@ -220,12 +232,14 @@ impl RacliSession {
         let uri = crate::rust_analyzer::document_uri_from_path(&abs)
             .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
 
-        let mut ra = self.rust_analyzer.lock().await;
-        let value = self
-            .core
-            .find_references(&mut ra, uri, line, character)
-            .await?;
-        drop(ra);
+        let value = ractor::call!(self.rust_analyzer, |reply| {
+            RustAnalyzerMsg::FindReferences {
+                uri,
+                line,
+                character,
+                reply,
+            }
+        })??;
 
         let locations = if value.is_null() {
             vec![]
@@ -257,12 +271,14 @@ impl RacliSession {
         let uri = crate::rust_analyzer::document_uri_from_path(&abs)
             .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
 
-        let mut ra = self.rust_analyzer.lock().await;
-        let value = self
-            .core
-            .prepare_call_hierarchy(&mut ra, uri, line, character)
-            .await?;
-        drop(ra);
+        let value = ractor::call!(self.rust_analyzer, |reply| {
+            RustAnalyzerMsg::PrepareCallHierarchy {
+                uri,
+                line,
+                character,
+                reply,
+            }
+        })??;
 
         let items = if value.is_null() {
             vec![]
@@ -286,12 +302,10 @@ impl RacliSession {
         let lsp_item = crate::lsp_map::call_hierarchy_item_from_proto(&item)
             .map_err(RacliRpcError::InvalidArgument)?;
 
-        let mut ra = self.rust_analyzer.lock().await;
-        let value = self
-            .core
-            .call_hierarchy_incoming_calls(&mut ra, lsp_item)
-            .await?;
-        drop(ra);
+        let value = ractor::call!(self.rust_analyzer, |reply| RustAnalyzerMsg::IncomingCalls {
+            item: lsp_item,
+            reply,
+        })??;
 
         let calls = if value.is_null() {
             vec![]
@@ -316,12 +330,10 @@ impl RacliSession {
         let lsp_item = crate::lsp_map::call_hierarchy_item_from_proto(&item)
             .map_err(RacliRpcError::InvalidArgument)?;
 
-        let mut ra = self.rust_analyzer.lock().await;
-        let value = self
-            .core
-            .call_hierarchy_outgoing_calls(&mut ra, lsp_item)
-            .await?;
-        drop(ra);
+        let value = ractor::call!(self.rust_analyzer, |reply| RustAnalyzerMsg::OutgoingCalls {
+            item: lsp_item,
+            reply,
+        })??;
 
         let calls = if value.is_null() {
             vec![]
@@ -355,9 +367,9 @@ impl RacliSession {
         let uri = crate::rust_analyzer::document_uri_from_path(&abs)
             .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
 
-        let mut ra = self.rust_analyzer.lock().await;
-        let value = self.core.document_symbols(&mut ra, uri).await?;
-        drop(ra);
+        let value = ractor::call!(self.rust_analyzer, |reply| {
+            RustAnalyzerMsg::DocumentSymbols { uri, reply }
+        })??;
 
         let symbols = if value.is_null() {
             vec![]
