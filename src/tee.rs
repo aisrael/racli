@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::time::Instant;
 
 use clap::Parser;
 use serde_json::Value;
@@ -20,6 +21,7 @@ use tonic::transport::Endpoint;
 
 use crate::effective_unix_socket_path;
 use crate::grpc_server::GrpcServerError;
+use crate::grpc_server::init_grpc_server_tracing;
 use crate::grpc_server::install_unix_shutdown_signals;
 use crate::grpc_server::run_grpc_unix_socket_until_shutdown;
 use crate::lsp_client::transport::TransportError;
@@ -75,8 +77,21 @@ pub enum TeeError {
 /// Runs the gRPC server on the Unix socket and proxies stdin/stdout LSP through it until the editor
 /// sends `exit`, closes stdin, or SIGINT/SIGTERM arrives.
 pub async fn run_tee(args: TeeArgs) -> Result<(), TeeError> {
+    // Installed here (not only in the server task) so startup and shutdown lines are captured too.
+    let _log_guard = init_grpc_server_tracing();
+    let started = Instant::now();
+    let pid = std::process::id();
     let signals = install_unix_shutdown_signals();
     let socket_path = effective_unix_socket_path();
+    tracing::info!(
+        pid,
+        ppid = std::os::unix::process::parent_id(),
+        version = %crate::VERSION,
+        cwd = ?std::env::current_dir().ok(),
+        socket = %socket_path.display(),
+        "racli tee starting"
+    );
+    log_previous_instance(&socket_path);
     // The server also removes it, but doing it here guarantees our first connect attempt can't
     // reach another process's socket before our server task has run.
     let _ = std::fs::remove_file(&socket_path);
@@ -87,7 +102,7 @@ pub async fn run_tee(args: TeeArgs) -> Result<(), TeeError> {
         async move {
             run_grpc_unix_socket_until_shutdown(socket_path, args.symbol_search_limit, async {
                 tokio::select! {
-                    () = signals => {}
+                    () = signals => tracing::info!("received SIGINT/SIGTERM; stopping"),
                     _ = stop_rx => {}
                 }
             })
@@ -95,16 +110,46 @@ pub async fn run_tee(args: TeeArgs) -> Result<(), TeeError> {
         }
     });
 
-    let proxied = tokio::select! {
-        proxied = proxy(&socket_path) => proxied,
+    let result = tokio::select! {
+        proxied = proxy(&socket_path) => {
+            let _ = stop_tx.send(());
+            let served = server.await;
+            proxied.and(flatten(served))
+        }
         // The server only stops on its own after a signal or a failure; either way we are done.
-        served = &mut server => return Ok(served??),
+        served = &mut server => flatten(served),
     };
-    let _ = stop_tx.send(());
-    let served = server.await;
-    proxied?;
-    served??;
-    Ok(())
+    let uptime_secs = started.elapsed().as_secs();
+    match &result {
+        Ok(()) => tracing::info!(pid, uptime_secs, "racli tee stopped"),
+        Err(e) => tracing::error!(pid, uptime_secs, error = ?e, "racli tee stopped with an error"),
+    }
+    result
+}
+
+/// Flattens the server task's join result so a panic is reported (and logged) like a server error.
+fn flatten(
+    served: Result<Result<(), GrpcServerError>, tokio::task::JoinError>,
+) -> Result<(), TeeError> {
+    served?.map_err(TeeError::from)
+}
+
+/// Logs whether `socket_path` was left by a previous racli (e.g. when an editor restarts `racli tee`).
+fn log_previous_instance(socket_path: &Path) {
+    if !socket_path.exists() {
+        return;
+    }
+    if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+        tracing::warn!(
+            socket = %socket_path.display(),
+            "another racli instance is serving this socket; taking it over"
+        );
+    } else {
+        tracing::info!(
+            socket = %socket_path.display(),
+            "removing stale socket left by a previous racli instance"
+        );
+    }
 }
 
 /// Connects to the gRPC socket (waiting for the server to bind it) and proxies stdio through it.
@@ -209,7 +254,10 @@ async fn handle_message(client: &mut RacliClient<Channel>, msg: Value) -> Step {
             })
         }
         // rust-analyzer is shared, so the editor's shutdown is acknowledged locally.
-        (Some("shutdown"), Some(id)) => Step::Reply(result(id, Value::Null)),
+        (Some("shutdown"), Some(id)) => {
+            tracing::info!("editor requested shutdown");
+            Step::Reply(result(id, Value::Null))
+        }
         (Some(method), Some(id)) => {
             let response = client
                 .lsp_request(LspRequestRequest {
