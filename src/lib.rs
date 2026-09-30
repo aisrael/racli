@@ -28,7 +28,7 @@ pub mod lsp_map;
 pub mod mcp;
 /// Protobuf and tonic-generated types for the Racli gRPC API.
 pub mod proto;
-/// Shared live workspace backend (rust-analyzer + watcher + [`RacliSession`]) for gRPC and MCP.
+/// Shared live workspace backend (rust-analyzer + watcher + `RacliSession`) for gRPC and MCP.
 pub mod racli_live_backend;
 /// Shared gRPC/MCP backend (rust-analyzer + [`crate::server::Core`]).
 pub mod racli_session;

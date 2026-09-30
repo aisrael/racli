@@ -1,4 +1,4 @@
-//! Server-side building blocks: [`Core`] and future service glue.
+//! Server-side building blocks: `Core` and future service glue.
 
 use std::collections::HashSet;
 use std::hash::Hash;
@@ -15,7 +15,7 @@ use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
 use crate::rust_analyzer::SymbolSearchOptions;
 
-/// Holds stateless helpers shared by gRPC handlers (e.g. [`Core::version`]).
+/// Holds stateless helpers shared by gRPC handlers (e.g. `Core::version`).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Core {}
 

@@ -1,4 +1,4 @@
-//! The `racli mcp` server: MCP tools on stdio via `rmcp`, served by an in-process [`RacliSession`] (rust-analyzer + file watcher).
+//! The `racli mcp` server: MCP tools on stdio via `rmcp`, served by an in-process `RacliSession` (rust-analyzer + file watcher).
 
 mod mcp_proto_json;
 
@@ -92,7 +92,7 @@ impl From<rmcp::service::ServerInitializeError> for ServerError {
     }
 }
 
-/// MCP server state: shared [`RacliSession`], plus a generated [`ToolRouter`].
+/// MCP server state: shared `RacliSession`, plus a generated `ToolRouter`.
 #[derive(Clone)]
 pub(crate) struct RacliMcpHandler {
     session: Arc<RacliSession>,

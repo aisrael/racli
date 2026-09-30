@@ -1,4 +1,4 @@
-//! Shared rust-analyzer session, workspace file watcher, and [`RacliSession`] for `racli server` and `racli mcp`.
+//! Shared rust-analyzer session, workspace file watcher, and `RacliSession` for `racli server` and `racli mcp`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ impl RacliBackendStartError {
     }
 }
 
-/// Live backend: handle to the [`BackendSupervisor`] actor and its shared RPC/session state.
+/// Live backend: handle to the `BackendSupervisor` actor and its shared RPC/session state.
 pub struct RacliLiveBackend {
     session: Arc<RacliSession>,
     supervisor: ActorRef<BackendMsg>,
@@ -42,7 +42,7 @@ pub struct RacliLiveBackend {
 }
 
 impl RacliLiveBackend {
-    /// Spawns `rust-analyzer` under `workspace_root` (capping `workspace/symbol` at `symbol_search_limit`), completes LSP init, starts the workspace watcher, and builds [`RacliSession`].
+    /// Spawns `rust-analyzer` under `workspace_root` (capping `workspace/symbol` at `symbol_search_limit`), completes LSP init, starts the workspace watcher, and builds `RacliSession`.
     pub async fn start(
         workspace_root: PathBuf,
         symbol_search_limit: u32,

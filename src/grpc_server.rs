@@ -165,7 +165,7 @@ impl RacliGrpc {
 
 #[tonic::async_trait]
 impl Racli for RacliGrpc {
-    /// Returns [`crate::VERSION`] and rust-analyzer [`LspServerInfo`] from initialize.
+    /// Returns `crate::VERSION` and rust-analyzer `LspServerInfo` from initialize.
     async fn get_version(
         &self,
         _request: Request<GetVersionRequest>,

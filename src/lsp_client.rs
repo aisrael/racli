@@ -52,14 +52,14 @@ impl LspClient {
 
     /// Request the server to initialize the client.
     ///
-    /// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize
+    /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize>
     pub async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult, LspError> {
         self.send_request::<Initialize>(params).await
     }
 
     /// Notify the server that the client received the result of the `initialize` request.
     ///
-    /// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialized
+    /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialized>
     pub async fn initialized(&self) -> Result<(), LspError> {
         let params = InitializedParams {};
         self.send_notification::<Initialized>(params).await
@@ -67,14 +67,14 @@ impl LspClient {
 
     /// Request the server to shutdown the client.
     ///
-    /// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#shutdown
+    /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#shutdown>
     pub async fn shutdown(&self) -> Result<(), LspError> {
         self.send_request::<Shutdown>(()).await
     }
 
     /// Notify the server to exit the process.
     ///
-    /// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#exit
+    /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#exit>
     pub async fn exit(&self) -> Result<(), LspError> {
         self.send_notification::<Exit>(()).await
     }

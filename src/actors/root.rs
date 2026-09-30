@@ -233,6 +233,16 @@ async fn shutdown_backend(
 }
 
 /// Runs the actor tree until `shutdown` resolves or the front end exits, then tears it down in order.
+///
+/// ```text
+/// RootActor
+/// ├── BackendSupervisor
+/// │   ├── RustAnalyzerActor
+/// │   └── FileWatcherActor
+/// └── GrpcFrontend | McpFrontend
+/// ```
+///
+/// Children start top to bottom and stop in reverse order.
 pub(crate) async fn run_until_shutdown(
     workspace_root: PathBuf,
     symbol_search_limit: u32,

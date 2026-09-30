@@ -1,9 +1,9 @@
 //! `racli call-hierarchy`: CLI arguments, and the client-side call hierarchy orchestration
 //! (prepare + recursive incoming/outgoing walk) shared between the CLI and the MCP tool.
 //!
-//! LSP only exposes one level of callers/callees per request; [`CallHierarchyBackend`]
+//! LSP only exposes one level of callers/callees per request; `CallHierarchyBackend`
 //! abstracts over how that single level is fetched (gRPC over a Unix socket for the CLI, or an
-//! in-process [`RacliSession`] for MCP), and [`run_call_hierarchy`] drives the depth-bounded,
+//! in-process `RacliSession` for MCP), and `run_call_hierarchy` drives the depth-bounded,
 //! cycle-guarded recursion on top of it so both callers see the same tree shape.
 
 use std::collections::HashSet;
