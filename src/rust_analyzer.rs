@@ -157,7 +157,8 @@ impl Request for RaWorkspaceSymbolRequest {
 /// registration, hierarchical `textDocument/documentSymbol` (otherwise servers return a flat
 /// `SymbolInformation[]`), and editor-level text document features for `racli tee`. Capabilities
 /// that make the server send requests to the client (configuration, applyEdit, refresh, progress)
-/// are deliberately omitted because racli cannot forward those to an editor.
+/// are deliberately omitted because racli cannot forward those to an editor; `experimental/serverStatus`
+/// notifications are requested so editors can show rust-analyzer's health.
 fn racli_lsp_client_capabilities() -> ClientCapabilities {
     let markup = || Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]);
     ClientCapabilities {
@@ -245,6 +246,8 @@ fn racli_lsp_client_capabilities() -> ClientCapabilities {
             }),
             ..Default::default()
         }),
+        // Lets editors behind `racli tee` show rust-analyzer's health (see `lsp_events::SERVER_STATUS`).
+        experimental: Some(serde_json::json!({ "serverStatusNotification": true })),
         ..Default::default()
     }
 }

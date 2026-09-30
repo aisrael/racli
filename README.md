@@ -62,7 +62,7 @@ exec racli tee "$@"
 Limitations:
 - The editor's `initialize` is answered with racli's own `InitializeResult`, and the editor's capabilities and `initializationOptions` are ignored.
 - Requests are handled one at a time, and `$/cancelRequest` is ignored.
-- Only `textDocument/publishDiagnostics`, `window/showMessage` and `window/logMessage` reach the editor. Server-to-client requests are not forwarded.
+- Only `textDocument/publishDiagnostics`, `experimental/serverStatus`, `window/showMessage` and `window/logMessage` reach the editor. Server-to-client requests are not forwarded.
 
 ## Client commands
 
