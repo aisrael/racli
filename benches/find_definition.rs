@@ -27,20 +27,20 @@ struct DefinitionQuery {
 /// that symbol's declaration elsewhere in the crate.
 const QUERIES: &[DefinitionQuery] = &[
     DefinitionQuery {
-        file: "src/racli_session.rs",
-        line: 79,
-        character: 29,
+        file: "src/server.rs",
+        line: 34,
+        character: 17,
         symbol: "RustAnalyzerSession",
     },
     DefinitionQuery {
         file: "src/grpc_server.rs",
-        line: 131,
+        line: 155,
         character: 17,
         symbol: "RacliSession",
     },
     DefinitionQuery {
         file: "src/racli_session.rs",
-        line: 77,
+        line: 83,
         character: 10,
         symbol: "Core",
     },
@@ -52,7 +52,7 @@ const QUERIES: &[DefinitionQuery] = &[
     },
     DefinitionQuery {
         file: "src/rust_analyzer.rs",
-        line: 192,
+        line: 190,
         character: 35,
         symbol: "LspError",
     },
@@ -171,11 +171,11 @@ fn main() {
             "racli server did not accept search RPCs in time",
         );
 
-        let racli_session_rs = workspace
+        let server_rs = workspace
             .join("src")
-            .join("racli_session.rs")
+            .join("server.rs")
             .canonicalize()
-            .expect("canonicalize src/racli_session.rs")
+            .expect("canonicalize src/server.rs")
             .display()
             .to_string();
         support::poll_until(
@@ -184,7 +184,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::find_definition(sock, &racli_session_rs, 79, 29),
+                        racli::client::find_definition(sock, &server_rs, 34, 17),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.locations.is_empty()

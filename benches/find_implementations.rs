@@ -33,19 +33,19 @@ const QUERIES: &[ImplementationQuery] = &[
     },
     ImplementationQuery {
         file: "src/rust_analyzer.rs",
-        line: 120,
+        line: 200,
         character: 11,
         symbol: "RustAnalyzerSession",
     },
     ImplementationQuery {
         file: "src/racli_session.rs",
-        line: 41,
+        line: 82,
         character: 11,
         symbol: "RacliSession",
     },
     ImplementationQuery {
         file: "src/server.rs",
-        line: 18,
+        line: 19,
         character: 11,
         symbol: "Core",
     },

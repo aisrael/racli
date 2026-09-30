@@ -1,4 +1,4 @@
-//! The `racli mcp` server: MCP tools on stdio via `rmcp`, served by an in-process [`RacliSession`] (rust-analyzer + file watcher).
+//! The `racli mcp` server: MCP tools on stdio via `rmcp`, served by an in-process `RacliSession` (rust-analyzer + file watcher).
 
 mod mcp_proto_json;
 
@@ -29,7 +29,6 @@ use mcp_proto_json::search_response_proto_to_json;
 
 use rmcp::ErrorData;
 use rmcp::ServerHandler;
-use rmcp::ServiceExt;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Json;
 use rmcp::handler::server::wrapper::Parameters;
@@ -40,10 +39,13 @@ use rmcp::tool;
 use rmcp::tool_handler;
 use rmcp::tool_router;
 
+use crate::actors::frontend::FrontendError;
+use crate::actors::root::FrontendKind;
+use crate::actors::root::RootError;
+use crate::actors::root::run_until_shutdown;
 use crate::grpc_server::init_grpc_server_tracing;
 use crate::grpc_server::install_unix_shutdown_signals;
 use crate::racli_live_backend::RacliBackendStartError;
-use crate::racli_live_backend::RacliLiveBackend;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
 use crate::rust_analyzer::RustAnalyzerError;
@@ -67,6 +69,21 @@ pub enum ServerError {
     /// Shutting down rust-analyzer after MCP exited failed.
     #[error(transparent)]
     BackendShutdown(#[from] RustAnalyzerError),
+    /// An internal actor failed outside of rust-analyzer or the MCP handshake.
+    #[error("racli actor failed: {0}")]
+    Actor(String),
+}
+
+impl From<RootError> for ServerError {
+    fn from(value: RootError) -> Self {
+        match value {
+            RootError::StartBackend(e) => Self::BackendStart(e),
+            RootError::StartFrontend(FrontendError::McpInit(e))
+            | RootError::Frontend(FrontendError::McpInit(e)) => Self::McpInit(e),
+            RootError::StartFrontend(e) | RootError::Frontend(e) => Self::Actor(e.to_string()),
+            RootError::Backend(e) => Self::BackendShutdown(e),
+        }
+    }
 }
 
 impl From<rmcp::service::ServerInitializeError> for ServerError {
@@ -75,7 +92,7 @@ impl From<rmcp::service::ServerInitializeError> for ServerError {
     }
 }
 
-/// MCP server state: shared [`RacliSession`], plus a generated [`ToolRouter`].
+/// MCP server state: shared `RacliSession`, plus a generated `ToolRouter`.
 #[derive(Clone)]
 pub(crate) struct RacliMcpHandler {
     session: Arc<RacliSession>,
@@ -265,32 +282,13 @@ pub async fn run_stdio(symbol_search_limit: u32) -> Result<(), ServerError> {
         "racli MCP server starting on stdio (embedded rust-analyzer)"
     );
 
-    let backend = RacliLiveBackend::start(cwd, symbol_search_limit).await?;
-
-    let handler = RacliMcpHandler::new(backend.session().clone());
-    let running = match handler
-        .serve((tokio::io::stdin(), tokio::io::stdout()))
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = backend.shutdown().await;
-            return Err(e.into());
-        }
-    };
-
-    tokio::select! {
-        result = running.waiting() => {
-            if let Err(e) = result {
-                tracing::warn!(error = %e, "MCP runtime task ended with an error");
-            }
-        }
-        () = shutdown_signal => {
-            tracing::info!("received shutdown signal; stopping MCP server");
-        }
-    }
-
-    backend.shutdown().await?;
+    run_until_shutdown(
+        cwd,
+        symbol_search_limit,
+        FrontendKind::McpStdio,
+        shutdown_signal,
+    )
+    .await?;
 
     Ok(())
 }

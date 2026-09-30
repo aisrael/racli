@@ -5,11 +5,13 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio_stream::wrappers::UnixListenerStream;
-use tonic::transport::Server;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
+use crate::actors::frontend::FrontendError;
+use crate::actors::root::FrontendKind;
+use crate::actors::root::RootError;
+use crate::actors::root::run_until_shutdown;
 use crate::logging;
 use crate::proto::racli::CallHierarchyCallsRequest;
 use crate::proto::racli::DocumentSymbolsRequest;
@@ -29,9 +31,7 @@ use crate::proto::racli::PrepareCallHierarchyResponse;
 use crate::proto::racli::SearchRequest;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::racli_server::Racli;
-use crate::proto::racli::racli_server::RacliServer;
 use crate::racli_live_backend::RacliBackendStartError;
-use crate::racli_live_backend::RacliLiveBackend;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
 use crate::racli_session::symbol_search_options_from_proto;
@@ -109,12 +109,36 @@ pub enum GrpcServerError {
     /// tonic failed while driving the HTTP/2 stack over the Unix listener.
     #[error("failed serving gRPC transport")]
     Serve(#[from] tonic::transport::Error),
+    /// An internal actor failed outside of rust-analyzer or the gRPC transport.
+    #[error("racli actor failed: {0}")]
+    Actor(String),
 }
 
 impl From<RacliBackendStartError> for GrpcServerError {
     fn from(value: RacliBackendStartError) -> Self {
         match value {
             RacliBackendStartError::RustAnalyzer(e) => Self::RustAnalyzer(e),
+            RacliBackendStartError::Actor(msg) => Self::Actor(msg),
+        }
+    }
+}
+
+impl From<FrontendError> for GrpcServerError {
+    fn from(value: FrontendError) -> Self {
+        match value {
+            FrontendError::Bind { path, source } => Self::Bind { path, source },
+            FrontendError::Serve(e) => Self::Serve(e),
+            other => Self::Actor(other.to_string()),
+        }
+    }
+}
+
+impl From<RootError> for GrpcServerError {
+    fn from(value: RootError) -> Self {
+        match value {
+            RootError::StartBackend(e) => e.into(),
+            RootError::StartFrontend(e) | RootError::Frontend(e) => e.into(),
+            RootError::Backend(e) => Self::RustAnalyzer(e),
         }
     }
 }
@@ -132,9 +156,16 @@ pub struct RacliGrpc {
     session: Arc<RacliSession>,
 }
 
+impl RacliGrpc {
+    /// Creates the tonic service over `session`.
+    pub(crate) fn new(session: Arc<RacliSession>) -> Self {
+        Self { session }
+    }
+}
+
 #[tonic::async_trait]
 impl Racli for RacliGrpc {
-    /// Returns [`crate::VERSION`] and rust-analyzer [`LspServerInfo`] from initialize.
+    /// Returns `crate::VERSION` and rust-analyzer `LspServerInfo` from initialize.
     async fn get_version(
         &self,
         _request: Request<GetVersionRequest>,
@@ -358,46 +389,21 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
 ) -> Result<(), GrpcServerError> {
     let _log_guard = init_grpc_server_tracing();
 
-    let socket_path = socket_path.as_ref();
-    let path_buf = socket_path.to_path_buf();
-    let _ = std::fs::remove_file(socket_path);
-
-    let cwd = std::env::current_dir().map_err(|source| GrpcServerError::CurrentDir { source })?;
-    let backend = match RacliLiveBackend::start(cwd, symbol_search_limit).await {
-        Ok(b) => b,
-        Err(e) => {
-            let _ = std::fs::remove_file(&path_buf);
-            return Err(e.into());
-        }
-    };
-
-    let uds =
-        tokio::net::UnixListener::bind(socket_path).map_err(|source| GrpcServerError::Bind {
-            path: path_buf.clone(),
-            source,
-        })?;
-
-    let incoming = UnixListenerStream::new(uds);
-    let svc = RacliGrpc {
-        session: backend.session().clone(),
-    };
-
-    tracing::info!(
-        version = %crate::VERSION,
-        socket = %path_buf.display(),
-        "racli gRPC server starting"
-    );
-
-    let serve_result = Server::builder()
-        .add_service(RacliServer::new(svc))
-        .serve_with_incoming_shutdown(incoming, shutdown)
-        .await;
-
-    let ra_result = backend.shutdown().await;
-
+    let path_buf = socket_path.as_ref().to_path_buf();
     let _ = std::fs::remove_file(&path_buf);
 
-    serve_result.map_err(GrpcServerError::Serve)?;
-    ra_result?;
-    Ok(())
+    let cwd = std::env::current_dir().map_err(|source| GrpcServerError::CurrentDir { source })?;
+    let result = run_until_shutdown(
+        cwd,
+        symbol_search_limit,
+        FrontendKind::Grpc {
+            socket_path: path_buf.clone(),
+        },
+        shutdown,
+    )
+    .await;
+
+    // The front-end actor removes the socket on stop; this also covers startup failures.
+    let _ = std::fs::remove_file(&path_buf);
+    result.map_err(GrpcServerError::from)
 }

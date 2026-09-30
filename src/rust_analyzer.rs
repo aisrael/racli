@@ -1,7 +1,6 @@
 //! Spawns `rust-analyzer` as an LSP stdio child, initializes the workspace from a root path, and shuts down with LSP `shutdown` / `exit`.
 
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use clap::ValueEnum;
@@ -47,7 +46,6 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Child;
 use tokio::process::Command;
-use tokio::sync::Mutex;
 use url::Url;
 
 use crate::lsp_client::LspClient;
@@ -306,9 +304,7 @@ impl RustAnalyzerSession {
     }
 
     /// Core of graceful shutdown: LSP `shutdown` + `exit` (best-effort, timed out), then waits for
-    /// the child to exit (killing it if it doesn't in time). Takes `&mut self` so it can run either
-    /// after taking ownership ([`Self::shutdown_gracefully`]) or through a `MutexGuard` while other
-    /// `Arc` clones of the session are still alive (see [`shutdown_rust_analyzer_session_arc`]).
+    /// the child to exit (killing it if it doesn't in time).
     async fn shutdown_handshake(&mut self) -> Result<(), RustAnalyzerError> {
         tracing::info!(
             pid = ?self.child_pid,
@@ -596,34 +592,6 @@ impl Drop for RustAnalyzerSession {
 
 fn io_other(msg: &'static str) -> std::io::Error {
     std::io::Error::other(msg)
-}
-
-/// Shuts down the session: takes ownership if `ra` is the last `Arc` reference, otherwise falls
-/// back to locking the shared session (bounded) to still send LSP `shutdown`/`exit` before
-/// giving up and relying on `Drop`.
-pub async fn shutdown_rust_analyzer_session_arc(
-    ra: Arc<Mutex<RustAnalyzerSession>>,
-) -> Result<(), RustAnalyzerError> {
-    let ra = match Arc::try_unwrap(ra) {
-        Ok(mutex) => return mutex.into_inner().shutdown_gracefully().await,
-        Err(ra) => ra,
-    };
-
-    tracing::warn!(
-        "rust-analyzer Arc still shared at shutdown time (likely an in-flight MCP/gRPC \
-         request); sending LSP shutdown/exit through the shared session instead"
-    );
-
-    match tokio::time::timeout(Duration::from_secs(10), ra.lock()).await {
-        Ok(mut guard) => guard.shutdown_handshake().await,
-        Err(_) => {
-            tracing::warn!(
-                "timed out waiting to lock rust-analyzer session for shutdown handshake; \
-                 relying on Drop to terminate the child process"
-            );
-            Ok(())
-        }
-    }
 }
 
 fn workspace_uri(root: &Path) -> Result<String, RustAnalyzerError> {

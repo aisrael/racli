@@ -56,3 +56,20 @@ sequenceDiagram
 ```
 
 Configure the MCP host so the **`racli mcp` working directory** is the intended Rust workspace root (the directory you would `cd` into before running `cargo build`). **`racli server`** remains the path for CLI clients (`racli search`, `racli find-definition`, `racli version`): those commands still use gRPC on the Unix socket.
+
+## Internal actor tree
+
+Inside `racli server` and `racli mcp`, long-lived work is supervised by [ractor](https://docs.rs/ractor) actors (`src/actors/`):
+
+```mermaid
+flowchart TD
+    Root[RootActor] --> Backend[BackendSupervisor]
+    Root --> Frontend["GrpcFrontend | McpFrontend"]
+    Backend --> RA["RustAnalyzerActor<br/>(owns the rust-analyzer child)"]
+    Backend --> Watcher["FileWatcherActor<br/>(notify → didChangeWatchedFiles)"]
+```
+
+- **Startup:** rust-analyzer is spawned and LSP-initialized, then the file watcher starts, then the front end binds the Unix socket (gRPC) or completes the MCP handshake. A failure at any step tears down what already started.
+- **Requests:** gRPC/MCP handlers call `RacliSession`, which sends messages to `RustAnalyzerActor`; its mailbox serializes LSP traffic.
+- **Shutdown** (SIGINT/SIGTERM, gRPC serve error, or MCP stdin EOF) runs in reverse: front end → file watcher (queued events drained) → rust-analyzer (`shutdown`/`exit`, then wait for the child).
+- **Failures:** a crashed backend actor is logged, not restarted; later requests fail with an `Internal` error.

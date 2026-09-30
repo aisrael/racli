@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+/// ractor supervision tree that sequences startup/shutdown of rust-analyzer, the file watcher, and the gRPC/MCP front end.
+mod actors;
 /// `racli call-hierarchy`: CLI arguments and the client-side call hierarchy walk (shared with MCP).
 pub mod call_hierarchy;
 /// CLI argument parsing and subcommand dispatch for the `racli` binary.
@@ -26,7 +28,7 @@ pub mod lsp_map;
 pub mod mcp;
 /// Protobuf and tonic-generated types for the Racli gRPC API.
 pub mod proto;
-/// Shared live workspace backend (rust-analyzer + watcher + [`RacliSession`]) for gRPC and MCP.
+/// Shared live workspace backend (rust-analyzer + watcher + `RacliSession`) for gRPC and MCP.
 pub mod racli_live_backend;
 /// Shared gRPC/MCP backend (rust-analyzer + [`crate::server::Core`]).
 pub mod racli_session;
