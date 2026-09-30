@@ -28,6 +28,17 @@ where
     }
 }
 
+/// Untyped JSON params; `None` omits `params` from the JSON-RPC message.
+struct RawParams(Option<serde_json::Value>);
+
+impl ToRpcParams for RawParams {
+    fn to_rpc_params(self) -> Result<Option<Box<RawValue>>, serde_json::Error> {
+        self.0
+            .map(|v| serde_json::value::to_raw_value(&v))
+            .transpose()
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum LspError {
     #[error("jsonrpsee error: {0}")]
@@ -97,6 +108,32 @@ impl LspClient {
             .notification(N::METHOD, SerdeParam(params))
             .await?;
         Ok(())
+    }
+
+    /// Send an untyped LSP request and return the raw JSON `result`.
+    pub async fn request_raw(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, LspError> {
+        Ok(self.client.request(method, RawParams(params)).await?)
+    }
+
+    /// Send an untyped LSP notification.
+    pub async fn notify_raw(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<(), LspError> {
+        Ok(self.client.notification(method, RawParams(params)).await?)
+    }
+
+    /// Create an untyped subscription to server notifications named `method`.
+    pub async fn subscribe_raw(
+        &self,
+        method: &str,
+    ) -> Result<Subscription<serde_json::Value>, LspError> {
+        Ok(self.client.subscribe_to_method(method).await?)
     }
 
     /// Create a subscription to an LSP notification.

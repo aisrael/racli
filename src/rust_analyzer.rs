@@ -1,6 +1,7 @@
 //! Spawns `rust-analyzer` as an LSP stdio child, initializes the workspace from a root path, and shuts down with LSP `shutdown` / `exit`.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use clap::ValueEnum;
@@ -10,19 +11,39 @@ use lsp_types::CallHierarchyOutgoingCallsParams;
 use lsp_types::CallHierarchyPrepareParams;
 use lsp_types::ClientCapabilities;
 use lsp_types::ClientInfo;
+use lsp_types::CodeActionClientCapabilities;
+use lsp_types::CodeActionKind;
+use lsp_types::CodeActionKindLiteralSupport;
+use lsp_types::CodeActionLiteralSupport;
+use lsp_types::CompletionClientCapabilities;
+use lsp_types::CompletionItemCapability;
+use lsp_types::CompletionItemCapabilityResolveSupport;
 use lsp_types::DidChangeWatchedFilesClientCapabilities;
 use lsp_types::DidChangeWatchedFilesParams;
 use lsp_types::DocumentSymbolClientCapabilities;
 use lsp_types::DocumentSymbolParams;
 use lsp_types::GotoDefinitionParams;
+use lsp_types::HoverClientCapabilities;
 use lsp_types::InitializeParams;
+use lsp_types::InlayHintClientCapabilities;
+use lsp_types::MarkupKind;
+use lsp_types::ParameterInformationSettings;
 use lsp_types::PartialResultParams;
 use lsp_types::Position;
+use lsp_types::PublishDiagnosticsClientCapabilities;
 use lsp_types::ReferenceContext;
 use lsp_types::ReferenceParams;
+use lsp_types::RenameClientCapabilities;
+use lsp_types::SemanticTokensClientCapabilities;
+use lsp_types::SemanticTokensClientCapabilitiesRequests;
+use lsp_types::SemanticTokensFullOptions;
+use lsp_types::SignatureHelpClientCapabilities;
+use lsp_types::SignatureInformationSettings;
 use lsp_types::TextDocumentClientCapabilities;
 use lsp_types::TextDocumentIdentifier;
 use lsp_types::TextDocumentPositionParams;
+use lsp_types::TextDocumentSyncClientCapabilities;
+use lsp_types::TokenFormat;
 use lsp_types::Uri;
 use lsp_types::WorkDoneProgressParams;
 use lsp_types::WorkspaceClientCapabilities;
@@ -46,10 +67,13 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Child;
 use tokio::process::Command;
+use tokio::task::JoinHandle;
 use url::Url;
 
 use crate::lsp_client::LspClient;
 use crate::lsp_client::transport::io_transport;
+use crate::lsp_events::FORWARDED_METHODS;
+use crate::lsp_events::LspEvents;
 use crate::proto::racli::LspServerInfo;
 
 /// Default `workspace.symbol.search.limit` sent to rust-analyzer at startup (rust-analyzer's own default is 128).
@@ -129,10 +153,13 @@ impl Request for RaWorkspaceSymbolRequest {
     const METHOD: &'static str = WorkspaceSymbolRequest::METHOD;
 }
 
-/// Client capabilities advertised to rust-analyzer during LSP `initialize` (includes watched-files
-/// dynamic registration and hierarchical `textDocument/documentSymbol` support — without the latter,
-/// servers fall back to a flat `SymbolInformation[]` response instead of a nested `DocumentSymbol[]` tree).
+/// Client capabilities advertised to rust-analyzer during LSP `initialize`: watched-files dynamic
+/// registration, hierarchical `textDocument/documentSymbol` (otherwise servers return a flat
+/// `SymbolInformation[]`), and editor-level text document features for `racli tee`. Capabilities
+/// that make the server send requests to the client (configuration, applyEdit, refresh, progress)
+/// are deliberately omitted because racli cannot forward those to an editor.
 fn racli_lsp_client_capabilities() -> ClientCapabilities {
+    let markup = || Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]);
     ClientCapabilities {
         workspace: Some(WorkspaceClientCapabilities {
             did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
@@ -142,6 +169,76 @@ fn racli_lsp_client_capabilities() -> ClientCapabilities {
             ..Default::default()
         }),
         text_document: Some(TextDocumentClientCapabilities {
+            synchronization: Some(TextDocumentSyncClientCapabilities {
+                did_save: Some(true),
+                ..Default::default()
+            }),
+            completion: Some(CompletionClientCapabilities {
+                completion_item: Some(CompletionItemCapability {
+                    snippet_support: Some(true),
+                    documentation_format: markup(),
+                    resolve_support: Some(CompletionItemCapabilityResolveSupport {
+                        properties: vec![
+                            "documentation".into(),
+                            "detail".into(),
+                            "additionalTextEdits".into(),
+                        ],
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            hover: Some(HoverClientCapabilities {
+                content_format: markup(),
+                ..Default::default()
+            }),
+            signature_help: Some(SignatureHelpClientCapabilities {
+                signature_information: Some(SignatureInformationSettings {
+                    documentation_format: markup(),
+                    parameter_information: Some(ParameterInformationSettings {
+                        label_offset_support: Some(true),
+                    }),
+                    active_parameter_support: Some(true),
+                }),
+                ..Default::default()
+            }),
+            code_action: Some(CodeActionClientCapabilities {
+                code_action_literal_support: Some(CodeActionLiteralSupport {
+                    code_action_kind: CodeActionKindLiteralSupport {
+                        value_set: [
+                            CodeActionKind::EMPTY,
+                            CodeActionKind::QUICKFIX,
+                            CodeActionKind::REFACTOR,
+                            CodeActionKind::REFACTOR_EXTRACT,
+                            CodeActionKind::REFACTOR_INLINE,
+                            CodeActionKind::REFACTOR_REWRITE,
+                            CodeActionKind::SOURCE,
+                            CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                        ]
+                        .into_iter()
+                        .map(|k| k.as_str().to_string())
+                        .collect(),
+                    },
+                }),
+                ..Default::default()
+            }),
+            rename: Some(RenameClientCapabilities {
+                prepare_support: Some(true),
+                ..Default::default()
+            }),
+            semantic_tokens: Some(SemanticTokensClientCapabilities {
+                requests: SemanticTokensClientCapabilitiesRequests {
+                    range: Some(true),
+                    full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                },
+                formats: vec![TokenFormat::RELATIVE],
+                ..Default::default()
+            }),
+            inlay_hint: Some(InlayHintClientCapabilities::default()),
+            publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
+                related_information: Some(true),
+                ..Default::default()
+            }),
             document_symbol: Some(DocumentSymbolClientCapabilities {
                 hierarchical_document_symbol_support: Some(true),
                 ..Default::default()
@@ -208,6 +305,12 @@ pub struct RustAnalyzerSession {
     shutdown_complete: bool,
     /// `serverInfo` from the LSP [`initialize`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize) result.
     pub lsp_server_info: LspServerInfo,
+    /// The full LSP `InitializeResult` as JSON, handed to `racli tee` editors.
+    pub initialize_result: Value,
+    /// Hub receiving rust-analyzer's server-to-client notifications.
+    pub events: Arc<LspEvents>,
+    /// Tasks forwarding notification subscriptions into [`Self::events`]; aborted on teardown.
+    event_tasks: Vec<JoinHandle<()>>,
 }
 
 impl RustAnalyzerSession {
@@ -276,7 +379,24 @@ impl RustAnalyzerSession {
         };
 
         let init = lsp.initialize(init_params).await?;
+        let initialize_result = serde_json::to_value(&init)?;
         let lsp_server_info = lsp_server_info_from_server_info(init.server_info);
+
+        // Subscribe before `initialized` so no early notification is dropped.
+        let events = Arc::new(LspEvents::default());
+        let mut event_tasks = Vec::with_capacity(FORWARDED_METHODS.len());
+        for method in FORWARDED_METHODS {
+            let mut subscription = lsp.subscribe_raw(method).await?;
+            let events = Arc::clone(&events);
+            event_tasks.push(tokio::spawn(async move {
+                while let Some(params) = subscription.next().await {
+                    match params {
+                        Ok(params) => events.publish(method, &params),
+                        Err(e) => tracing::warn!(method, error = %e, "malformed LSP notification"),
+                    }
+                }
+            }));
+        }
 
         lsp.initialized().await?;
 
@@ -286,6 +406,9 @@ impl RustAnalyzerSession {
             child_pid,
             shutdown_complete: false,
             lsp_server_info,
+            initialize_result,
+            events,
+            event_tasks,
         };
 
         tracing::info!(
@@ -310,6 +433,9 @@ impl RustAnalyzerSession {
             pid = ?self.child_pid,
             "stopping rust-analyzer child process"
         );
+        for task in self.event_tasks.drain(..) {
+            task.abort();
+        }
 
         if let Some(lsp) = self.lsp.take() {
             match tokio::time::timeout(Duration::from_secs(8), lsp.shutdown()).await {
@@ -557,6 +683,32 @@ impl RustAnalyzerSession {
         serde_json::to_value(result).map_err(RustAnalyzerError::from)
     }
 
+    /// Sends an arbitrary LSP request and returns the raw JSON-RPC `result`.
+    pub async fn raw_request(
+        &mut self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, RustAnalyzerError> {
+        let lsp = self
+            .lsp
+            .as_ref()
+            .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
+        Ok(lsp.request_raw(method, params).await?)
+    }
+
+    /// Sends an arbitrary LSP notification.
+    pub async fn raw_notify(
+        &mut self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<(), RustAnalyzerError> {
+        let lsp = self
+            .lsp
+            .as_ref()
+            .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
+        Ok(lsp.notify_raw(method, params).await?)
+    }
+
     /// Sends LSP `workspace/didChangeWatchedFiles` so the server can refresh state for filesystem changes.
     pub async fn notify_did_change_watched_files(
         &mut self,
@@ -585,6 +737,9 @@ impl Drop for RustAnalyzerSession {
                 pid = ?self.child_pid,
                 "rust-analyzer child session dropped without graceful shutdown"
             );
+        }
+        for task in &self.event_tasks {
+            task.abort();
         }
         let _ = self.child.start_kill();
     }

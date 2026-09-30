@@ -33,7 +33,7 @@ const QUERIES: &[ImplementationQuery] = &[
     },
     ImplementationQuery {
         file: "src/rust_analyzer.rs",
-        line: 200,
+        line: 297,
         character: 11,
         symbol: "RustAnalyzerSession",
     },

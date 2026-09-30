@@ -33,6 +33,7 @@ In the usual setup there are three pieces:
 - **rust-analyzer** — the Language Server process that `racli server` drives over LSP.
 - **racli server** — a long-running gRPC listener on a Unix socket (default `/tmp/racli.sock`); it spawns `rust-analyzer`, completes an LSP `initialize` handshake with the current working directory as the workspace root, and serves RPCs to clients.
 - **racli (client)** — the same binary used in client mode: subcommands that connect to the socket and call the server.
+- **racli tee** — `racli server` plus an LSP server on stdio for editors: the editor launches `racli tee` in place of `rust-analyzer`, and CLI/MCP clients share the same rust-analyzer through the socket.
 - **racli mcp** — MCP over stdio only: spawns rust-analyzer and the workspace file watcher inside the MCP child process (no Unix socket). Use **`racli server`** for `racli search`, `racli find-definition`, `racli find-references`, `racli document-symbols`, and `racli version`.
 
 Stop the server with Ctrl+C or SIGTERM to trigger LSP `shutdown`/`exit` and clean termination of the child.
@@ -44,6 +45,24 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 `racli server` binds the gRPC Unix socket (default `/tmp/racli.sock`) and, when `rust-analyzer` is available on your `PATH`, spawns it as a child in the current working directory and completes the LSP `initialize` handshake described above.
 
 `--symbol-search-limit <N>` (also accepted by `racli mcp`) caps how many results rust-analyzer returns per `workspace/symbol` query (default `1000`; rust-analyzer's own default is `128`). It is sent to rust-analyzer as `workspace.symbol.search.limit` during `initialize`, and applies to each `|`-separated pattern separately.
+
+### `racli tee`
+
+`racli tee` does everything `racli server` does (spawns rust-analyzer, serves gRPC on `/tmp/racli.sock` or `$RACLI_UNIX_SOCKET`). It also speaks LSP on stdin/stdout, so an editor can use it as its rust-analyzer while `racli search` and friends query the same instance. The stdio side never talks to rust-analyzer directly. It is a gRPC client of its own socket, using the `LspInitialize` / `LspRequest` / `LspNotify` / `LspEvents` RPCs, so editor requests are sequenced alongside every other client's.
+
+It stops when the editor sends `exit` or closes stdin, or on SIGINT/SIGTERM. Logs go to stderr, or to `$RACLI_SERVER_LOG_FILE`, and never to stdout.
+
+Editors that take a server path with no arguments (for example VS Code's `rust-analyzer.server.path`) need a small wrapper script:
+
+```sh
+#!/bin/sh
+exec racli tee "$@"
+```
+
+Limitations:
+- The editor's `initialize` is answered with racli's own `InitializeResult`, and the editor's capabilities and `initializationOptions` are ignored.
+- Requests are handled one at a time, and `$/cancelRequest` is ignored.
+- Only `textDocument/publishDiagnostics`, `window/showMessage` and `window/logMessage` reach the editor. Server-to-client requests are not forwarded.
 
 ## Client commands
 

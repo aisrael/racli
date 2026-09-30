@@ -1,6 +1,7 @@
 //! Actor that owns the rust-analyzer LSP child; its mailbox serializes LSP traffic.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use lsp_types::CallHierarchyItem;
 use lsp_types::DidChangeWatchedFilesParams;
@@ -10,6 +11,7 @@ use ractor::ActorRef;
 use ractor::RpcReplyPort;
 use serde_json::Value;
 
+use crate::lsp_events::LspEvents;
 use crate::proto::racli::LspServerInfo;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
@@ -69,6 +71,22 @@ pub(crate) enum RustAnalyzerMsg {
     },
     /// LSP `textDocument/documentSymbol`.
     DocumentSymbols { uri: String, reply: LspReply },
+    /// The cached LSP `InitializeResult` JSON (`null` once shut down).
+    InitializeResult(RpcReplyPort<Value>),
+    /// The notification hub fed by rust-analyzer's server-to-client notifications.
+    Events(RpcReplyPort<Arc<LspEvents>>),
+    /// Arbitrary LSP request (`racli tee` passthrough).
+    LspRequest {
+        method: String,
+        params: Option<Value>,
+        reply: LspReply,
+    },
+    /// Arbitrary LSP notification; replies once it has been written to rust-analyzer.
+    LspNotify {
+        method: String,
+        params: Option<Value>,
+        reply: RpcReplyPort<Result<(), RustAnalyzerError>>,
+    },
     /// Fire-and-forget LSP `workspace/didChangeWatchedFiles` from the file watcher.
     DidChangeWatchedFiles(DidChangeWatchedFilesParams),
     /// Graceful LSP `shutdown`/`exit` and child wait; later requests fail.
@@ -145,6 +163,32 @@ impl Actor for RustAnalyzerActor {
                     .unwrap_or_default();
                 let _ = reply.send(info);
             }
+            RustAnalyzerMsg::InitializeResult(reply) => {
+                let result = state
+                    .session
+                    .as_ref()
+                    .map(|s| s.initialize_result.clone())
+                    .unwrap_or_default();
+                let _ = reply.send(result);
+            }
+            RustAnalyzerMsg::Events(reply) => {
+                let events = state
+                    .session
+                    .as_ref()
+                    .map(|s| Arc::clone(&s.events))
+                    .unwrap_or_default();
+                let _ = reply.send(events);
+            }
+            RustAnalyzerMsg::LspRequest {
+                method,
+                params,
+                reply,
+            } => reply_with_session!(state, reply, |ra| ra.raw_request(&method, params)),
+            RustAnalyzerMsg::LspNotify {
+                method,
+                params,
+                reply,
+            } => reply_with_session!(state, reply, |ra| ra.raw_notify(&method, params)),
             RustAnalyzerMsg::Search {
                 query,
                 options,

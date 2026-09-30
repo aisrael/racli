@@ -19,6 +19,7 @@ use crate::logging;
 use crate::mcp;
 use crate::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use crate::search;
+use crate::tee;
 
 /// Top-level error returned by [`run`] for any server, listener, or MCP failure.
 #[derive(Debug, thiserror::Error)]
@@ -46,6 +47,8 @@ enum Command {
     Server(ServerArgs),
     /// MCP stdio transport (`rmcp`); rust-analyzer and file watching run in-process (no Unix socket).
     Mcp(McpArgs),
+    /// Serve gRPC on the Unix socket and LSP on stdio (for editors), routing stdio requests through the socket.
+    Tee(tee::TeeArgs),
     /// Print versions (client-side and, via gRPC, server-side).
     Version,
     /// Search workspace symbols via rust-analyzer (LSP `workspace/symbol`).
@@ -95,6 +98,14 @@ pub async fn run() -> Result<(), RunError> {
         }
         Command::Mcp(opts) => {
             mcp::run_stdio(opts.symbol_search_limit).await?;
+        }
+        Command::Tee(opts) => {
+            // A pending tokio stdin read can't be cancelled and would block runtime shutdown, so exit directly.
+            if let Err(e) = tee::run_tee(opts).await {
+                eprintln!("Error: {e:?}");
+                std::process::exit(1);
+            }
+            std::process::exit(0);
         }
         Command::Version => {
             logging::init_client_tracing();

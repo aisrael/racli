@@ -25,6 +25,14 @@ use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::IncomingCallsResponse;
+use crate::proto::racli::LspEvent;
+use crate::proto::racli::LspEventsRequest;
+use crate::proto::racli::LspInitializeRequest;
+use crate::proto::racli::LspInitializeResponse;
+use crate::proto::racli::LspNotifyRequest;
+use crate::proto::racli::LspNotifyResponse;
+use crate::proto::racli::LspRequestRequest;
+use crate::proto::racli::LspRequestResponse;
 use crate::proto::racli::OutgoingCallsResponse;
 use crate::proto::racli::PrepareCallHierarchyRequest;
 use crate::proto::racli::PrepareCallHierarchyResponse;
@@ -35,6 +43,10 @@ use crate::racli_live_backend::RacliBackendStartError;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
 use crate::racli_session::symbol_search_options_from_proto;
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tonic::Request;
 use tonic::Response;
 use tonic::Status;
@@ -163,8 +175,13 @@ impl RacliGrpc {
     }
 }
 
+/// Server stream type for `Racli.LspEvents`.
+type LspEventStream = std::pin::Pin<Box<dyn Stream<Item = Result<LspEvent, Status>> + Send>>;
+
 #[tonic::async_trait]
 impl Racli for RacliGrpc {
+    type LspEventsStream = LspEventStream;
+
     /// Returns `crate::VERSION` and rust-analyzer `LspServerInfo` from initialize.
     async fn get_version(
         &self,
@@ -328,6 +345,61 @@ impl Racli for RacliGrpc {
             .await
             .map(Response::new)
             .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Returns rust-analyzer's cached LSP `InitializeResult` as JSON.
+    async fn lsp_initialize(
+        &self,
+        _request: Request<LspInitializeRequest>,
+    ) -> Result<Response<LspInitializeResponse>, Status> {
+        tracing::debug!(rpc = "Racli.LspInitialize", "gRPC endpoint invoked");
+        Ok(Response::new(self.session.lsp_initialize()))
+    }
+
+    /// Forwards an arbitrary LSP request to rust-analyzer.
+    async fn lsp_request(
+        &self,
+        request: Request<LspRequestRequest>,
+    ) -> Result<Response<LspRequestResponse>, Status> {
+        let inner = request.into_inner();
+        tracing::debug!(rpc = "Racli.LspRequest", method = %inner.method, "gRPC endpoint invoked");
+        self.session
+            .lsp_request(inner.method, &inner.params_json)
+            .await
+            .map(Response::new)
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Forwards an arbitrary LSP notification to rust-analyzer.
+    async fn lsp_notify(
+        &self,
+        request: Request<LspNotifyRequest>,
+    ) -> Result<Response<LspNotifyResponse>, Status> {
+        let inner = request.into_inner();
+        tracing::debug!(rpc = "Racli.LspNotify", method = %inner.method, "gRPC endpoint invoked");
+        self.session
+            .lsp_notify(inner.method, &inner.params_json)
+            .await
+            .map(|()| Response::new(LspNotifyResponse {}))
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Streams cached diagnostics, then live server-to-client notifications; lagged events are skipped.
+    async fn lsp_events(
+        &self,
+        _request: Request<LspEventsRequest>,
+    ) -> Result<Response<Self::LspEventsStream>, Status> {
+        tracing::debug!(rpc = "Racli.LspEvents", "gRPC endpoint invoked");
+        let (snapshot, rx) = self.session.lsp_events();
+        let live = BroadcastStream::new(rx).filter_map(|event| match event {
+            Ok(event) => Some(Ok(event)),
+            Err(BroadcastStreamRecvError::Lagged(n)) => {
+                tracing::warn!(skipped = n, "LspEvents subscriber lagged; events skipped");
+                None
+            }
+        });
+        let stream = tokio_stream::iter(snapshot.into_iter().map(Ok)).chain(live);
+        Ok(Response::new(Box::pin(stream)))
     }
 }
 
