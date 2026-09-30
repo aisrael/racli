@@ -21,9 +21,9 @@ use tonic::transport::Endpoint;
 
 use crate::effective_unix_socket_path;
 use crate::grpc_server::GrpcServerError;
-use crate::grpc_server::init_grpc_server_tracing;
 use crate::grpc_server::install_unix_shutdown_signals;
 use crate::grpc_server::run_grpc_unix_socket_until_shutdown;
+use crate::logging::init_server_tracing;
 use crate::lsp_client::transport::TransportError;
 use crate::lsp_client::transport::read_framed_body;
 use crate::lsp_client::transport::write_framed;
@@ -78,7 +78,7 @@ pub enum TeeError {
 /// sends `exit`, closes stdin, or SIGINT/SIGTERM arrives.
 pub async fn run_tee(args: TeeArgs) -> Result<(), TeeError> {
     // Installed here (not only in the server task) so startup and shutdown lines are captured too.
-    let _log_guard = init_grpc_server_tracing();
+    let _log_guard = init_server_tracing();
     let started = Instant::now();
     let pid = std::process::id();
     let signals = install_unix_shutdown_signals();

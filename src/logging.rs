@@ -1,8 +1,11 @@
-//! Shared log-level parsing for the client subcommands (`search`, `find-definition`, `version`).
+//! Logging setup: stderr tracing for the client subcommands, and stderr-or-file tracing for the
+//! long-running `server`, `mcp`, and `tee` modes.
 
 use std::str::FromStr;
 
 use tracing::level_filters::LevelFilter;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::EnvFilter;
 
 /// Name of the env var that sets the log level for the client subcommands (`search`, `find-definition`, `version`).
 pub const RACLI_LOG_LEVEL_ENV: &str = "RACLI_LOG_LEVEL";
@@ -32,6 +35,54 @@ pub fn init_client_tracing() {
         .with_max_level(level)
         .with_writer(std::io::stderr)
         .try_init();
+}
+
+/// Name of the env var that sets the max level for `racli::*` only (`0`-`5` or a level name, e.g. `debug`).
+pub const RACLI_SERVER_LOG_LEVEL_ENV: &str = "RACLI_SERVER_LOG_LEVEL";
+
+/// Name of the env var that, if set, redirects server/MCP/tee logging to a file instead of stderr.
+pub const RACLI_SERVER_LOG_FILE_ENV: &str = "RACLI_SERVER_LOG_FILE";
+
+/// Builds the server log filter: non-`racli` targets capped at `info`, plus `racli` level from env or `info`.
+fn racli_server_env_filter() -> EnvFilter {
+    let racli_level = resolve_level(RACLI_SERVER_LOG_LEVEL_ENV);
+    let combined = format!("info,racli={racli_level}");
+    EnvFilter::try_new(&combined).unwrap_or_else(|_| EnvFilter::new("info,racli=info"))
+}
+
+/// Installs a `tracing-subscriber` logger once for the long-running modes (`server`, `mcp`, `tee`), to [`RACLI_SERVER_LOG_FILE_ENV`] if set and openable
+/// or stderr otherwise; exits the process immediately if the log file can't be opened. The returned
+/// guard must be kept alive for the process lifetime so buffered file writes are flushed.
+pub fn init_server_tracing() -> Option<WorkerGuard> {
+    let filter = racli_server_env_filter();
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true);
+
+    match std::env::var_os(RACLI_SERVER_LOG_FILE_ENV).filter(|s| !s.is_empty()) {
+        Some(path) => {
+            let file = match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                Ok(file) => file,
+                Err(e) => {
+                    eprintln!(
+                        "error: unable to open {RACLI_SERVER_LOG_FILE_ENV} {path:?} for writing: {e}"
+                    );
+                    std::process::exit(1);
+                }
+            };
+            let (writer, guard) = tracing_appender::non_blocking(file);
+            let _ = builder.with_writer(writer).try_init();
+            Some(guard)
+        }
+        None => {
+            let _ = builder.with_writer(std::io::stderr).try_init();
+            None
+        }
+    }
 }
 
 #[cfg(test)]

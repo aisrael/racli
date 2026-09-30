@@ -18,7 +18,7 @@ pub mod find_implementations;
 pub mod find_references;
 /// Unix-socket gRPC server for `racli server`.
 pub mod grpc_server;
-/// Log-level parsing and stderr tracing setup for the client subcommands.
+/// Tracing setup for the client subcommands and the long-running server/MCP/tee modes.
 pub mod logging;
 /// Generic LSP client.
 pub mod lsp_client;

@@ -43,8 +43,8 @@ use crate::actors::frontend::FrontendError;
 use crate::actors::root::FrontendKind;
 use crate::actors::root::RootError;
 use crate::actors::root::run_until_shutdown;
-use crate::grpc_server::init_grpc_server_tracing;
 use crate::grpc_server::install_unix_shutdown_signals;
+use crate::logging::init_server_tracing;
 use crate::racli_live_backend::RacliBackendStartError;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
@@ -265,7 +265,7 @@ impl ServerHandler for RacliMcpHandler {
 
 /// Serves MCP on stdin/stdout after starting rust-analyzer (capping `workspace/symbol` at `symbol_search_limit`) and the workspace file watcher in-process.
 pub async fn run_stdio(symbol_search_limit: u32) -> Result<(), ServerError> {
-    let _log_guard = init_grpc_server_tracing();
+    let _log_guard = init_server_tracing();
 
     // Install the shutdown signal handlers before any of the (potentially slow) startup work
     // below (rust-analyzer spawn + LSP initialize), so a Ctrl+C/SIGTERM during startup is

@@ -5,14 +5,11 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::EnvFilter;
-
 use crate::actors::frontend::FrontendError;
 use crate::actors::root::FrontendKind;
 use crate::actors::root::RootError;
 use crate::actors::root::run_until_shutdown;
-use crate::logging;
+use crate::logging::init_server_tracing;
 use crate::proto::racli::CallHierarchyCallsRequest;
 use crate::proto::racli::DocumentSymbolsRequest;
 use crate::proto::racli::DocumentSymbolsResponse;
@@ -50,54 +47,6 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tonic::Request;
 use tonic::Response;
 use tonic::Status;
-
-/// Name of the env var that sets the max level for `racli::*` only (`0`-`5` or a level name, e.g. `debug`).
-pub const RACLI_SERVER_LOG_LEVEL_ENV: &str = "RACLI_SERVER_LOG_LEVEL";
-
-/// Name of the env var that, if set, redirects server/MCP logging to a file instead of stderr.
-pub const RACLI_SERVER_LOG_FILE_ENV: &str = "RACLI_SERVER_LOG_FILE";
-
-/// Builds the server log filter: non-`racli` targets capped at `info`, plus `racli` level from env or `info`.
-fn racli_server_env_filter() -> EnvFilter {
-    let racli_level = logging::resolve_level(RACLI_SERVER_LOG_LEVEL_ENV);
-    let combined = format!("info,racli={racli_level}");
-    EnvFilter::try_new(&combined).unwrap_or_else(|_| EnvFilter::new("info,racli=info"))
-}
-
-/// Installs a `tracing-subscriber` logger once, to [`RACLI_SERVER_LOG_FILE_ENV`] if set and openable
-/// or stderr otherwise; exits the process immediately if the log file can't be opened. The returned
-/// guard must be kept alive for the process lifetime so buffered file writes are flushed.
-pub fn init_grpc_server_tracing() -> Option<WorkerGuard> {
-    let filter = racli_server_env_filter();
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true);
-
-    match std::env::var_os(RACLI_SERVER_LOG_FILE_ENV).filter(|s| !s.is_empty()) {
-        Some(path) => {
-            let file = match std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-            {
-                Ok(file) => file,
-                Err(e) => {
-                    eprintln!(
-                        "error: unable to open {RACLI_SERVER_LOG_FILE_ENV} {path:?} for writing: {e}"
-                    );
-                    std::process::exit(1);
-                }
-            };
-            let (writer, guard) = tracing_appender::non_blocking(file);
-            let _ = builder.with_writer(writer).try_init();
-            Some(guard)
-        }
-        None => {
-            let _ = builder.with_writer(std::io::stderr).try_init();
-            None
-        }
-    }
-}
 
 /// Errors from binding, serving, or cleaning up the gRPC Unix socket server.
 #[derive(Debug, thiserror::Error)]
@@ -459,7 +408,7 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
     symbol_search_limit: u32,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), GrpcServerError> {
-    let _log_guard = init_grpc_server_tracing();
+    let _log_guard = init_server_tracing();
 
     let path_buf = socket_path.as_ref().to_path_buf();
     let _ = std::fs::remove_file(&path_buf);
