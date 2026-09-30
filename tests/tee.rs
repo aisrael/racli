@@ -52,17 +52,23 @@ async fn recv_response(stdout: &mut BufReader<ChildStdout>, id: i64) -> Value {
     }
 }
 
+/// Returns whether `rust-analyzer --version` succeeds; logs a skip notice otherwise.
+fn rust_analyzer_available() -> bool {
+    let ok = std::process::Command::new("rust-analyzer")
+        .arg("--version")
+        .status()
+        .is_ok_and(|s| s.success());
+    if !ok {
+        eprintln!("skip: rust-analyzer not on PATH or --version failed");
+    }
+    ok
+}
+
 /// Integration test: `racli tee` answers editor LSP on stdio (via its own gRPC socket), shares that
 /// socket with other gRPC clients, and cleans up after `shutdown`/`exit`.
 #[tokio::test]
 async fn tee_proxies_stdio_lsp_through_grpc() {
-    if std::process::Command::new("rust-analyzer")
-        .arg("--version")
-        .status()
-        .map(|s| !s.success())
-        .unwrap_or(true)
-    {
-        eprintln!("skip: rust-analyzer not on PATH or --version failed");
+    if !rust_analyzer_available() {
         return;
     }
 
@@ -158,4 +164,65 @@ async fn tee_proxies_stdio_lsp_through_grpc() {
         .unwrap();
     assert!(status.success(), "racli tee exited with {status}");
     assert!(!sock.exists(), "socket should be removed on shutdown");
+}
+
+/// Integration test: with `RACLI_DERIVE_SOCKET_PATH=1` and no `RACLI_UNIX_SOCKET`, `racli tee`
+/// serves on the socket derived from its working directory and removes it on shutdown.
+#[tokio::test]
+async fn tee_derives_socket_path_from_cwd() {
+    if !rust_analyzer_available() {
+        return;
+    }
+
+    // A fresh directory, so the derived socket can't collide with a real project's racli.
+    let project = tempdir().expect("temp dir");
+    let sock = racli::utils::derived_unix_socket_path(project.path());
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_racli"))
+        .arg("tee")
+        .env_remove("RACLI_UNIX_SOCKET")
+        .env("RACLI_DERIVE_SOCKET_PATH", "1")
+        .current_dir(project.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn racli tee");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    let session = async {
+        send(
+            &mut stdin,
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}),
+        )
+        .await;
+        recv_response(&mut stdout, 1).await;
+
+        let version = get_version(&sock)
+            .await
+            .expect("get_version on derived socket");
+        assert_eq!(version.version, env!("CARGO_PKG_VERSION"));
+
+        send(
+            &mut stdin,
+            json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown"}),
+        )
+        .await;
+        recv_response(&mut stdout, 2).await;
+        send(&mut stdin, json!({"jsonrpc": "2.0", "method": "exit"})).await;
+    };
+    tokio::time::timeout(Duration::from_secs(120), session)
+        .await
+        .expect("LSP session should finish in time");
+
+    let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
+        .await
+        .expect("racli tee should exit after `exit`")
+        .unwrap();
+    assert!(status.success(), "racli tee exited with {status}");
+    assert!(
+        !sock.exists(),
+        "derived socket should be removed on shutdown"
+    );
 }

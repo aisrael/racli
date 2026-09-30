@@ -19,7 +19,6 @@ use tonic::Status;
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 
-use crate::effective_unix_socket_path;
 use crate::grpc_server::GrpcServerError;
 use crate::grpc_server::install_unix_shutdown_signals;
 use crate::grpc_server::run_grpc_unix_socket_until_shutdown;
@@ -34,6 +33,7 @@ use crate::proto::racli::LspRequestRequest;
 use crate::proto::racli::lsp_request_response::Outcome;
 use crate::proto::racli::racli_client::RacliClient;
 use crate::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
+use crate::utils::unix_socket_path_for_dir;
 
 /// Delay between attempts to connect to the gRPC socket while rust-analyzer is still starting.
 const CONNECT_RETRY_DELAY: Duration = Duration::from_millis(100);
@@ -82,12 +82,14 @@ pub async fn run_tee(args: TeeArgs) -> Result<(), TeeError> {
     let started = Instant::now();
     let pid = std::process::id();
     let signals = install_unix_shutdown_signals();
-    let socket_path = effective_unix_socket_path();
+    let cwd = std::env::current_dir()
+        .map_err(|source| TeeError::Grpc(GrpcServerError::CurrentDir { source }))?;
+    let socket_path = unix_socket_path_for_dir(&cwd);
     tracing::info!(
         pid,
         ppid = std::os::unix::process::parent_id(),
         version = %crate::VERSION,
-        cwd = ?std::env::current_dir().ok(),
+        cwd = %cwd.display(),
         socket = %socket_path.display(),
         "racli tee starting"
     );

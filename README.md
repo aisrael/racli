@@ -50,6 +50,8 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 
 `racli tee` does everything `racli server` does (spawns rust-analyzer, serves gRPC on `/tmp/racli.sock` or `$RACLI_UNIX_SOCKET`). It also speaks LSP on stdin/stdout, so an editor can use it as its rust-analyzer while `racli search` and friends query the same instance. The stdio side never talks to rust-analyzer directly. It is a gRPC client of its own socket, using the `LspInitialize` / `LspRequest` / `LspNotify` / `LspEvents` RPCs, so editor requests are sequenced alongside every other client's.
 
+To run one `racli tee` per project, for example one per editor window, set `RACLI_DERIVE_SOCKET_PATH=1` (or `true`). When `RACLI_UNIX_SOCKET` is unset, the socket path is then derived from a hash of the working directory, as `/tmp/racli-<hash>.sock`, so each project gets its own racli and rust-analyzer. An explicit `RACLI_UNIX_SOCKET` still takes precedence. The chosen path is logged in the `racli tee starting` line. Client commands don't derive the path yet: point them at it with `RACLI_UNIX_SOCKET=/tmp/racli-<hash>.sock racli search …`.
+
 It stops when the editor sends `exit` or closes stdin, or on SIGINT/SIGTERM. Logs go to stderr, or to `$RACLI_SERVER_LOG_FILE`, and never to stdout.
 
 Editors that take a server path with no arguments (for example VS Code's `rust-analyzer.server.path`) need a small wrapper script:
