@@ -440,7 +440,12 @@ impl RustAnalyzerSession {
             task.abort();
         }
 
-        if let Some(lsp) = self.lsp.take() {
+        // Keep the client alive until the child has exited: jsonrpsee only queues notifications, and
+        // dropping the client stops its send task before the queued `exit` is written, so
+        // rust-analyzer would see stdin close first and fail with "client exited without proper
+        // shutdown sequence".
+        let lsp = self.lsp.take();
+        if let Some(lsp) = &lsp {
             match tokio::time::timeout(Duration::from_secs(8), lsp.shutdown()).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
@@ -490,6 +495,7 @@ impl RustAnalyzerSession {
                 self.child.kill().await.map_err(RustAnalyzerError::Io)?;
             }
         }
+        drop(lsp);
 
         self.shutdown_complete = true;
         Ok(())
