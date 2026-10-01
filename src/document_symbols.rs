@@ -178,7 +178,7 @@ fn document_symbol_to_json(s: &LspDocumentSymbol) -> DocumentSymbolJson {
 fn print_document_symbols_json(resp: &DocumentSymbolsResponse) {
     let rows: Vec<DocumentSymbolJson> = resp.symbols.iter().map(document_symbol_to_json).collect();
     let mut stdout = std::io::stdout().lock();
-    if let Err(e) = serde_json::to_writer_pretty(&mut stdout, &rows) {
+    if let Err(e) = serde_json::to_writer(&mut stdout, &rows) {
         eprintln!("racli document-symbols: failed to serialize JSON: {e}");
         return;
     }

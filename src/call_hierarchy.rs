@@ -481,7 +481,7 @@ pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
 
 fn print_call_hierarchy_json(result: &CallHierarchyOutput) {
     let mut stdout = std::io::stdout().lock();
-    if let Err(e) = serde_json::to_writer_pretty(&mut stdout, result) {
+    if let Err(e) = serde_json::to_writer(&mut stdout, result) {
         eprintln!("racli call-hierarchy: failed to serialize JSON: {e}");
         return;
     }

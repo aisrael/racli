@@ -246,10 +246,10 @@ fn proto_lsp_range_to_json(r: &crate::proto::racli::LspRange) -> SearchRangeJson
     }
 }
 
-/// Prints search results as a pretty-printed JSON array of symbol rows.
+/// Prints search results as a compact JSON array of symbol rows.
 fn print_search_response_json(resp: crate::proto::racli::SearchResponse) {
     let rows = search_response_to_json_rows(resp);
-    match serde_json::to_string_pretty(&rows) {
+    match serde_json::to_string(&rows) {
         Ok(s) => println!("{s}"),
         Err(e) => eprintln!("racli search: failed to encode JSON: {e}"),
     }

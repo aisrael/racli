@@ -78,7 +78,7 @@ fn print_find_references_json(resp: &FindReferencesResponse) {
         })
         .collect();
     let mut stdout = std::io::stdout().lock();
-    if let Err(e) = serde_json::to_writer_pretty(&mut stdout, &rows) {
+    if let Err(e) = serde_json::to_writer(&mut stdout, &rows) {
         eprintln!("racli find-references: failed to serialize JSON: {e}");
         return;
     }
