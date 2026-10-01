@@ -28,13 +28,13 @@ struct ReferenceQuery {
 const QUERIES: &[ReferenceQuery] = &[
     ReferenceQuery {
         file: "src/rust_analyzer.rs",
-        line: 200,
+        line: 307,
         character: 11,
         symbol: "RustAnalyzerSession",
     },
     ReferenceQuery {
         file: "src/racli_session.rs",
-        line: 82,
+        line: 122,
         character: 11,
         symbol: "RacliSession",
     },
@@ -46,13 +46,13 @@ const QUERIES: &[ReferenceQuery] = &[
     },
     ReferenceQuery {
         file: "src/lib.rs",
-        line: 54,
+        line: 58,
         character: 15,
         symbol: "effective_unix_socket_path",
     },
     ReferenceQuery {
         file: "src/lsp_client.rs",
-        line: 31,
+        line: 42,
         character: 9,
         symbol: "LspError",
     },
@@ -179,7 +179,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::find_references(sock, &rust_analyzer_rs, 200, 11),
+                        racli::client::find_references(sock, &rust_analyzer_rs, 307, 11),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.locations.is_empty()

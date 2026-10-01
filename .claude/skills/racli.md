@@ -11,7 +11,7 @@ description: >-
 
 # racli
 
-Run `racli` client commands from the **same directory the server used as its workspace root** (the cwd where `racli server` was started) so LSP paths and symbols match. The client talks to the server on a Unix domain socket: default `/tmp/racli.sock`, or override with the `RACLI_UNIX_SOCKET` environment variable if the server was started with a different path.
+Run `racli` client commands from **inside the project the server was started in**: its workspace root (the cwd where `racli server` or `racli tee` was started) or any subdirectory. Each project has its own Unix socket (`/tmp/racli-<hash>.sock`), and the client finds it automatically by checking its working directory and then each parent directory for a running server. Set `RACLI_UNIX_SOCKET` only to force a specific socket path.
 
 Assume **`racli server` is already running** for CLI subcommands (`search`, `find-definition`, `version`). Run client commands **outside the sandbox** when the environment blocks access to the Unix socket.
 

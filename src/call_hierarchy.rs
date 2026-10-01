@@ -20,13 +20,13 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::client;
-use crate::effective_unix_socket_path;
 use crate::proto::racli::LspCallHierarchyIncomingCall;
 use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::LspCallHierarchyOutgoingCall;
 use crate::proto::racli::LspPosition;
 use crate::proto::racli::LspRange;
 use crate::racli_session::RacliSession;
+use crate::utils::client_unix_socket_path;
 
 /// Which side of the call graph to walk from the resolved item.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum, Deserialize, Serialize, JsonSchema)]
@@ -421,7 +421,7 @@ pub struct CallHierarchyRequestJson {
 
 /// Runs the call-hierarchy walk over a Unix socket and prints the result as JSON or `--text`.
 pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
-    let sock = effective_unix_socket_path();
+    let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
 
     let abs = match args.path.canonicalize() {
@@ -481,7 +481,7 @@ pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
 
 fn print_call_hierarchy_json(result: &CallHierarchyOutput) {
     let mut stdout = std::io::stdout().lock();
-    if let Err(e) = serde_json::to_writer_pretty(&mut stdout, result) {
+    if let Err(e) = serde_json::to_writer(&mut stdout, result) {
         eprintln!("racli call-hierarchy: failed to serialize JSON: {e}");
         return;
     }

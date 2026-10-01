@@ -88,7 +88,7 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
 
     // 0-based LSP position on `document_uri_from_path` in `pub fn document_uri_from_path(...)`.
     let prepared =
-        prepare_call_hierarchy(sock.as_path(), file_path.to_string_lossy().as_ref(), 603, 7)
+        prepare_call_hierarchy(sock.as_path(), file_path.to_string_lossy().as_ref(), 789, 7)
             .await
             .expect("prepare_call_hierarchy");
 

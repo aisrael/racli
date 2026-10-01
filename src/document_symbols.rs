@@ -9,10 +9,10 @@ use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::client;
-use crate::effective_unix_socket_path;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspRange;
+use crate::utils::client_unix_socket_path;
 
 /// How `racli document-symbols` prints results (default is JSON).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -66,7 +66,7 @@ impl DocumentSymbolsArgs {
 
 /// Runs the document-symbols RPC and prints the outline in the format selected by `args`.
 pub async fn run_cli_document_symbols(args: DocumentSymbolsArgs) {
-    let sock = effective_unix_socket_path();
+    let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
 
     let abs = match args.path.canonicalize() {
@@ -178,7 +178,7 @@ fn document_symbol_to_json(s: &LspDocumentSymbol) -> DocumentSymbolJson {
 fn print_document_symbols_json(resp: &DocumentSymbolsResponse) {
     let rows: Vec<DocumentSymbolJson> = resp.symbols.iter().map(document_symbol_to_json).collect();
     let mut stdout = std::io::stdout().lock();
-    if let Err(e) = serde_json::to_writer_pretty(&mut stdout, &rows) {
+    if let Err(e) = serde_json::to_writer(&mut stdout, &rows) {
         eprintln!("racli document-symbols: failed to serialize JSON: {e}");
         return;
     }

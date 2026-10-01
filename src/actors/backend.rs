@@ -87,9 +87,13 @@ impl Actor for BackendSupervisor {
         };
 
         let lsp_server_info = ractor::call!(rust_analyzer, RustAnalyzerMsg::ServerInfo)?;
+        let initialize_result = ractor::call!(rust_analyzer, RustAnalyzerMsg::InitializeResult)?;
+        let events = ractor::call!(rust_analyzer, RustAnalyzerMsg::Events)?;
         let session = Arc::new(RacliSession::new(
             Core::default(),
             lsp_server_info,
+            initialize_result,
+            events,
             rust_analyzer.clone(),
         ));
 

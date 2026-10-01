@@ -21,6 +21,14 @@ service Racli {
   rpc OutgoingCalls (CallHierarchyCallsRequest) returns (OutgoingCallsResponse);
   // Runs LSP `textDocument/documentSymbol` for a single file (no line/character).
   rpc DocumentSymbols (DocumentSymbolsRequest) returns (DocumentSymbolsResponse);
+  // Returns the cached LSP `InitializeResult` racli received from rust-analyzer (as JSON).
+  rpc LspInitialize (LspInitializeRequest) returns (LspInitializeResponse);
+  // Forwards an arbitrary LSP request to rust-analyzer (`initialize` and `shutdown` are rejected).
+  rpc LspRequest (LspRequestRequest) returns (LspRequestResponse);
+  // Forwards an arbitrary LSP notification to rust-analyzer (`initialized` and `exit` are rejected).
+  rpc LspNotify (LspNotifyRequest) returns (LspNotifyResponse);
+  // Streams server-to-client LSP notifications (latest diagnostics per document are replayed first).
+  rpc LspEvents (LspEventsRequest) returns (stream LspEvent);
 }
 
 // Empty request for GetVersion (no parameters).
@@ -227,4 +235,51 @@ message DocumentSymbolsRequest {
 // Result of `Racli.DocumentSymbols`: top-level symbols in the file, each possibly with nested children.
 message DocumentSymbolsResponse {
   repeated LspDocumentSymbol symbols = 1;
+}
+
+// Empty request for `Racli.LspInitialize`.
+message LspInitializeRequest {}
+
+// Result of `Racli.LspInitialize`: rust-analyzer's LSP `InitializeResult` as JSON.
+message LspInitializeResponse {
+  string result_json = 1;
+}
+
+// Parameters for `Racli.LspRequest`: LSP method name plus its params as JSON (empty means no params).
+message LspRequestRequest {
+  string method = 1;
+  string params_json = 2;
+}
+
+// JSON-RPC `error` object returned by rust-analyzer for an LSP request.
+message LspResponseError {
+  int32 code = 1;
+  string message = 2;
+  optional string data_json = 3;
+}
+
+// Result of `Racli.LspRequest`: either the JSON `result` or the JSON-RPC `error` from rust-analyzer.
+message LspRequestResponse {
+  oneof outcome {
+    string result_json = 1;
+    LspResponseError error = 2;
+  }
+}
+
+// Parameters for `Racli.LspNotify`: LSP method name plus its params as JSON (empty means no params).
+message LspNotifyRequest {
+  string method = 1;
+  string params_json = 2;
+}
+
+// Empty result of `Racli.LspNotify` (sent once the notification has been written to rust-analyzer).
+message LspNotifyResponse {}
+
+// Empty request for `Racli.LspEvents`.
+message LspEventsRequest {}
+
+// A server-to-client LSP notification (e.g. `textDocument/publishDiagnostics`).
+message LspEvent {
+  string method = 1;
+  string params_json = 2;
 }

@@ -5,14 +5,11 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::EnvFilter;
-
 use crate::actors::frontend::FrontendError;
 use crate::actors::root::FrontendKind;
 use crate::actors::root::RootError;
 use crate::actors::root::run_until_shutdown;
-use crate::logging;
+use crate::logging::init_server_tracing;
 use crate::proto::racli::CallHierarchyCallsRequest;
 use crate::proto::racli::DocumentSymbolsRequest;
 use crate::proto::racli::DocumentSymbolsResponse;
@@ -25,6 +22,14 @@ use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::IncomingCallsResponse;
+use crate::proto::racli::LspEvent;
+use crate::proto::racli::LspEventsRequest;
+use crate::proto::racli::LspInitializeRequest;
+use crate::proto::racli::LspInitializeResponse;
+use crate::proto::racli::LspNotifyRequest;
+use crate::proto::racli::LspNotifyResponse;
+use crate::proto::racli::LspRequestRequest;
+use crate::proto::racli::LspRequestResponse;
 use crate::proto::racli::OutgoingCallsResponse;
 use crate::proto::racli::PrepareCallHierarchyRequest;
 use crate::proto::racli::PrepareCallHierarchyResponse;
@@ -35,57 +40,13 @@ use crate::racli_live_backend::RacliBackendStartError;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
 use crate::racli_session::symbol_search_options_from_proto;
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tonic::Request;
 use tonic::Response;
 use tonic::Status;
-
-/// Name of the env var that sets the max level for `racli::*` only (`0`-`5` or a level name, e.g. `debug`).
-pub const RACLI_SERVER_LOG_LEVEL_ENV: &str = "RACLI_SERVER_LOG_LEVEL";
-
-/// Name of the env var that, if set, redirects server/MCP logging to a file instead of stderr.
-pub const RACLI_SERVER_LOG_FILE_ENV: &str = "RACLI_SERVER_LOG_FILE";
-
-/// Builds the server log filter: non-`racli` targets capped at `info`, plus `racli` level from env or `info`.
-fn racli_server_env_filter() -> EnvFilter {
-    let racli_level = logging::resolve_level(RACLI_SERVER_LOG_LEVEL_ENV);
-    let combined = format!("info,racli={racli_level}");
-    EnvFilter::try_new(&combined).unwrap_or_else(|_| EnvFilter::new("info,racli=info"))
-}
-
-/// Installs a `tracing-subscriber` logger once, to [`RACLI_SERVER_LOG_FILE_ENV`] if set and openable
-/// or stderr otherwise; exits the process immediately if the log file can't be opened. The returned
-/// guard must be kept alive for the process lifetime so buffered file writes are flushed.
-pub fn init_grpc_server_tracing() -> Option<WorkerGuard> {
-    let filter = racli_server_env_filter();
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true);
-
-    match std::env::var_os(RACLI_SERVER_LOG_FILE_ENV).filter(|s| !s.is_empty()) {
-        Some(path) => {
-            let file = match std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-            {
-                Ok(file) => file,
-                Err(e) => {
-                    eprintln!(
-                        "error: unable to open {RACLI_SERVER_LOG_FILE_ENV} {path:?} for writing: {e}"
-                    );
-                    std::process::exit(1);
-                }
-            };
-            let (writer, guard) = tracing_appender::non_blocking(file);
-            let _ = builder.with_writer(writer).try_init();
-            Some(guard)
-        }
-        None => {
-            let _ = builder.with_writer(std::io::stderr).try_init();
-            None
-        }
-    }
-}
 
 /// Errors from binding, serving, or cleaning up the gRPC Unix socket server.
 #[derive(Debug, thiserror::Error)]
@@ -163,8 +124,13 @@ impl RacliGrpc {
     }
 }
 
+/// Server stream type for `Racli.LspEvents`.
+type LspEventStream = std::pin::Pin<Box<dyn Stream<Item = Result<LspEvent, Status>> + Send>>;
+
 #[tonic::async_trait]
 impl Racli for RacliGrpc {
+    type LspEventsStream = LspEventStream;
+
     /// Returns `crate::VERSION` and rust-analyzer `LspServerInfo` from initialize.
     async fn get_version(
         &self,
@@ -329,6 +295,61 @@ impl Racli for RacliGrpc {
             .map(Response::new)
             .map_err(racli_rpc_error_to_status)
     }
+
+    /// Returns rust-analyzer's cached LSP `InitializeResult` as JSON.
+    async fn lsp_initialize(
+        &self,
+        _request: Request<LspInitializeRequest>,
+    ) -> Result<Response<LspInitializeResponse>, Status> {
+        tracing::debug!(rpc = "Racli.LspInitialize", "gRPC endpoint invoked");
+        Ok(Response::new(self.session.lsp_initialize()))
+    }
+
+    /// Forwards an arbitrary LSP request to rust-analyzer.
+    async fn lsp_request(
+        &self,
+        request: Request<LspRequestRequest>,
+    ) -> Result<Response<LspRequestResponse>, Status> {
+        let inner = request.into_inner();
+        tracing::debug!(rpc = "Racli.LspRequest", method = %inner.method, "gRPC endpoint invoked");
+        self.session
+            .lsp_request(inner.method, &inner.params_json)
+            .await
+            .map(Response::new)
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Forwards an arbitrary LSP notification to rust-analyzer.
+    async fn lsp_notify(
+        &self,
+        request: Request<LspNotifyRequest>,
+    ) -> Result<Response<LspNotifyResponse>, Status> {
+        let inner = request.into_inner();
+        tracing::debug!(rpc = "Racli.LspNotify", method = %inner.method, "gRPC endpoint invoked");
+        self.session
+            .lsp_notify(inner.method, &inner.params_json)
+            .await
+            .map(|()| Response::new(LspNotifyResponse {}))
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Streams cached diagnostics, then live server-to-client notifications; lagged events are skipped.
+    async fn lsp_events(
+        &self,
+        _request: Request<LspEventsRequest>,
+    ) -> Result<Response<Self::LspEventsStream>, Status> {
+        tracing::debug!(rpc = "Racli.LspEvents", "gRPC endpoint invoked");
+        let (snapshot, rx) = self.session.lsp_events();
+        let live = BroadcastStream::new(rx).filter_map(|event| match event {
+            Ok(event) => Some(Ok(event)),
+            Err(BroadcastStreamRecvError::Lagged(n)) => {
+                tracing::warn!(skipped = n, "LspEvents subscriber lagged; events skipped");
+                None
+            }
+        });
+        let stream = tokio_stream::iter(snapshot.into_iter().map(Ok)).chain(live);
+        Ok(Response::new(Box::pin(stream)))
+    }
 }
 
 /// Registers SIGINT/SIGTERM handlers immediately (via the same [`signal`](tokio::signal::unix::signal)
@@ -387,7 +408,7 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
     symbol_search_limit: u32,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), GrpcServerError> {
-    let _log_guard = init_grpc_server_tracing();
+    let _log_guard = init_server_tracing();
 
     let path_buf = socket_path.as_ref().to_path_buf();
     let _ = std::fs::remove_file(&path_buf);
@@ -403,7 +424,8 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
     )
     .await;
 
-    // The front-end actor removes the socket on stop; this also covers startup failures.
-    let _ = std::fs::remove_file(&path_buf);
+    // The front-end actor removes the socket on stop, but only while the path is still its own
+    // socket: during an editor restart the next racli may already have re-bound it. (On startup
+    // failure nothing was bound, so there is nothing to clean up.)
     result.map_err(GrpcServerError::from)
 }

@@ -18,10 +18,12 @@ pub mod find_implementations;
 pub mod find_references;
 /// Unix-socket gRPC server for `racli server`.
 pub mod grpc_server;
-/// Log-level parsing and stderr tracing setup for the client subcommands.
+/// Tracing setup for the client subcommands and the long-running server/MCP/tee modes.
 pub mod logging;
 /// Generic LSP client.
 pub mod lsp_client;
+/// Fan-out hub for rust-analyzer's server-to-client LSP notifications.
+pub mod lsp_events;
 /// Maps `lsp_types` values into racli protobuf shapes.
 pub mod lsp_map;
 /// MCP server over stdio (`rmcp`); tools use an in-process rust-analyzer session and workspace watcher.
@@ -38,6 +40,8 @@ pub mod rust_analyzer;
 pub mod search;
 /// Shared server logic and future service wiring.
 pub mod server;
+/// `racli tee`: gRPC server plus an editor-facing stdio LSP proxy routed through it.
+pub mod tee;
 /// Transport layer components
 pub mod transport;
 /// Shared small helpers (e.g. Unix socket path resolution).

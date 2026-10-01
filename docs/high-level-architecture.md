@@ -10,7 +10,7 @@ sequenceDiagram
     participant Server as racli server
     participant RA as rust-analyzer
 
-    Client->>Server: request via gRPC (Unix socket, default /tmp/racli.sock)
+    Client->>Server: request via gRPC (per-project Unix socket /tmp/racli-<hash>.sock)
     Server->>RA: request via LSP over stdio (initialize; workspace = server cwd)
     RA-->>Server: response
     Server-->>Client: response
@@ -35,7 +35,7 @@ sequenceDiagram
     Client-->>User: JSON on stdout<br/>(name, kind, uri, range)
 ```
 
-The client only speaks gRPC to `racli server`. The server owns the `rust-analyzer` process and the LSP session for the directory where the server was started.
+The client only speaks gRPC to `racli server`, and finds the server's socket by checking its working directory and then each parent directory for a running server. The server owns the `rust-analyzer` process and the LSP session for the directory where the server was started.
 
 ## racli mcp
 
@@ -56,6 +56,34 @@ sequenceDiagram
 ```
 
 Configure the MCP host so the **`racli mcp` working directory** is the intended Rust workspace root (the directory you would `cd` into before running `cargo build`). **`racli server`** remains the path for CLI clients (`racli search`, `racli find-definition`, `racli version`): those commands still use gRPC on the Unix socket.
+
+## racli tee
+
+`racli tee` runs the `racli server` actor tree in-process and also serves LSP on stdio for an editor. The stdio proxy is an ordinary gRPC client of the socket, so editor traffic goes through the same `RustAnalyzerActor` mailbox as every other client.
+
+```mermaid
+sequenceDiagram
+    participant Editor
+    participant Tee as racli tee (stdio proxy)
+    participant Server as racli tee (gRPC server)
+    participant RA as rust-analyzer
+
+    Editor->>Tee: LSP initialize (stdin)
+    Tee->>Server: gRPC LspInitialize
+    Server-->>Tee: cached InitializeResult
+    Tee-->>Editor: initialize result (stdout)
+    Editor->>Tee: LSP request / notification
+    Tee->>Server: gRPC LspRequest / LspNotify
+    Server->>RA: LSP (serialized by RustAnalyzerActor)
+    RA-->>Server: result
+    Server-->>Tee: result JSON
+    Tee-->>Editor: response (editor's id)
+    RA-->>Server: publishDiagnostics, showMessage, logMessage
+    Server-->>Tee: gRPC LspEvents stream
+    Tee-->>Editor: notifications
+```
+
+The editor's `shutdown` is acknowledged locally, and `exit` (or stdin EOF) shuts the whole tree down.
 
 ## Internal actor tree
 

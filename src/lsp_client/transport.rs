@@ -27,7 +27,8 @@ pub enum TransportError {
     Parse(String),
 }
 
-async fn write_framed<W: AsyncWrite + Unpin>(
+/// Writes `body` to `writer` as one LSP frame (`Content-Length` header plus body).
+pub(crate) async fn write_framed<W: AsyncWrite + Unpin>(
     writer: &mut W,
     body: &str,
 ) -> Result<(), TransportError> {
@@ -68,7 +69,8 @@ async fn reply_null_result<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
-async fn read_framed_body<R: AsyncRead + Send + Unpin>(
+/// Reads one LSP frame from `reader` and returns its body; fails with `UnexpectedEof` once the stream ends.
+pub(crate) async fn read_framed_body<R: AsyncRead + Send + Unpin>(
     reader: &mut BufReader<R>,
 ) -> Result<Vec<u8>, TransportError> {
     let mut content_length: Option<usize> = None;
@@ -77,7 +79,9 @@ async fn read_framed_body<R: AsyncRead + Send + Unpin>(
     // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#baseProtocol
     let mut line = String::new();
     loop {
-        reader.read_line(&mut line).await?;
+        if reader.read_line(&mut line).await? == 0 {
+            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+        }
         match line.as_str() {
             "\r\n" => break,
             line if line.starts_with("Content-Length: ") => {

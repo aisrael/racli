@@ -1,11 +1,16 @@
 //! Shared backend for gRPC [`crate::grpc_server::RacliGrpc`].
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use ractor::ActorRef;
 use ractor::RactorErr;
+use serde_json::Value;
+use tokio::sync::broadcast;
 
 use crate::actors::rust_analyzer::RustAnalyzerMsg;
+use crate::lsp_client::LspError;
+use crate::lsp_events::LspEvents;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::FindImplementationsResponse;
@@ -13,6 +18,10 @@ use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::IncomingCallsResponse;
 use crate::proto::racli::LspCallHierarchyItem;
+use crate::proto::racli::LspEvent;
+use crate::proto::racli::LspInitializeResponse;
+use crate::proto::racli::LspRequestResponse;
+use crate::proto::racli::LspResponseError;
 use crate::proto::racli::LspServerInfo;
 use crate::proto::racli::LspWorkspaceSymbolResponse;
 use crate::proto::racli::OutgoingCallsResponse;
@@ -20,6 +29,7 @@ use crate::proto::racli::PrepareCallHierarchyResponse;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::SymbolSearchKind as ProtoSymbolSearchKind;
 use crate::proto::racli::SymbolSearchScope as ProtoSymbolSearchScope;
+use crate::proto::racli::lsp_request_response::Outcome;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
@@ -79,10 +89,42 @@ pub fn symbol_search_options_from_proto(
     Ok(SymbolSearchOptions { kind, scope })
 }
 
+/// LSP requests a passthrough client may not send: they would re-initialize or stop the shared rust-analyzer.
+const BLOCKED_LSP_REQUESTS: [&str; 2] = ["initialize", "shutdown"];
+
+/// LSP notifications a passthrough client may not send, for the same reason as [`BLOCKED_LSP_REQUESTS`].
+const BLOCKED_LSP_NOTIFICATIONS: [&str; 2] = ["initialized", "exit"];
+
+/// Parses passthrough `params_json` (empty means no params) after rejecting `blocked` methods.
+fn passthrough_params(
+    method: &str,
+    params_json: &str,
+    blocked: &[&str],
+) -> Result<Option<Value>, RacliRpcError> {
+    if method.is_empty() {
+        return Err(RacliRpcError::InvalidArgument(
+            "method must not be empty".into(),
+        ));
+    }
+    if blocked.contains(&method) {
+        return Err(RacliRpcError::InvalidArgument(format!(
+            "{method} is managed by racli and cannot be forwarded"
+        )));
+    }
+    if params_json.trim().is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str(params_json)
+        .map(Some)
+        .map_err(|e| RacliRpcError::InvalidArgument(format!("invalid params_json: {e}")))
+}
+
 /// Shared [`Core`] plus a handle to the rust-analyzer actor that owns the live LSP session.
 pub struct RacliSession {
     core: Core,
     lsp_server_info: LspServerInfo,
+    initialize_result: Value,
+    events: Arc<LspEvents>,
     rust_analyzer: ActorRef<RustAnalyzerMsg>,
 }
 
@@ -91,13 +133,68 @@ impl RacliSession {
     pub(crate) fn new(
         core: Core,
         lsp_server_info: LspServerInfo,
+        initialize_result: Value,
+        events: Arc<LspEvents>,
         rust_analyzer: ActorRef<RustAnalyzerMsg>,
     ) -> Self {
         Self {
             core,
             lsp_server_info,
+            initialize_result,
+            events,
             rust_analyzer,
         }
+    }
+
+    /// Returns rust-analyzer's cached LSP `InitializeResult` (`Racli.LspInitialize`).
+    pub fn lsp_initialize(&self) -> LspInitializeResponse {
+        LspInitializeResponse {
+            result_json: self.initialize_result.to_string(),
+        }
+    }
+
+    /// Forwards an arbitrary LSP request (`Racli.LspRequest`); JSON-RPC errors from rust-analyzer are returned as [`Outcome::Error`].
+    pub async fn lsp_request(
+        &self,
+        method: String,
+        params_json: &str,
+    ) -> Result<LspRequestResponse, RacliRpcError> {
+        let params = passthrough_params(&method, params_json, &BLOCKED_LSP_REQUESTS)?;
+        let result = ractor::call!(self.rust_analyzer, |reply| RustAnalyzerMsg::LspRequest {
+            method,
+            params,
+            reply,
+        })?;
+        let outcome = match result {
+            Ok(value) => Outcome::ResultJson(value.to_string()),
+            Err(RustAnalyzerError::Lsp(LspError::Jsonrpsee(
+                jsonrpsee::core::client::Error::Call(err),
+            ))) => Outcome::Error(LspResponseError {
+                code: err.code(),
+                message: err.message().to_string(),
+                data_json: err.data().map(|d| d.get().to_string()),
+            }),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(LspRequestResponse {
+            outcome: Some(outcome),
+        })
+    }
+
+    /// Forwards an arbitrary LSP notification (`Racli.LspNotify`) and returns once it has been sent.
+    pub async fn lsp_notify(&self, method: String, params_json: &str) -> Result<(), RacliRpcError> {
+        let params = passthrough_params(&method, params_json, &BLOCKED_LSP_NOTIFICATIONS)?;
+        ractor::call!(self.rust_analyzer, |reply| RustAnalyzerMsg::LspNotify {
+            method,
+            params,
+            reply,
+        })??;
+        Ok(())
+    }
+
+    /// Subscribes to rust-analyzer notifications (`Racli.LspEvents`): cached diagnostics, then a live receiver.
+    pub fn lsp_events(&self) -> (Vec<LspEvent>, broadcast::Receiver<LspEvent>) {
+        self.events.subscribe()
     }
 
     /// Returns protobuf [`GetVersionResponse`] (`Racli.GetVersion`).
@@ -380,5 +477,33 @@ impl RacliSession {
         };
 
         Ok(DocumentSymbolsResponse { symbols })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn passthrough_rejects_lifecycle_methods() {
+        for method in BLOCKED_LSP_REQUESTS {
+            assert!(passthrough_params(method, "", &BLOCKED_LSP_REQUESTS).is_err());
+        }
+        for method in BLOCKED_LSP_NOTIFICATIONS {
+            assert!(passthrough_params(method, "", &BLOCKED_LSP_NOTIFICATIONS).is_err());
+        }
+    }
+
+    #[test]
+    fn passthrough_parses_params() {
+        assert_eq!(
+            passthrough_params("textDocument/hover", "", &BLOCKED_LSP_REQUESTS).unwrap(),
+            None
+        );
+        assert_eq!(
+            passthrough_params("textDocument/hover", r#"{"a":1}"#, &BLOCKED_LSP_REQUESTS).unwrap(),
+            Some(serde_json::json!({"a": 1}))
+        );
+        assert!(passthrough_params("textDocument/hover", "{", &BLOCKED_LSP_REQUESTS).is_err());
     }
 }

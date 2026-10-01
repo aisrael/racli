@@ -9,7 +9,6 @@ use crate::VERSION;
 use crate::call_hierarchy;
 use crate::client;
 use crate::document_symbols;
-use crate::effective_unix_socket_path;
 use crate::find_definition;
 use crate::find_implementations;
 use crate::find_references;
@@ -19,6 +18,9 @@ use crate::logging;
 use crate::mcp;
 use crate::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use crate::search;
+use crate::tee;
+use crate::utils::client_unix_socket_path;
+use crate::utils::unix_socket_path_for_dir;
 
 /// Top-level error returned by [`run`] for any server, listener, or MCP failure.
 #[derive(Debug, thiserror::Error)]
@@ -46,6 +48,8 @@ enum Command {
     Server(ServerArgs),
     /// MCP stdio transport (`rmcp`); rust-analyzer and file watching run in-process (no Unix socket).
     Mcp(McpArgs),
+    /// Serve gRPC on the Unix socket and LSP on stdio (for editors), routing stdio requests through the socket.
+    Tee(tee::TeeArgs),
     /// Print versions (client-side and, via gRPC, server-side).
     Version,
     /// Search workspace symbols via rust-analyzer (LSP `workspace/symbol`).
@@ -87,8 +91,10 @@ pub async fn run() -> Result<(), RunError> {
 
     match args.command {
         Command::Server(opts) => {
+            let cwd =
+                std::env::current_dir().map_err(|source| GrpcServerError::CurrentDir { source })?;
             run_grpc_unix_socket_interactive(
-                effective_unix_socket_path(),
+                unix_socket_path_for_dir(&cwd),
                 opts.symbol_search_limit,
             )
             .await?;
@@ -96,9 +102,17 @@ pub async fn run() -> Result<(), RunError> {
         Command::Mcp(opts) => {
             mcp::run_stdio(opts.symbol_search_limit).await?;
         }
+        Command::Tee(opts) => {
+            // A pending tokio stdin read can't be cancelled and would block runtime shutdown, so exit directly.
+            if let Err(e) = tee::run_tee(opts).await {
+                eprintln!("error: {}", crate::utils::error_chain(&e));
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
         Command::Version => {
             logging::init_client_tracing();
-            let sock = effective_unix_socket_path();
+            let sock = client_unix_socket_path();
             let sock_display = sock.display().to_string();
             match tokio::time::timeout(Duration::from_secs(10), client::get_version(&sock)).await {
                 Ok(Ok(resp)) => {
