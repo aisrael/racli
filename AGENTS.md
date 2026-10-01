@@ -8,6 +8,7 @@
 ## Project Guidelines
 
 - This is a Rust codebase. You have access to the racli MCP server and the `racli` CLI.
+- To navigate the Rust codebase, use the `racli` skill (`.agents/skills/racli.md`, also at `.claude/skills/racli.md`). It covers every `racli` command, including `document-symbols`, `call-hierarchy` and the `search --kind` / `--scope` options, and how to read their output. The rules below are a summary.
 - When searching for symbols DO NOT USE `grep`. Try `racli search` first. Only fall back to `grep` when `racli search` doesn't return anything meaningful.
 - When searching for the definition, DO NOT USE `grep`. First try `racli find-definition` with the filename, line number, and character offset.
 - When searching for usages of a symbol, DO NOT USE `grep`. First try `racli find-references` with the filename, line number, and character offset. The results include the declaration.
