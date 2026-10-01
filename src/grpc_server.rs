@@ -424,7 +424,8 @@ pub async fn run_grpc_unix_socket_until_shutdown<P: AsRef<Path>>(
     )
     .await;
 
-    // The front-end actor removes the socket on stop; this also covers startup failures.
-    let _ = std::fs::remove_file(&path_buf);
+    // The front-end actor removes the socket on stop, but only while the path is still its own
+    // socket: during an editor restart the next racli may already have re-bound it. (On startup
+    // failure nothing was bound, so there is nothing to clean up.)
     result.map_err(GrpcServerError::from)
 }

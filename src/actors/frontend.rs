@@ -1,5 +1,6 @@
 //! Front-end actors: the gRPC Unix-socket server and the MCP stdio server, both backed by the shared [`RacliSession`].
 
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -58,9 +59,19 @@ pub(crate) struct GrpcFrontendArgs {
     pub root: ActorRef<RootMsg>,
 }
 
+/// Identifies a filesystem entry by `(device, inode)`, so a path re-bound by another process is recognized.
+fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(path)
+        .ok()
+        .map(|m| (m.dev(), m.ino()))
+}
+
 /// State of [`GrpcFrontend`]: the socket path plus the running serve task and its shutdown trigger.
 pub(crate) struct GrpcFrontendState {
     socket_path: PathBuf,
+    /// Identity of the socket file this actor bound; removal on stop is skipped if the path now holds another file.
+    socket_identity: Option<(u64, u64)>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<Result<(), tonic::transport::Error>>>,
 }
@@ -84,6 +95,7 @@ impl Actor for GrpcFrontend {
                 source,
             }
         })?;
+        let socket_identity = file_identity(&args.socket_path);
         let incoming = UnixListenerStream::new(uds);
         let svc = RacliGrpc::new(args.session);
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -108,6 +120,7 @@ impl Actor for GrpcFrontend {
 
         Ok(GrpcFrontendState {
             socket_path: args.socket_path,
+            socket_identity,
             shutdown_tx: Some(shutdown_tx),
             task: Some(task),
         })
@@ -140,7 +153,18 @@ impl Actor for GrpcFrontend {
         _myself: ActorRef<Self::Msg>,
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
-        let _ = std::fs::remove_file(&state.socket_path);
+        // During an editor restart the next racli may already have re-bound this path; its socket
+        // is a different file, so only remove the path while it is still the one we bound.
+        if state.socket_identity.is_some()
+            && file_identity(&state.socket_path) == state.socket_identity
+        {
+            let _ = std::fs::remove_file(&state.socket_path);
+        } else {
+            tracing::info!(
+                socket = %state.socket_path.display(),
+                "socket path now belongs to another racli instance; leaving it in place"
+            );
+        }
         Ok(())
     }
 }
