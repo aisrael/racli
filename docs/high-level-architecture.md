@@ -10,7 +10,7 @@ sequenceDiagram
     participant Server as racli server
     participant RA as rust-analyzer
 
-    Client->>Server: request via gRPC (Unix socket, default /tmp/racli.sock)
+    Client->>Server: request via gRPC (per-project Unix socket /tmp/racli-<hash>.sock)
     Server->>RA: request via LSP over stdio (initialize; workspace = server cwd)
     RA-->>Server: response
     Server-->>Client: response
@@ -35,7 +35,7 @@ sequenceDiagram
     Client-->>User: JSON on stdout<br/>(name, kind, uri, range)
 ```
 
-The client only speaks gRPC to `racli server`. The server owns the `rust-analyzer` process and the LSP session for the directory where the server was started.
+The client only speaks gRPC to `racli server`, and finds the server's socket by checking its working directory and then each parent directory for a running server. The server owns the `rust-analyzer` process and the LSP session for the directory where the server was started.
 
 ## racli mcp
 

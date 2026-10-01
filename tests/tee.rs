@@ -166,8 +166,9 @@ async fn tee_proxies_stdio_lsp_through_grpc() {
     assert!(!sock.exists(), "socket should be removed on shutdown");
 }
 
-/// Integration test: with `RACLI_DERIVE_SOCKET_PATH=1` and no `RACLI_UNIX_SOCKET`, `racli tee`
-/// serves on the socket derived from its working directory and removes it on shutdown.
+/// Integration test: by default (neither `RACLI_UNIX_SOCKET` nor `RACLI_DERIVE_SOCKET_PATH` set),
+/// `racli tee` serves on the socket derived from its working directory, a client run from a
+/// subdirectory finds it automatically, and the socket is removed on shutdown.
 #[tokio::test]
 async fn tee_derives_socket_path_from_cwd() {
     if !rust_analyzer_available() {
@@ -180,7 +181,7 @@ async fn tee_derives_socket_path_from_cwd() {
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_racli"))
         .arg("tee")
         .env_remove("RACLI_UNIX_SOCKET")
-        .env("RACLI_DERIVE_SOCKET_PATH", "1")
+        .env_remove("RACLI_DERIVE_SOCKET_PATH")
         .current_dir(project.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -203,6 +204,24 @@ async fn tee_derives_socket_path_from_cwd() {
             .await
             .expect("get_version on derived socket");
         assert_eq!(version.version, env!("CARGO_PKG_VERSION"));
+
+        // A client run from a subdirectory walks up and finds the project's socket on its own.
+        let subdir = project.path().join("sub/dir");
+        std::fs::create_dir_all(&subdir).unwrap();
+        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_racli"))
+            .arg("version")
+            .env_remove("RACLI_UNIX_SOCKET")
+            .env_remove("RACLI_DERIVE_SOCKET_PATH")
+            .current_dir(&subdir)
+            .output()
+            .await
+            .expect("run racli version");
+        let stdout_text = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout_text.contains(concat!("server: ", env!("CARGO_PKG_VERSION"))),
+            "racli version from a subdirectory should reach the tee; stdout: {stdout_text}, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
 
         send(
             &mut stdin,

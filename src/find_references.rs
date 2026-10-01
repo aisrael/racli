@@ -8,8 +8,8 @@ use clap::Parser;
 use serde::Serialize;
 
 use crate::client;
-use crate::effective_unix_socket_path;
 use crate::proto::racli::FindReferencesResponse;
+use crate::utils::client_unix_socket_path;
 
 /// Arguments for `racli find-references` (LSP `textDocument/references`, declaration included).
 #[derive(Parser)]
@@ -29,7 +29,7 @@ pub struct FindReferencesArgs {
 
 /// Runs the find-references RPC and prints locations as JSON or plain text.
 pub async fn run_cli_find_references(args: FindReferencesArgs) {
-    let sock = effective_unix_socket_path();
+    let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
 
     let abs = match args.path.canonicalize() {

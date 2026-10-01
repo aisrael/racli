@@ -31,8 +31,17 @@ racli search worker
 In the usual setup there are three pieces:
 
 - **rust-analyzer** — the Language Server process that `racli server` drives over LSP.
-- **racli server** — a long-running gRPC listener on a Unix socket (default `/tmp/racli.sock`); it spawns `rust-analyzer`, completes an LSP `initialize` handshake with the current working directory as the workspace root, and serves RPCs to clients.
-- **racli (client)** — the same binary used in client mode: subcommands that connect to the socket and call the server.
+- **racli server** — a long-running gRPC listener on a per-project Unix socket (see [Sockets](#sockets)); it spawns `rust-analyzer`, completes an LSP `initialize` handshake with the current working directory as the workspace root, and serves RPCs to clients.
+- **racli (client)** — the same binary used in client mode: subcommands that find the project's socket and call the server.
+
+### Sockets
+
+Each project gets its own server socket, so several projects (or editor windows) can each run their own racli and rust-analyzer. The socket path is `/tmp/racli-<hash>.sock`, where the hash is taken from the server's working directory.
+
+Client commands find it automatically. Starting from their own working directory, they check it and then each parent directory in turn, and connect to the nearest one with a running server. So `racli search` works from any subdirectory of the project that `racli server` or `racli tee` was started in. If no server is found, the client prints a warning naming the directory and the socket it expected.
+
+- `RACLI_UNIX_SOCKET=<path>` sets an explicit socket path. It overrides discovery on both the server and the client side.
+- `RACLI_DERIVE_SOCKET_PATH=0` (or `false`) turns per-project sockets off, so servers and clients both use the single `/tmp/racli.sock`. Clients with this setting don't find per-project servers, and vice versa.
 - **racli tee** — `racli server` plus an LSP server on stdio for editors: the editor launches `racli tee` in place of `rust-analyzer`, and CLI/MCP clients share the same rust-analyzer through the socket.
 - **racli mcp** — MCP over stdio only: spawns rust-analyzer and the workspace file watcher inside the MCP child process (no Unix socket). Use **`racli server`** for `racli search`, `racli find-definition`, `racli find-references`, `racli document-symbols`, and `racli version`.
 
@@ -42,15 +51,15 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 
 ### `racli server`
 
-`racli server` binds the gRPC Unix socket (default `/tmp/racli.sock`) and, when `rust-analyzer` is available on your `PATH`, spawns it as a child in the current working directory and completes the LSP `initialize` handshake described above.
+`racli server` binds the project's gRPC Unix socket (see [Sockets](#sockets)) and, when `rust-analyzer` is available on your `PATH`, spawns it as a child in the current working directory and completes the LSP `initialize` handshake described above.
 
 `--symbol-search-limit <N>` (also accepted by `racli mcp`) caps how many results rust-analyzer returns per `workspace/symbol` query (default `1000`; rust-analyzer's own default is `128`). It is sent to rust-analyzer as `workspace.symbol.search.limit` during `initialize`, and applies to each `|`-separated pattern separately.
 
 ### `racli tee`
 
-`racli tee` does everything `racli server` does (spawns rust-analyzer, serves gRPC on `/tmp/racli.sock` or `$RACLI_UNIX_SOCKET`). It also speaks LSP on stdin/stdout, so an editor can use it as its rust-analyzer while `racli search` and friends query the same instance. The stdio side never talks to rust-analyzer directly. It is a gRPC client of its own socket, using the `LspInitialize` / `LspRequest` / `LspNotify` / `LspEvents` RPCs, so editor requests are sequenced alongside every other client's.
+`racli tee` does everything `racli server` does (spawns rust-analyzer, serves gRPC on the project's socket; see [Sockets](#sockets)). It also speaks LSP on stdin/stdout, so an editor can use it as its rust-analyzer while `racli search` and friends query the same instance. The stdio side never talks to rust-analyzer directly. It is a gRPC client of its own socket, using the `LspInitialize` / `LspRequest` / `LspNotify` / `LspEvents` RPCs, so editor requests are sequenced alongside every other client's.
 
-To run one `racli tee` per project, for example one per editor window, set `RACLI_DERIVE_SOCKET_PATH=1` (or `true`). When `RACLI_UNIX_SOCKET` is unset, the socket path is then derived from a hash of the working directory, as `/tmp/racli-<hash>.sock`, so each project gets its own racli and rust-analyzer. An explicit `RACLI_UNIX_SOCKET` still takes precedence. The chosen path is logged in the `racli tee starting` line. Client commands don't derive the path yet: point them at it with `RACLI_UNIX_SOCKET=/tmp/racli-<hash>.sock racli search …`.
+Because sockets are per project, each editor window gets its own `racli tee`, and `racli search` run inside that project reaches the editor's rust-analyzer. The chosen socket path is logged in the `racli tee starting` line.
 
 It stops when the editor sends `exit` or closes stdin, or on SIGINT/SIGTERM. Logs go to stderr, or to `$RACLI_SERVER_LOG_FILE`, and never to stdout.
 
@@ -68,11 +77,11 @@ Limitations:
 
 ## Client commands
 
-These subcommands expect a running `racli server` at the default Unix socket path unless noted otherwise.
+These subcommands expect a running `racli server` or `racli tee` for the project they're run in (found as described in [Sockets](#sockets)), unless noted otherwise.
 
 ### `racli search <query>`
 
-Runs LSP [`workspace/symbol`](https://rust-analyzer.github.io/book/features.html#workspace-symbol) through the server: the client calls gRPC `Search`, the server forwards the query to rust-analyzer, and the reply is a structured [`WorkspaceSymbolResponse`](proto/racli.proto) mirroring `lsp_types::WorkspaceSymbolResponse` (either a **flat** list of symbol information or a **nested** list of workspace symbols). Symbols are scoped to the server's current working directory when `racli server` was started. By default, output is **JSON** (one array of symbol objects); use `--text` or `--csv` (or `--output-format`) for plain text or CSV. The default Unix socket is `/tmp/racli.sock` (same as `racli version`).
+Runs LSP [`workspace/symbol`](https://rust-analyzer.github.io/book/features.html#workspace-symbol) through the server: the client calls gRPC `Search`, the server forwards the query to rust-analyzer, and the reply is a structured [`WorkspaceSymbolResponse`](proto/racli.proto) mirroring `lsp_types::WorkspaceSymbolResponse` (either a **flat** list of symbol information or a **nested** list of workspace symbols). Symbols are scoped to the server's current working directory when `racli server` was started. By default, output is **JSON** (one array of symbol objects); use `--text` or `--csv` (or `--output-format`) for plain text or CSV.
 
 Separate alternative patterns with a single unescaped `|` (similar to `grep -E`), for example `racli search 'Foo|Bar'`. Each pattern is still a plain substring for rust-analyzer, not a full regular expression. A literal `|` in a pattern must be written as `\|` (a backslash before the pipe). Example: `racli search 'a\|b|c'` searches for the substring `a|b` and for `c`, then merges and dedupes the combined results.
 
@@ -92,4 +101,4 @@ Runs LSP [`textDocument/documentSymbol`](https://microsoft.github.io/language-se
 
 ### `racli version`
 
-Prints the client version from the binary (`CARGO_PKG_VERSION`). If the server answers at the default socket, prints the server version from gRPC `GetVersion`. If the server is missing, errors, or does not respond within 10 seconds, a message is written to stderr and only the client line is printed to stdout.
+Prints the client version from the binary (`CARGO_PKG_VERSION`). If a server answers on the project's socket, prints the server version from gRPC `GetVersion`. If the server is missing, errors, or does not respond within 10 seconds, a message is written to stderr and only the client line is printed to stdout.

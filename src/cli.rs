@@ -9,7 +9,6 @@ use crate::VERSION;
 use crate::call_hierarchy;
 use crate::client;
 use crate::document_symbols;
-use crate::effective_unix_socket_path;
 use crate::find_definition;
 use crate::find_implementations;
 use crate::find_references;
@@ -20,6 +19,8 @@ use crate::mcp;
 use crate::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use crate::search;
 use crate::tee;
+use crate::utils::client_unix_socket_path;
+use crate::utils::unix_socket_path_for_dir;
 
 /// Top-level error returned by [`run`] for any server, listener, or MCP failure.
 #[derive(Debug, thiserror::Error)]
@@ -90,8 +91,10 @@ pub async fn run() -> Result<(), RunError> {
 
     match args.command {
         Command::Server(opts) => {
+            let cwd =
+                std::env::current_dir().map_err(|source| GrpcServerError::CurrentDir { source })?;
             run_grpc_unix_socket_interactive(
-                effective_unix_socket_path(),
+                unix_socket_path_for_dir(&cwd),
                 opts.symbol_search_limit,
             )
             .await?;
@@ -109,7 +112,7 @@ pub async fn run() -> Result<(), RunError> {
         }
         Command::Version => {
             logging::init_client_tracing();
-            let sock = effective_unix_socket_path();
+            let sock = client_unix_socket_path();
             let sock_display = sock.display().to_string();
             match tokio::time::timeout(Duration::from_secs(10), client::get_version(&sock)).await {
                 Ok(Ok(resp)) => {

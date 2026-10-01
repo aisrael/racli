@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-/// Default Unix socket path for `racli server` when `RACLI_UNIX_SOCKET` is unset or empty.
+/// Shared socket path used when per-project sockets are disabled (`RACLI_DERIVE_SOCKET_PATH=0`) and `RACLI_UNIX_SOCKET` is unset or empty.
 pub const DEFAULT_UNIX_SOCKET_PATH: &str = "/tmp/racli.sock";
 
 /// Returns the Unix socket path from `RACLI_UNIX_SOCKET`, or [`DEFAULT_UNIX_SOCKET_PATH`] if unset or empty.
@@ -12,31 +12,36 @@ pub fn effective_unix_socket_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_UNIX_SOCKET_PATH))
 }
 
-/// Name of the env var that, when `1` or `true`, makes `racli tee` derive its socket path from its working directory.
+/// Name of the env var controlling per-project sockets: on by default (unset/empty, `1`, `true`);
+/// `0` or `false` restores the single [`DEFAULT_UNIX_SOCKET_PATH`].
 pub const RACLI_DERIVE_SOCKET_PATH_ENV: &str = "RACLI_DERIVE_SOCKET_PATH";
 
-/// Parses a boolean env flag: `1`/`true` and `0`/`false`/empty (case-insensitive); anything else is `None`.
-fn parse_flag(raw: &str) -> Option<bool> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" => Some(true),
-        "" | "0" | "false" => Some(false),
-        _ => None,
+/// Resolves a [`RACLI_DERIVE_SOCKET_PATH_ENV`] value (case-insensitive): unset/empty/`1`/`true` is on,
+/// `0`/`false` is off, and anything else is `None`.
+fn parse_derive_flag(raw: Option<&str>) -> Option<bool> {
+    match raw.map(|r| r.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("" | "1" | "true") => Some(true),
+        Some("0" | "false") => Some(false),
+        Some(_) => None,
     }
 }
 
-/// Returns whether [`RACLI_DERIVE_SOCKET_PATH_ENV`] is enabled; an unrecognized value is treated as off with a warning.
+/// Returns whether [`RACLI_DERIVE_SOCKET_PATH_ENV`] is enabled (the default); an unrecognized value is treated as off with a warning.
 pub fn derive_socket_path_enabled() -> bool {
-    let Some(raw) = std::env::var_os(RACLI_DERIVE_SOCKET_PATH_ENV) else {
-        return false;
-    };
-    let raw = raw.to_string_lossy();
-    parse_flag(&raw).unwrap_or_else(|| {
+    let raw = std::env::var_os(RACLI_DERIVE_SOCKET_PATH_ENV);
+    let raw = raw.as_ref().map(|r| r.to_string_lossy());
+    parse_derive_flag(raw.as_deref()).unwrap_or_else(|| {
         tracing::warn!(
-            value = %raw,
+            value = ?raw,
             "unrecognized {RACLI_DERIVE_SOCKET_PATH_ENV} value (expected 1/true/0/false); not deriving the socket path"
         );
         false
     })
+}
+
+/// Returns whether `RACLI_UNIX_SOCKET` is set to a non-empty path.
+fn explicit_socket_path_set() -> bool {
+    std::env::var_os("RACLI_UNIX_SOCKET").is_some_and(|s| !s.is_empty())
 }
 
 /// 64-bit FNV-1a; used instead of `DefaultHasher` because its output must stay stable across Rust releases.
@@ -56,12 +61,50 @@ pub fn derived_unix_socket_path(dir: &Path) -> PathBuf {
 /// Returns `RACLI_UNIX_SOCKET` if set; otherwise [`derived_unix_socket_path`] for `dir` when
 /// [`RACLI_DERIVE_SOCKET_PATH_ENV`] is enabled; otherwise [`DEFAULT_UNIX_SOCKET_PATH`].
 pub fn unix_socket_path_for_dir(dir: &Path) -> PathBuf {
-    let explicit = std::env::var_os("RACLI_UNIX_SOCKET").is_some_and(|s| !s.is_empty());
-    if !explicit && derive_socket_path_enabled() {
+    if !explicit_socket_path_set() && derive_socket_path_enabled() {
         derived_unix_socket_path(dir)
     } else {
         effective_unix_socket_path()
     }
+}
+
+/// Returns whether a server accepts connections on `path` (a stale socket file left by a crash does not count).
+fn socket_is_live(path: &Path) -> bool {
+    std::os::unix::net::UnixStream::connect(path).is_ok()
+}
+
+/// Returns the derived socket of `start` or its nearest ancestor for which `is_live` holds.
+fn find_live_socket(start: &Path, is_live: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .map(derived_unix_socket_path)
+        .find(|path| is_live(path))
+}
+
+/// Socket for client commands: `RACLI_UNIX_SOCKET` if set, [`DEFAULT_UNIX_SOCKET_PATH`] if deriving is
+/// off, else the live derived socket of the cwd or its nearest ancestor (so clients work from any
+/// subdirectory of a served project). With no live server, warns and returns the cwd's derived path.
+pub fn client_unix_socket_path() -> PathBuf {
+    if explicit_socket_path_set() || !derive_socket_path_enabled() {
+        return effective_unix_socket_path();
+    }
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => std::fs::canonicalize(&cwd).unwrap_or(cwd),
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot read current directory; using the default socket");
+            return effective_unix_socket_path();
+        }
+    };
+    find_live_socket(&cwd, socket_is_live).unwrap_or_else(|| {
+        let socket = derived_unix_socket_path(&cwd);
+        tracing::warn!(
+            cwd = %cwd.display(),
+            socket = %socket.display(),
+            "no running racli server found for this directory or its parents; start `racli server` \
+             or `racli tee` in the project root, or set RACLI_UNIX_SOCKET"
+        );
+        socket
+    })
 }
 
 #[cfg(test)]
@@ -69,14 +112,103 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_flag_values() {
-        for on in ["1", "true", "TRUE", " True "] {
-            assert_eq!(parse_flag(on), Some(true), "{on:?}");
+    fn derive_flag_defaults_on() {
+        for on in [
+            None,
+            Some(""),
+            Some("  "),
+            Some("1"),
+            Some("true"),
+            Some(" True "),
+        ] {
+            assert_eq!(parse_derive_flag(on), Some(true), "{on:?}");
         }
-        for off in ["", "0", "false", "False"] {
-            assert_eq!(parse_flag(off), Some(false), "{off:?}");
+        for off in ["0", "false", "FALSE"] {
+            assert_eq!(parse_derive_flag(Some(off)), Some(false), "{off:?}");
         }
-        assert_eq!(parse_flag("yes"), None);
+        assert_eq!(parse_derive_flag(Some("yes")), None);
+    }
+
+    /// Paths under `/nonexistent` aren't canonicalized, so their derived sockets are predictable.
+    fn live_at(dirs: &[&str]) -> impl Fn(&Path) -> bool {
+        let live: Vec<PathBuf> = dirs
+            .iter()
+            .map(|d| derived_unix_socket_path(Path::new(d)))
+            .collect();
+        move |path| live.iter().any(|l| l == path)
+    }
+
+    #[test]
+    fn finds_socket_of_start_dir() {
+        let found = find_live_socket(
+            Path::new("/nonexistent/proj"),
+            live_at(&["/nonexistent/proj"]),
+        );
+        assert_eq!(
+            found,
+            Some(derived_unix_socket_path(Path::new("/nonexistent/proj")))
+        );
+    }
+
+    #[test]
+    fn finds_ancestor_socket_from_subdirectory() {
+        let found = find_live_socket(
+            Path::new("/nonexistent/proj/src/deep"),
+            live_at(&["/nonexistent/proj"]),
+        );
+        assert_eq!(
+            found,
+            Some(derived_unix_socket_path(Path::new("/nonexistent/proj")))
+        );
+    }
+
+    #[test]
+    fn nearest_live_socket_wins() {
+        let found = find_live_socket(
+            Path::new("/nonexistent/ws/member/src"),
+            live_at(&["/nonexistent/ws", "/nonexistent/ws/member"]),
+        );
+        assert_eq!(
+            found,
+            Some(derived_unix_socket_path(Path::new(
+                "/nonexistent/ws/member"
+            )))
+        );
+    }
+
+    #[test]
+    fn stale_nearer_socket_is_skipped() {
+        // Only the parent is live; the member's (stale or absent) socket doesn't shadow it.
+        let found = find_live_socket(
+            Path::new("/nonexistent/ws/member"),
+            live_at(&["/nonexistent/ws"]),
+        );
+        assert_eq!(
+            found,
+            Some(derived_unix_socket_path(Path::new("/nonexistent/ws")))
+        );
+    }
+
+    #[test]
+    fn no_live_socket_is_none() {
+        assert_eq!(
+            find_live_socket(Path::new("/nonexistent/proj"), live_at(&[])),
+            None
+        );
+    }
+
+    #[test]
+    fn socket_liveness_requires_a_listener() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        assert!(!socket_is_live(&path), "missing socket");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert!(socket_is_live(&path), "listening socket");
+        drop(listener);
+        assert!(
+            !socket_is_live(&path),
+            "stale socket file after the listener is gone"
+        );
     }
 
     #[test]

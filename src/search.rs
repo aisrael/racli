@@ -8,11 +8,11 @@ use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::client;
-use crate::effective_unix_socket_path;
 use crate::proto::racli::lsp_workspace_symbol_response::Payload;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
+use crate::utils::client_unix_socket_path;
 
 /// How `racli search` prints results (default is JSON).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -81,7 +81,7 @@ impl SearchArgs {
 
 /// Runs the search RPC and prints results in the format selected by `args`.
 pub async fn run_cli_search(args: SearchArgs) {
-    let sock = effective_unix_socket_path();
+    let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
     let options = SymbolSearchOptions {
         kind: args.kind,

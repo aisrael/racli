@@ -34,7 +34,7 @@ const QUERIES: &[ReferenceQuery] = &[
     },
     ReferenceQuery {
         file: "src/racli_session.rs",
-        line: 82,
+        line: 122,
         character: 11,
         symbol: "RacliSession",
     },
@@ -46,13 +46,13 @@ const QUERIES: &[ReferenceQuery] = &[
     },
     ReferenceQuery {
         file: "src/lib.rs",
-        line: 54,
+        line: 58,
         character: 15,
         symbol: "effective_unix_socket_path",
     },
     ReferenceQuery {
         file: "src/lsp_client.rs",
-        line: 31,
+        line: 42,
         character: 9,
         symbol: "LspError",
     },
