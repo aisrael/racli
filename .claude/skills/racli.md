@@ -1,9 +1,11 @@
 ---
 name: racli
 description: >-
-  Search Rust workspace symbols and resolve go-to-definition via the racli CLI
-  against a running racli server (LSP workspace/symbol and textDocument/definition).
-  Use for symbol lookup, definition jumps, and structured search in any workspace
+  Search Rust workspace symbols, resolve go-to-definition, and find references and
+  implementations via the racli CLI against a running racli server (LSP
+  workspace/symbol, textDocument/definition, textDocument/references and
+  textDocument/implementation). Use for symbol lookup, definition jumps, finding
+  usages, finding trait/type impls, and structured search in any workspace
   where racli bridges rust-analyzer. Prefer racli over grep for these tasks; fall
   back to grep only when racli returns nothing useful. For MCP, `racli mcp` runs
   rust-analyzer in-process (no socket); point the host at the workspace root cwd.
@@ -13,7 +15,7 @@ description: >-
 
 Run `racli` client commands from **inside the project the server was started in**: its workspace root (the cwd where `racli server` or `racli tee` was started) or any subdirectory. Each project has its own Unix socket (`/tmp/racli-<hash>.sock`), and the client finds it automatically by checking its working directory and then each parent directory for a running server. Set `RACLI_UNIX_SOCKET` only to force a specific socket path.
 
-Assume **`racli server` is already running** for CLI subcommands (`search`, `find-definition`, `version`). Run client commands **outside the sandbox** when the environment blocks access to the Unix socket.
+Assume **`racli server` is already running** for CLI subcommands (`search`, `find-definition`, `find-references`, `find-implementations`, `version`). Run client commands **outside the sandbox** when the environment blocks access to the Unix socket.
 
 **MCP:** If the integration uses `racli mcp`, the MCP host must spawn it with **cwd = workspace root**; that process embeds rust-analyzer and does not require a separate `racli server`.
 
@@ -32,7 +34,22 @@ For **go-to-definition at a specific source location**, do not use `grep`. Use `
   `PATH` may be absolute or relative to the current directory; the client canonicalizes it before calling the server. `--line` is **0-based**; `--character` is **0-based UTF-16** offset on that line (same as LSP `Position` and rust-analyzer diagnostics).
 - **Output:** Default is **JSON** (definition locations). Use `--text` for one human-readable line per location.
 
-If the server just started, wait until analysis has caught up (for example until `racli search` returns sensible symbols) before relying on definitions.
+## find-references (`textDocument/references`)
+
+For **finding usages of a symbol**, do not use `grep`. Use `racli find-references` with a file path and LSP position.
+
+- **Invocation:** `racli find-references <PATH> --line <N> --character <N>`, with the same path and position rules as `find-definition`.
+- **Output:** Default is **JSON** (reference locations, each with `uri` and `range`). The declaration is always included. Use `--text` for one human-readable line per location.
+
+## find-implementations (`textDocument/implementation`)
+
+For **finding the implementations of a trait or type**, do not use `grep`. Use `racli find-implementations` with a file path and LSP position.
+
+- **Invocation:** `racli find-implementations <PATH> --line <N> --character <N>`, with the same path and position rules as `find-definition`.
+- **Behavior:** On a trait or type, returns its `impl` blocks. On a trait method, returns each `impl`'s override. On a position inside an `impl` block, returns nothing, because it only goes from a trait or type to its impls.
+- **Output:** Default is **JSON** (locations, each with `uri` and `range`). Use `--text` for one human-readable line per location.
+
+If the server just started, wait until analysis has caught up (for example until `racli search` returns sensible symbols) before relying on definitions, references or implementations.
 
 ## grep fallback
 
