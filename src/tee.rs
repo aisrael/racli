@@ -124,7 +124,12 @@ pub async fn run_tee(args: TeeArgs) -> Result<(), TeeError> {
     let uptime_secs = started.elapsed().as_secs();
     match &result {
         Ok(()) => tracing::info!(pid, uptime_secs, "racli tee stopped"),
-        Err(e) => tracing::error!(pid, uptime_secs, error = ?e, "racli tee stopped with an error"),
+        Err(e) => tracing::error!(
+            pid,
+            uptime_secs,
+            error = %crate::utils::error_chain(e),
+            "racli tee stopped with an error"
+        ),
     }
     result
 }

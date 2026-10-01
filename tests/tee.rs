@@ -245,3 +245,97 @@ async fn tee_derives_socket_path_from_cwd() {
         "derived socket should be removed on shutdown"
     );
 }
+
+/// Creates `<dir>/bin/rust-analyzer`, a stand-in for rustup's shim on a toolchain without the
+/// component (prints rustup's error, exits 1), and returns a `PATH` that finds it first.
+fn path_with_failing_rust_analyzer(dir: &std::path::Path) -> String {
+    let bin = dir.join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let fake = bin.join("rust-analyzer");
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\necho \"error: Unknown binary 'rust-analyzer' in official toolchain 'nightly'.\" >&2\nexit 1\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+/// Integration test: when rust-analyzer exits during startup, `racli tee` exits 1 with a readable
+/// message, not a Debug dump.
+#[tokio::test]
+async fn tee_reports_rust_analyzer_startup_failure_readably() {
+    let dir = tempdir().expect("temp dir");
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_racli"))
+            .arg("tee")
+            .env("PATH", path_with_failing_rust_analyzer(dir.path()))
+            .env("RACLI_UNIX_SOCKET", dir.path().join("tee.sock"))
+            .env_remove("RACLI_SERVER_LOG_FILE")
+            .current_dir(dir.path())
+            .stdin(Stdio::piped())
+            .output(),
+    )
+    .await
+    .expect("racli tee should exit when rust-analyzer fails to start")
+    .expect("run racli tee");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    assert!(output.stdout.is_empty(), "stdout must stay LSP-only");
+    assert!(
+        stderr.contains("Unknown binary 'rust-analyzer'"),
+        "rust-analyzer's own stderr should pass through: {stderr}"
+    );
+    assert!(
+        stderr.contains("error: rust-analyzer exited during startup (exit status: 1)"),
+        "expected a readable startup error: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Grpc("),
+        "no Debug-formatted errors: {stderr}"
+    );
+}
+
+/// Integration test: a relative `RACLI_SERVER_LOG_FILE` is created under the working directory,
+/// including missing parent directories.
+#[tokio::test]
+async fn tee_relative_log_file_is_based_on_cwd() {
+    let dir = tempdir().expect("temp dir");
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_racli"))
+            .arg("tee")
+            .env("PATH", path_with_failing_rust_analyzer(dir.path()))
+            .env("RACLI_UNIX_SOCKET", dir.path().join("tee.sock"))
+            .env("RACLI_SERVER_LOG_FILE", ".racli/racli.log")
+            .current_dir(dir.path())
+            .stdin(Stdio::piped())
+            .output(),
+    )
+    .await
+    .expect("racli tee should exit when rust-analyzer fails to start")
+    .expect("run racli tee");
+
+    let log = dir.path().join(".racli/racli.log");
+    let contents = std::fs::read_to_string(&log).unwrap_or_else(|e| {
+        panic!(
+            "expected {}: {e}; stderr: {}",
+            log.display(),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    assert!(contents.contains("racli tee starting"), "log: {contents}");
+    assert!(
+        contents.contains("rust-analyzer exited during startup"),
+        "log: {contents}"
+    );
+}

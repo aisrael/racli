@@ -1,6 +1,22 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+/// Formats `err` and its `source()` chain as `"outer: cause: root cause"` for user-facing messages.
+pub fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        // `#[error(transparent)]` wrappers repeat their inner message; don't print it twice.
+        if !message.ends_with(&text) {
+            message.push_str(": ");
+            message.push_str(&text);
+        }
+        source = cause.source();
+    }
+    message
+}
+
 /// Shared socket path used when per-project sockets are disabled (`RACLI_DERIVE_SOCKET_PATH=0`) and `RACLI_UNIX_SOCKET` is unset or empty.
 pub const DEFAULT_UNIX_SOCKET_PATH: &str = "/tmp/racli.sock";
 
@@ -110,6 +126,39 @@ pub fn client_unix_socket_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("root cause")]
+    struct Root;
+
+    #[derive(Debug, thiserror::Error)]
+    enum Mid {
+        #[error("middle")]
+        Wrapped(#[source] Root),
+        #[error(transparent)]
+        Transparent(Root),
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("outer")]
+    struct Outer(#[source] Mid);
+
+    #[test]
+    fn error_chain_joins_causes() {
+        assert_eq!(
+            error_chain(&Outer(Mid::Wrapped(Root))),
+            "outer: middle: root cause"
+        );
+    }
+
+    #[test]
+    fn error_chain_skips_transparent_repeats() {
+        assert_eq!(
+            error_chain(&Outer(Mid::Transparent(Root))),
+            "outer: root cause"
+        );
+        assert_eq!(error_chain(&Root), "root cause");
+    }
 
     #[test]
     fn derive_flag_defaults_on() {

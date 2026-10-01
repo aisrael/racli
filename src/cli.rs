@@ -105,7 +105,7 @@ pub async fn run() -> Result<(), RunError> {
         Command::Tee(opts) => {
             // A pending tokio stdin read can't be cancelled and would block runtime shutdown, so exit directly.
             if let Err(e) = tee::run_tee(opts).await {
-                eprintln!("Error: {e:?}");
+                eprintln!("error: {}", crate::utils::error_chain(&e));
                 std::process::exit(1);
             }
             std::process::exit(0);

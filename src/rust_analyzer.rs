@@ -295,6 +295,13 @@ pub enum RustAnalyzerError {
     /// JSON-RPC `error` object in a response (e.g. conflicting merged search shapes).
     #[error("rust-analyzer: {0}")]
     Rpc(String),
+    /// rust-analyzer exited before completing LSP `initialize`; its own stderr explains why.
+    #[error(
+        "rust-analyzer exited during startup ({status}); see its error output above for the cause \
+         (for example, rustup reporting that the rust-analyzer component isn't installed for this \
+         project's toolchain)"
+    )]
+    ExitedDuringStartup { status: std::process::ExitStatus },
 }
 
 /// Owns a running `rust-analyzer` child and an [`LspClient`] over stdio.
@@ -381,7 +388,10 @@ impl RustAnalyzerSession {
             ..Default::default()
         };
 
-        let init = lsp.initialize(init_params).await?;
+        let init = match lsp.initialize(init_params).await {
+            Ok(init) => init,
+            Err(e) => return Err(startup_failure(&mut child, e).await),
+        };
         let initialize_result = serde_json::to_value(&init)?;
         let lsp_server_info = lsp_server_info_from_server_info(init.server_info);
 
@@ -751,6 +761,18 @@ impl Drop for RustAnalyzerSession {
             task.abort();
         }
         let _ = self.child.start_kill();
+    }
+}
+
+/// Turns an `initialize` failure into [`RustAnalyzerError::ExitedDuringStartup`] when the child has
+/// exited (the usual cause, e.g. a rustup shim with no rust-analyzer component); otherwise keeps `err`.
+async fn startup_failure(child: &mut Child, err: crate::lsp_client::LspError) -> RustAnalyzerError {
+    match tokio::time::timeout(Duration::from_secs(1), child.wait()).await {
+        Ok(Ok(status)) => {
+            tracing::debug!(error = %err, %status, "rust-analyzer exited during initialize");
+            RustAnalyzerError::ExitedDuringStartup { status }
+        }
+        _ => err.into(),
     }
 }
 

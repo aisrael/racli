@@ -61,7 +61,7 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 
 Because sockets are per project, each editor window gets its own `racli tee`, and `racli search` run inside that project reaches the editor's rust-analyzer. The chosen socket path is logged in the `racli tee starting` line.
 
-It stops when the editor sends `exit` or closes stdin, or on SIGINT/SIGTERM. Logs go to stderr, or to `$RACLI_SERVER_LOG_FILE`, and never to stdout.
+It stops when the editor sends `exit` or closes stdin, or on SIGINT/SIGTERM. Logs go to stderr, or to `$RACLI_SERVER_LOG_FILE`, and never to stdout. A relative `RACLI_SERVER_LOG_FILE` is based on the working directory, and missing directories are created. So `RACLI_SERVER_LOG_FILE=.racli/racli.log` gives each project its own log, and you may want to add `.racli/` to that project's `.gitignore`.
 
 Editors that take a server path with no arguments (for example VS Code's `rust-analyzer.server.path`) need a small wrapper script:
 
