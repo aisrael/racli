@@ -6,7 +6,7 @@
 racli - a CLI tool for [rust-analyzer](https://github.com/rust-lang/rust-analyzer)
 ====
 
-The latest version is **0.3.0**, which adds `racli tee` for sharing rust-analyzer with your editor, per-project sockets, and the `document-symbols`, `call-hierarchy` and `find-implementations` commands. See the [changelog](CHANGELOG.md) for details.
+The latest version is **0.2.0**, which adds `racli tee` for sharing rust-analyzer with your editor, per-project sockets, MCP over stdio, and the `find-references`, `document-symbols`, `call-hierarchy` and `find-implementations` commands. See the [changelog](CHANGELOG.md) for details.
 
 ## Installation
 

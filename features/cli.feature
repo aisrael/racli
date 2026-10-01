@@ -8,8 +8,8 @@ Feature: CLI basics
     Then it should exit with status code 0
     And the output should be
       ```
-      client: 0.3.0
-      server: 0.3.0
+      client: 0.2.0
+      server: 0.2.0
       rust-analyzer: 1.95.0 (59807616 2026-04-14)
       ```
 
