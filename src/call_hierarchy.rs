@@ -65,6 +65,8 @@ pub struct CallHierarchyArgs {
 
 /// One RPC round trip's worth of backend access, abstracting over a gRPC socket (CLI) vs. an
 /// in-process [`RacliSession`] (MCP) so [`run_call_hierarchy`] can drive both the same way.
+// `#[async_trait]`'s expansion trips `double_must_use` (Rust 1.99+).
+#[allow(clippy::double_must_use)]
 #[tonic::async_trait]
 pub trait CallHierarchyBackend: Send + Sync {
     /// Runs `textDocument/prepareCallHierarchy`.
