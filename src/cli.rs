@@ -102,14 +102,7 @@ pub async fn run() -> Result<(), RunError> {
         Command::Mcp(opts) => {
             mcp::run_stdio(opts.symbol_search_limit).await?;
         }
-        Command::Tee(opts) => {
-            // A pending tokio stdin read can't be cancelled and would block runtime shutdown, so exit directly.
-            if let Err(e) = tee::run_tee(opts).await {
-                eprintln!("error: {}", crate::utils::error_chain(&e));
-                std::process::exit(1);
-            }
-            std::process::exit(0);
-        }
+        Command::Tee(opts) => tee::run_tee_and_exit(opts).await,
         Command::Version => {
             logging::init_client_tracing();
             let sock = client_unix_socket_path();

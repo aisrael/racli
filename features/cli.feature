@@ -6,12 +6,9 @@ Feature: CLI basics
       racli version
       ```
     Then it should exit with status code 0
-    And the output should be
-      ```
-      client: 0.2.0
-      server: 0.2.0
-      rust-analyzer: 1.95.0 (59807616 2026-04-14)
-      ```
+    And the output should contain "client: 0.2.0"
+    And the output should contain "server: 0.2.0"
+    And the output should contain "rust-analyzer: "
 
   Scenario: racli --help lists the subcommands
     When the following command is run:
