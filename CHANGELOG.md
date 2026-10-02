@@ -2,6 +2,12 @@
 
 All notable changes to racli are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and racli follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`racli-tee` binary**: runs `racli tee` with no subcommand, so editors whose server path takes no arguments (such as VS Code's `rust-analyzer.server.path`) can point at it directly instead of a wrapper script. `cargo install racli` installs it alongside `racli`.
+
 ## [0.2.0] - 2026-09-30
 
 Changes since 0.1.1.

@@ -134,6 +134,16 @@ pub async fn run_tee(args: TeeArgs) -> Result<(), TeeError> {
     result
 }
 
+/// Runs [`run_tee`] and exits the process, printing the error chain and exiting 1 on failure.
+pub async fn run_tee_and_exit(args: TeeArgs) -> ! {
+    // A pending tokio stdin read can't be cancelled and would block runtime shutdown, so exit directly.
+    if let Err(e) = run_tee(args).await {
+        eprintln!("error: {}", crate::utils::error_chain(&e));
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
 /// Flattens the server task's join result so a panic is reported (and logged) like a server error.
 fn flatten(
     served: Result<Result<(), GrpcServerError>, tokio::task::JoinError>,

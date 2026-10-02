@@ -166,6 +166,76 @@ async fn tee_proxies_stdio_lsp_through_grpc() {
     assert!(!sock.exists(), "socket should be removed on shutdown");
 }
 
+/// Integration test: the `racli-tee` binary, run with no arguments as an editor would, serves an
+/// LSP session through the socket and exits cleanly.
+#[tokio::test]
+async fn racli_tee_binary_serves_lsp_without_arguments() {
+    if !rust_analyzer_available() {
+        return;
+    }
+
+    let dir = tempdir().expect("temp dir");
+    let sock = dir.path().join("tee.sock");
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_racli-tee"))
+        .env("RACLI_UNIX_SOCKET", &sock)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn racli-tee");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    let session = async {
+        send(
+            &mut stdin,
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}),
+        )
+        .await;
+        let init = recv_response(&mut stdout, 1).await;
+        assert_eq!(init["result"]["serverInfo"]["name"], "rust-analyzer");
+        send(
+            &mut stdin,
+            json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await;
+        send(
+            &mut stdin,
+            json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown"}),
+        )
+        .await;
+        assert_eq!(recv_response(&mut stdout, 2).await["result"], Value::Null);
+        send(&mut stdin, json!({"jsonrpc": "2.0", "method": "exit"})).await;
+    };
+    tokio::time::timeout(Duration::from_secs(120), session)
+        .await
+        .expect("LSP session should finish in time");
+
+    let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
+        .await
+        .expect("racli-tee should exit after `exit`")
+        .unwrap();
+    assert!(status.success(), "racli-tee exited with {status}");
+    assert!(!sock.exists(), "socket should be removed on shutdown");
+}
+
+/// `racli-tee --version` exits 0, since editors probe the server binary with it before launching.
+#[test]
+fn racli_tee_binary_version_exits_zero() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_racli-tee"))
+        .arg("--version")
+        .output()
+        .expect("run racli-tee --version");
+    assert!(output.status.success(), "exited with {}", output.status);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(env!("CARGO_PKG_VERSION")),
+        "expected version in {stdout:?}"
+    );
+}
+
 /// Integration test: by default (neither `RACLI_UNIX_SOCKET` nor `RACLI_DERIVE_SOCKET_PATH` set),
 /// `racli tee` serves on the socket derived from its working directory, a client run from a
 /// subdirectory finds it automatically, and the socket is removed on shutdown.
