@@ -14,6 +14,7 @@ use crate::lsp_map::symbol_kind_i32;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
 use crate::rust_analyzer::SymbolSearchOptions;
+use crate::rust_analyzer::SymbolSearchResult;
 
 /// Holds stateless helpers shared by gRPC handlers (e.g. `Core::version`).
 #[derive(Clone, Copy, Debug, Default)]
@@ -25,7 +26,8 @@ impl Core {
         crate::VERSION.to_string()
     }
 
-    /// Runs LSP `workspace/symbol` on the live rust-analyzer session and returns the raw JSON `result`.
+    /// Runs LSP `workspace/symbol` on the live rust-analyzer session and returns the raw JSON `result`,
+    /// noting whether any pattern's results were cut to the limit.
     ///
     /// Unescaped `|` splits the query into multiple patterns (each non-empty segment is searched; results are merged and deduped).
     /// Use `\|` for a literal pipe. This is substring alternation, not full regular-expression syntax.
@@ -35,7 +37,7 @@ impl Core {
         ra: &mut RustAnalyzerSession,
         query: String,
         options: SymbolSearchOptions,
-    ) -> Result<Value, RustAnalyzerError> {
+    ) -> Result<SymbolSearchResult, RustAnalyzerError> {
         let segments = split_search_query_into_segments(&query);
         if segments.len() == 1 {
             return ra.workspace_symbol(segments[0].clone(), options).await;
@@ -246,8 +248,9 @@ async fn search_merge_multiple_patterns(
     ra: &mut RustAnalyzerSession,
     segments: Vec<String>,
     options: SymbolSearchOptions,
-) -> Result<Value, RustAnalyzerError> {
+) -> Result<SymbolSearchResult, RustAnalyzerError> {
     let mut state = WsMergeState::Empty;
+    let mut truncated = false;
 
     let segment_count = segments.len();
 
@@ -261,8 +264,9 @@ async fn search_merge_multiple_patterns(
             segment_query = %segment_query,
             "merged multi-pattern search: LSP workspace/symbol segment"
         );
-        let value = ra.workspace_symbol(seg, options).await?;
-        let parsed = workspace_symbol_value_to_option(value)?;
+        let result = ra.workspace_symbol(seg, options).await?;
+        truncated |= result.truncated;
+        let parsed = workspace_symbol_value_to_option(result.value)?;
 
         let segment_result_count = match &parsed {
             None => 0,
@@ -337,7 +341,10 @@ async fn search_merge_multiple_patterns(
             merged_symbol_count = 0_usize,
             "merged multi-pattern search: aggregated and deduped"
         );
-        return Ok(Value::Null);
+        return Ok(SymbolSearchResult {
+            value: Value::Null,
+            truncated,
+        });
     };
 
     let merged_symbol_count = match &merged {
@@ -351,7 +358,8 @@ async fn search_merge_multiple_patterns(
         "merged multi-pattern search: aggregated and deduped"
     );
 
-    serde_json::to_value(merged).map_err(RustAnalyzerError::from)
+    let value = serde_json::to_value(merged).map_err(RustAnalyzerError::from)?;
+    Ok(SymbolSearchResult { value, truncated })
 }
 
 #[cfg(test)]

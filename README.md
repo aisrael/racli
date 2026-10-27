@@ -59,7 +59,7 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 
 If you start `racli server`, `racli tee` or `racli-tee` from a terminal in a directory that racli is already serving, it says so and exits 1 instead of starting a second rust-analyzer. When stdin isn't a terminal, the new instance takes over the socket. That's what happens when an editor restarts its server, so restarts aren't blocked by an old instance that hasn't exited yet.
 
-`--symbol-search-limit <N>` (also accepted by `racli mcp`) caps how many results rust-analyzer returns per `workspace/symbol` query (default `1000`; rust-analyzer's own default is `128`). It is sent to rust-analyzer as `workspace.symbol.search.limit` during `initialize`, and applies to each `|`-separated pattern separately.
+`--symbol-search-limit <N>` (also accepted by `racli mcp`) caps how many results `Search` returns per `workspace/symbol` query (default `1000`; rust-analyzer's own default is `128`). racli sends one more than the limit to rust-analyzer as `workspace.symbol.search.limit` during `initialize`, so it can tell a cut-off from an exact fit: when rust-analyzer returns more than the limit, `Search` drops the extra results and sets `truncated` on its response, and `racli search` warns on stderr. The limit applies to each `|`-separated pattern separately.
 
 ### `racli tee`
 
@@ -119,7 +119,7 @@ Every positional argument is a name and must be a Rust path (`mkfifo`, `sys::mkf
 
 `--kind` keeps definitions of one kind, as `racli search --text` prints it (`function`, `method`, `struct`, …, in any case). `--glob <PATTERN>` keeps definitions in files the pattern matches, as a shell glob would: `*` stays within one path component and `**` spans several, so `src/**` is everything under `src/`. A relative pattern matches files under the current directory. Both choose which definitions a name finds, not which results are shown, and both apply to names only.
 
-Each definition gets its own result, and a definition found twice is run once. With `--text`, each result follows a line naming the symbol, in the layout of `racli search --text`; JSON output is an array of `{"symbol": {name, kind, containerName?, uri, range}, "result": …}`, where `result` is what the command prints for a position. A position given with names is labelled with the symbol it refers to. A position on its own prints as before. If no symbol has a name, the error lists the closest symbols to retry with, and the other names still run. See [ADR 001](docs/adrs/001-lookup-by-symbol.md).
+Each definition gets its own result, and a definition found twice is run once. With `--text`, each result follows a line naming the symbol, in the layout of `racli search --text`; JSON output is an array of `{"symbol": {name, kind, containerName?, uri, range}, "result": …}`, where `result` is what the command prints for a position. A position given with names is labelled with the symbol it refers to. A position on its own prints as before. If no symbol has a name, the error lists the closest symbols to retry with, and the other names still run. If rust-analyzer's results were cut off at the server's `--symbol-search-limit`, the lookup says some definitions may be missing; a qualified name avoids that. See [ADR 001](docs/adrs/001-lookup-by-symbol.md).
 
 ### `racli document-symbols <PATH>`
 

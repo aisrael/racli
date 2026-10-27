@@ -38,6 +38,7 @@ When you know a symbol's name, pass it to `find-definition`, `find-references`, 
 - **Several definitions:** each gets its own result, and one found twice is run once. `--text` prints a line naming each symbol, in the layout of `racli search --text`, with its results indented under it. JSON is an array of `{"symbol": …, "result": …}`. A position on its own prints as before.
 - **Narrowing:** `--kind <KIND>` keeps one kind, as `racli search --text` prints it (`function`, `method`, `struct`, in any case). `--glob <PATTERN>` keeps definitions in files the pattern matches, as a shell glob would (`src/**`, `src/**/tests.rs`); a relative pattern matches under the current directory. Both choose which definitions a name finds, not which results are shown.
 - **Not found:** the error on stderr lists the closest symbols, to retry with a qualified name. The other names still run.
+- **Cut off:** if the error or a warning says rust-analyzer had more results than `--symbol-search-limit`, some definitions may be missing, usually for short, common names in dependencies (`min`, `len`). Qualify the name (`core::cmp::min`) rather than trusting "no symbol named".
 
 ## find-definition (`textDocument/definition`)
 

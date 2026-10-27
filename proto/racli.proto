@@ -140,6 +140,9 @@ message SearchRequest {
 // Result of `Racli.Search` wrapping an LSP-shaped workspace symbol payload.
 message SearchResponse {
   LspWorkspaceSymbolResponse workspace_symbol_response = 1;
+  // Whether rust-analyzer had more results than the server's `--symbol-search-limit`, so some
+  // were left out. With `|` alternatives, whether any pattern's were.
+  bool truncated = 2;
 }
 
 // Parameters for `Racli.FindDefinition` (absolute `file_path` resolved on the server).

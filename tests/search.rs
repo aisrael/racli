@@ -298,7 +298,8 @@ async fn grpc_search_pipe_merges_alternative_patterns() {
         .expect("server join");
 }
 
-/// Integration test: the server's symbol search limit reaches rust-analyzer and caps an empty query.
+/// Integration test: the server's symbol search limit caps an empty query and marks it truncated,
+/// while a query with fewer matches than the limit isn't.
 #[tokio::test]
 async fn grpc_search_respects_symbol_search_limit() {
     if std::process::Command::new("rust-analyzer")
@@ -328,16 +329,36 @@ async fn grpc_search_respects_symbol_search_limit() {
 
     wait_until_socket_path_exists(sock.as_path()).await;
 
-    let _resp =
-        search_with_options_until(sock.as_path(), "", SymbolSearchOptions::default(), |p| {
-            let len = payload_len(p);
-            assert!(
-                len <= LIMIT as usize,
-                "expected at most {LIMIT} symbols, got {len}"
-            );
-            len == LIMIT as usize
-        })
-        .await;
+    let resp = search_with_options_until(sock.as_path(), "", SymbolSearchOptions::default(), |p| {
+        let len = payload_len(p);
+        assert!(
+            len <= LIMIT as usize,
+            "expected at most {LIMIT} symbols, got {len}"
+        );
+        len == LIMIT as usize
+    })
+    .await;
+    assert!(
+        resp.truncated,
+        "an empty query has more than {LIMIT} matches"
+    );
+
+    let all_symbols = SymbolSearchOptions {
+        kind: Some(SymbolSearchKind::AllSymbols),
+        scope: None,
+    };
+    let resp = search_with_options_until(
+        sock.as_path(),
+        "split_search_query_into_segments",
+        all_symbols,
+        payload_non_empty,
+    )
+    .await;
+    assert!(payload_len(&payload_of(&resp)) < LIMIT as usize);
+    assert!(
+        !resp.truncated,
+        "fewer matches than the limit aren't truncated"
+    );
 
     let _ = stop_tx.send(());
 

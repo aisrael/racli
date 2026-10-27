@@ -117,11 +117,41 @@ out. They apply to names only, so they're a usage error without a name.
 LSP has nothing to filter by: `workspace/symbol` takes a query, and rust-analyzer's `searchScope`
 extension picks crates, not paths. So racli filters the symbols rust-analyzer returns.
 
-### 9. The client looks names up
+### 9. A search cut off at the limit says so
+
+rust-analyzer returns at most `--symbol-search-limit` symbols per query, 1000 by default, and its
+fuzzy matching doesn't rank exact matches first. So an exact match can fall past the limit and
+never reach racli. In flt, with a limit high enough to cut nothing off:
+
+| Name | Scope | Results | Exact matches | At positions | Past 1000 |
+|---|---|---|---|---|---|
+| `new` | workspace | 73 | 14 | 5–18 | 0 |
+| `new` | with dependencies | 1459 | 738 | 278–1016 | 17 |
+| `len` | with dependencies | 2597 | 106 | 1378–1520 | all 106 |
+
+Within the workspace, every name tried had at most 259 results, so the limit didn't matter. With
+dependencies, it did: at the default limit, a search for `len` returned 1000 results and not one
+was named `len`.
+
+LSP can't say whether a `workspace/symbol` result was cut off, and 1000 results could also be an
+exact fit. So the server asks rust-analyzer for one more result than its limit. If it gets that
+many, it drops the extra one and marks the response `truncated`. The client then says so:
+
+- a name that finds nothing says it may exist after all:
+  `no symbol named min (rust-analyzer had more results than the server's --symbol-search-limit, so
+  some definitions may be missing; qualify the name or raise the limit)`;
+- a name that finds definitions from a cut-off search warns that some may be missing;
+- `racli search` warns on stderr.
+
+A qualified name, such as `core::cmp::min`, narrows rust-analyzer's results before the limit
+applies, so it's the usual way out.
+
+### 10. The client looks names up
 
 The lookup runs in the client, using the existing `Search`, `FindDefinition` and
 `DocumentSymbols` RPCs, and the position RPCs are unchanged. The server only adds LSP's
-`containerName` to its symbol messages, as `container_name`, for decision 4. Since a client from
+`containerName` to its symbol messages, as `container_name`, for decision 4, and `truncated` to
+its search responses, for decision 9. Since a client from
 this change works with an older server, names work there too, except for those qualified by a type
 or trait.
 
@@ -147,6 +177,10 @@ The MCP tools don't change for now. They should later get the same lookup by nam
   workspace symbols don't carry module paths, so it would take an outline request for each
   candidate's file to work out which module contains it. The error from decision 7 already shows
   the definitions to retry with.
+- **Treating exactly `--symbol-search-limit` results as cut off.** Rejected: an exact fit would
+  warn for nothing. Asking for one more result tells the two apart (decision 9).
+- **Raising the default limit.** Rejected: it makes every `racli search` heavier, and only moves
+  the cut-off further out.
 - **A server RPC that looks names up.** Rejected for now: the client can do it with existing RPCs,
   and doing it there leaves the gRPC API almost unchanged.
 
@@ -157,8 +191,12 @@ The MCP tools don't change for now. They should later get the same lookup by nam
   src/sys.rs --line 2 --character 7`, and the old form is a usage error that says so.
 - The four commands take `[NAME]...`, `--path`, `--line`, `--character`, `--kind` and `--glob`.
   A position on its own prints as before.
-- New field: `container_name` on the gRPC `LspSymbolInformation` and `LspWorkspaceSymbol`
-  messages.
+- New fields: `container_name` on the gRPC `LspSymbolInformation` and `LspWorkspaceSymbol`
+  messages, and `truncated` on `SearchResponse`.
+- rust-analyzer is started with `workspace.symbol.search.limit` one higher than
+  `--symbol-search-limit`. racli's own searches still return at most the limit, but an editor's
+  `workspace/symbol` requests under `racli tee` go to rust-analyzer as they are, so they can get
+  one result more.
 - New dependency: the `glob` crate, for `--glob`.
 - When any name is given, JSON output has the grouped shape of decision 5.
 - A lookup can cost several `Search` calls: one for the name, one more for a member qualified by a

@@ -22,6 +22,10 @@ use crate::rust_analyzer::SymbolSearchScope;
 /// How many of the closest symbols a "not found" error lists.
 const MAX_SUGGESTIONS: usize = 10;
 
+/// What a lookup says when rust-analyzer's results were cut to the server's limit.
+const TRUNCATED_NOTE: &str = "rust-analyzer had more results than the server's --symbol-search-limit, \
+     so some definitions may be missing; qualify the name or raise the limit";
+
 /// `--kind` and `--glob`: narrow the definitions found for symbol names.
 #[derive(clap::Args, Debug, Default)]
 pub struct SymbolArgs {
@@ -109,22 +113,32 @@ pub enum ResolveSymbolError {
     #[error(transparent)]
     Search(#[from] ClientSearchError),
     /// No symbol has that name, or none passes `--kind` and `--glob`.
-    #[error("{}", not_found_message(.name, .filtered, .suggestions))]
+    #[error("{}", not_found_message(.name, .filtered, .truncated, .suggestions))]
     NotFound {
         name: String,
         /// Whether symbols with the name exist but `--kind` or `--glob` left them all out.
         filtered: bool,
+        /// Whether any search was cut to the server's limit, so the name may exist after all.
+        truncated: bool,
         /// The closest symbols, to retry with.
         suggestions: Vec<SymbolMatch>,
     },
 }
 
-fn not_found_message(name: &str, filtered: &bool, suggestions: &[SymbolMatch]) -> String {
+fn not_found_message(
+    name: &str,
+    filtered: &bool,
+    truncated: &bool,
+    suggestions: &[SymbolMatch],
+) -> String {
     let mut message = if *filtered {
         format!("no symbol named {name} passes --kind and --glob")
     } else {
         format!("no symbol named {name}")
     };
+    if *truncated {
+        message.push_str(&format!(" ({TRUNCATED_NOTE})"));
+    }
     if !suggestions.is_empty() {
         message.push_str(if *filtered { "; found:" } else { "; closest:" });
         for s in suggestions {
@@ -240,7 +254,10 @@ pub async fn targets(
     for spec in specs {
         match spec {
             TargetSpec::Name(name) => match resolve_symbol(socket_path, &name, &filter).await {
-                Ok(matches) => {
+                Ok((matches, truncated)) => {
+                    if truncated {
+                        result.errors.push(format!("{name}: {TRUNCATED_NOTE}"));
+                    }
                     for m in matches {
                         if !seen.insert((m.uri.clone(), m.range)) {
                             continue;
@@ -397,20 +414,23 @@ impl SymbolFilter<'_> {
 }
 
 /// Finds the definitions named `name`, searching the workspace first and then its dependencies.
+/// Also says whether the search that found them was cut to the server's limit.
 async fn resolve_symbol(
     socket_path: &Path,
     name: &str,
     filter: &SymbolFilter<'_>,
-) -> Result<Vec<SymbolMatch>, ResolveSymbolError> {
+) -> Result<(Vec<SymbolMatch>, bool), ResolveSymbolError> {
     let (container, leaf) = split_qualified(name);
     let mut suggestions = Vec::new();
     let mut unfiltered = Vec::new();
+    let mut any_truncated = false;
     for scope in [
         SymbolSearchScope::Workspace,
         SymbolSearchScope::WorkspaceAndDependencies,
     ] {
         // rust-analyzer resolves a module path such as `raw::mkfifo` itself.
         let results = search(socket_path, name, scope).await?;
+        let mut truncated = results.truncated;
         if suggestions.is_empty() {
             suggestions = all_symbols(results.clone());
         }
@@ -420,6 +440,7 @@ async fn resolve_symbol(
         {
             // It doesn't resolve `Type::member`, so match the container's name instead.
             let leaf_results = search(socket_path, leaf, scope).await?;
+            truncated |= leaf_results.truncated;
             if scope == SymbolSearchScope::Workspace {
                 suggestions = all_symbols(leaf_results.clone());
             }
@@ -428,9 +449,10 @@ async fn resolve_symbol(
                 .filter(|m| m.container_name.as_deref() == Some(last_segment(container)))
                 .collect();
         }
+        any_truncated |= truncated;
         let kept: Vec<SymbolMatch> = found.iter().filter(|m| filter.keeps(m)).cloned().collect();
         if !kept.is_empty() {
-            return Ok(kept);
+            return Ok((kept, truncated));
         }
         if unfiltered.is_empty() {
             unfiltered = found;
@@ -440,6 +462,7 @@ async fn resolve_symbol(
         return Err(ResolveSymbolError::NotFound {
             name: name.to_string(),
             filtered: true,
+            truncated: any_truncated,
             suggestions: unfiltered,
         });
     }
@@ -447,6 +470,7 @@ async fn resolve_symbol(
     Err(ResolveSymbolError::NotFound {
         name: name.to_string(),
         filtered: false,
+        truncated: any_truncated,
         suggestions,
     })
 }
@@ -577,6 +601,7 @@ mod tests {
 
     fn response(items: Vec<LspSymbolInformation>) -> SearchResponse {
         SearchResponse {
+            truncated: false,
             workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
                 payload: Some(Payload::Flat(LspSymbolInformationList { items })),
             }),
@@ -656,11 +681,22 @@ mod tests {
         let e = ResolveSymbolError::NotFound {
             name: "mkfif".into(),
             filtered: false,
+            truncated: false,
             suggestions,
         };
         assert_eq!(
             e.to_string(),
             "no symbol named mkfif; closest:\n  mkfifo [FUNCTION] file:///a.rs 1:4-1:10"
+        );
+        let e = ResolveSymbolError::NotFound {
+            name: "len".into(),
+            filtered: false,
+            truncated: true,
+            suggestions: Vec::new(),
+        };
+        assert_eq!(
+            e.to_string(),
+            format!("no symbol named len ({TRUNCATED_NOTE})")
         );
     }
 
