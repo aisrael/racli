@@ -293,6 +293,21 @@ async fn tee_derives_socket_path_from_cwd() {
             String::from_utf8_lossy(&output.stderr)
         );
 
+        // `racli-tee --check` in the project directory sees the running tee.
+        let output = run_check(env!("CARGO_BIN_EXE_racli-tee"), &[], project.path()).await;
+        let stdout_text = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "racli-tee --check exited with {}; stderr: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            stdout_text.contains(&*sock.to_string_lossy())
+                && stdout_text.contains(env!("CARGO_PKG_VERSION")),
+            "expected socket and version in {stdout_text:?}"
+        );
+
         send(
             &mut stdin,
             json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown"}),
@@ -313,6 +328,41 @@ async fn tee_derives_socket_path_from_cwd() {
     assert!(
         !sock.exists(),
         "derived socket should be removed on shutdown"
+    );
+
+    let output = run_check(env!("CARGO_BIN_EXE_racli"), &["tee"], project.path()).await;
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "racli tee --check should fail once the tee has stopped"
+    );
+}
+
+/// Runs `<bin> <args...> --check` in `dir` with the default (derived) socket settings.
+async fn run_check(bin: &str, args: &[&str], dir: &std::path::Path) -> std::process::Output {
+    tokio::process::Command::new(bin)
+        .args(args)
+        .arg("--check")
+        .env_remove("RACLI_UNIX_SOCKET")
+        .env_remove("RACLI_DERIVE_SOCKET_PATH")
+        .current_dir(dir)
+        .output()
+        .await
+        .expect("run --check")
+}
+
+/// `racli tee --check` exits 1 and names the expected socket when nothing serves the directory.
+#[tokio::test]
+async fn tee_check_fails_when_nothing_is_serving() {
+    let project = tempdir().expect("temp dir");
+    let sock = racli::utils::derived_unix_socket_path(project.path());
+    let output = run_check(env!("CARGO_BIN_EXE_racli"), &["tee"], project.path()).await;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    assert!(output.stdout.is_empty(), "stdout should be empty");
+    assert!(
+        stderr.contains(&*sock.to_string_lossy()),
+        "expected socket path in {stderr:?}"
     );
 }
 

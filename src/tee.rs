@@ -51,6 +51,9 @@ pub struct TeeArgs {
     /// Maximum number of results rust-analyzer returns per `workspace/symbol` query.
     #[arg(long, default_value_t = DEFAULT_SYMBOL_SEARCH_LIMIT, value_parser = clap::value_parser!(u32).range(1..))]
     pub symbol_search_limit: u32,
+    /// Exit 0 if racli is serving this directory's socket, 1 otherwise, without starting a server.
+    #[arg(long)]
+    pub check: bool,
 }
 
 /// Failures running the gRPC server or the stdio LSP proxy.
@@ -136,12 +139,52 @@ pub async fn run_tee(args: TeeArgs) -> Result<(), TeeError> {
 
 /// Runs [`run_tee`] and exits the process, printing the error chain and exiting 1 on failure.
 pub async fn run_tee_and_exit(args: TeeArgs) -> ! {
+    if args.check {
+        check_and_exit().await
+    }
     // A pending tokio stdin read can't be cancelled and would block runtime shutdown, so exit directly.
     if let Err(e) = run_tee(args).await {
         eprintln!("error: {}", crate::utils::error_chain(&e));
         std::process::exit(1);
     }
     std::process::exit(0);
+}
+
+/// Calls `GetVersion` on the socket `racli tee` would bind in the cwd; prints the result and exits 0
+/// if racli is serving it, or prints why not to stderr and exits 1.
+async fn check_and_exit() -> ! {
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            eprintln!("error: cannot read current directory: {e}");
+            std::process::exit(1);
+        }
+    };
+    let socket_path = unix_socket_path_for_dir(&cwd);
+    match crate::client::get_version(&socket_path).await {
+        Ok(resp) => {
+            let lsp = resp
+                .lsp_server_info
+                .filter(|info| !info.name.is_empty() || !info.version.is_empty())
+                .map(|info| format!(" ({} {})", info.name, info.version))
+                .unwrap_or_default();
+            println!(
+                "racli {} is serving {}{lsp}",
+                resp.version,
+                socket_path.display()
+            );
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!(
+                "racli is not serving {} for {}: {}",
+                socket_path.display(),
+                cwd.display(),
+                crate::utils::error_chain(&e)
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Flattens the server task's join result so a panic is reported (and logged) like a server error.

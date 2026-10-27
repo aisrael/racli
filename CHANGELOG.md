@@ -7,6 +7,7 @@ All notable changes to racli are documented in this file. The format is based on
 ### Added
 
 - **`racli-tee` binary**: runs `racli tee` with no subcommand, so editors whose server path takes no arguments (such as VS Code's `rust-analyzer.server.path`) can point at it directly instead of a wrapper script. `cargo install racli` installs it alongside `racli`.
+- **`racli tee --check`** (and `racli-tee --check`): exits 0 if racli is serving the current directory's socket and 1 otherwise, without starting a server, so scripts can check before starting one.
 
 ## [0.2.0] - 2026-09-30
 
