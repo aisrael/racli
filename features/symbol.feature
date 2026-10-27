@@ -130,7 +130,7 @@ Feature: racli position commands by symbol name
       """
     Then it should exit with status code 0
     And the output should contain "Named [INTERFACE]"
-    And the output should contain "fixtures/queue/src/sys.rs:36:16: impl Named for Fifo {"
+    And the output should contain "fixtures/queue/src/sys.rs:37:16: impl Named for Fifo {"
 
   Scenario: call-hierarchy by name shows the caller
     When the following command is run:

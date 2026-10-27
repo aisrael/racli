@@ -65,13 +65,29 @@ impl SourceLines {
 
     /// The 0-based `line` of the file at `uri`, without its line ending.
     fn line(&mut self, uri: &str, line: u32) -> Option<&str> {
+        self.file(uri)?.get(line as usize).map(String::as_str)
+    }
+
+    /// The 0-based lines `start` to `end`, inclusive, of the file at `uri`, or as many of them as
+    /// the file has.
+    pub fn lines(&mut self, uri: &str, start: u32, end: u32) -> Option<&[String]> {
+        let lines = self.file(uri)?;
+        let start = (start as usize).min(lines.len());
+        let end = (end as usize + 1).clamp(start, lines.len());
+        Some(&lines[start..end])
+    }
+
+    /// The lines of the file at `uri`, read on first use.
+    fn file(&mut self, uri: &str) -> Option<&Vec<String>> {
         let path = url::Url::parse(uri).ok()?.to_file_path().ok()?;
-        let lines = self.files.entry(path).or_insert_with_key(|path| {
-            std::fs::read_to_string(path)
-                .ok()
-                .map(|text| text.lines().map(String::from).collect())
-        });
-        lines.as_ref()?.get(line as usize).map(String::as_str)
+        self.files
+            .entry(path)
+            .or_insert_with_key(|path| {
+                std::fs::read_to_string(path)
+                    .ok()
+                    .map(|text| text.lines().map(String::from).collect())
+            })
+            .as_ref()
     }
 }
 

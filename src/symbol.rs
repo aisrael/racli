@@ -379,7 +379,7 @@ async fn symbol_at(
 }
 
 /// The symbol in a file outline whose name is at `range`, searching nested symbols too.
-fn outline_symbol_at<'a>(
+pub(crate) fn outline_symbol_at<'a>(
     symbols: &'a [LspDocumentSymbol],
     range: &LspRange,
 ) -> Option<&'a LspDocumentSymbol> {
@@ -560,7 +560,7 @@ fn symbol_match(
 }
 
 /// A [`RangeJson`] from a protobuf range, or `None` if it lacks a start or an end.
-fn range_json(range: LspRange) -> Option<RangeJson> {
+pub(crate) fn range_json(range: LspRange) -> Option<RangeJson> {
     let position = |p: Option<crate::proto::racli::LspPosition>| {
         p.map(|p| PositionJson {
             line: p.line,
