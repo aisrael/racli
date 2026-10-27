@@ -1,7 +1,7 @@
 # ADR 001: Lookup by Symbol
 
 - **Date:** 2026-10-27
-- **Status:** Proposed.
+- **Status:** Accepted.
 
 ## Context
 
