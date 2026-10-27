@@ -123,7 +123,7 @@ impl Core {
 }
 
 /// Splits `query` on unescaped ASCII `|` into trimmed segments; `\|` produces a literal `|` in the segment.
-fn split_search_query_into_segments(query: &str) -> Vec<String> {
+pub(crate) fn split_search_query_into_segments(query: &str) -> Vec<String> {
     let mut segments: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut chars = query.chars().peekable();
