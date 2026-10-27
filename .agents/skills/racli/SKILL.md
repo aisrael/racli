@@ -33,7 +33,7 @@ For **Rust symbol / identifier search**, do not use `grep`. Use `racli search <Q
 When you know a symbol's name, pass it to `find-definition`, `find-references`, `find-implementations` or `call-hierarchy` instead of `--path <PATH> --line <N> --character <N>`: `racli find-references mkfifo`. Without `--glob`, a name is looked up in the whole workspace. It saves a `racli search` (or a `grep`) to find the position first. Prefer this over a position.
 
 - **Names:** a bare name (`mkfifo`), a module path from the crate root (`sys::mkfifo`, not `raw::mkfifo` for `sys::raw::mkfifo`), or the type or trait that contains a member (`Fifo::name`). Matching is exact. The workspace is searched first, then its dependencies.
-- **Several names:** `racli find-references NativeFn KeywordFn Handler` checks them all in one call.
+- **Several names:** `racli find-references SymbolMatch SymbolFilter Target` checks them all in one call.
 - **Names and a position:** every positional argument is a name; a position always goes in `--path`, `--line` and `--character`. They can be mixed: `racli find-references mkfifo --path src/main.rs --line 85 --character 31`. The position is labelled with its symbol.
 - **Several definitions:** each gets its own result, and one found twice is run once. `--text` prints a line naming each symbol, in the layout of `racli search --text`, with its results indented under it. JSON is an array of `{"symbol": …, "result": …}`. A position on its own prints as before.
 - **Narrowing:** `--kind <KIND>` keeps one kind, as `racli search --text` prints it (`function`, `method`, `struct`, in any case). `--glob <PATTERN>` keeps definitions in files the pattern matches, as a shell glob would (`src/**`, `src/**/tests.rs`); a relative pattern matches under the current directory. Both choose which definitions a name finds, not which results are shown.
@@ -52,7 +52,7 @@ For **go-to-definition**, do not use `grep`. Use `racli find-definition` with th
 
 For **finding usages of a symbol**, do not use `grep`. Use `racli find-references` with the symbol's name, or with a file path and LSP position when you already have one.
 
-- **Invocation:** `racli find-references <NAME>...`, e.g. `racli find-references run_cli_search`, or several at once: `racli find-references NativeFn KeywordFn`.
+- **Invocation:** `racli find-references <NAME>...`, e.g. `racli find-references run_cli_search`, or several at once: `racli find-references SymbolMatch SymbolFilter`.
 - **By position:** `racli find-references --path <PATH> --line <N> --character <N>`, with the same path and position rules as `find-definition`.
 - **Output:** Default is **JSON** (reference locations, each with `uri` and `range`; with names, grouped per symbol). The declaration is always included. Use `--text` for one human-readable line per location.
 

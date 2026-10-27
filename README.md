@@ -110,7 +110,7 @@ Runs LSP [`textDocument/references`](https://microsoft.github.io/language-server
 racli find-references mkfifo
 racli find-references sys::mkfifo            # a module path from the crate root
 racli find-references Fifo::name             # the type or trait that contains it
-racli find-references NativeFn KeywordFn     # several names
+racli find-references SymbolMatch SymbolFilter   # several names
 racli find-definition Fifo --kind struct --glob 'src/**'
 racli find-references mkfifo --path src/main.rs --line 85 --character 31   # names and a position
 ```

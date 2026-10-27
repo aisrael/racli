@@ -9,15 +9,14 @@
 file and an LSP position: `<PATH> --line <N> --character <N>`. Whoever runs them usually starts
 from a name instead, so getting the position costs a `racli search` first, or a `grep`.
 
-Agents feel this most. In a long session on another project, an agent told to prefer racli still
-ran `grep` before most lookups, because one `grep` goes from a name to its uses while racli took
-two or three calls. Finding the uses of `eval_call` meant a `search`, then a `find-references`
-with the position it returned. Checking three names, as in `grep "NativeFn\|KeywordFn\|Handler"`,
-took three times that.
+Agents feel this most. An agent told to prefer racli still ran `grep` before most lookups,
+because one `grep` goes from a name to its uses while racli took two or three calls. Finding a
+function's uses meant a `search`, then a `find-references` with the position it returned.
+Checking three names at once, which one `grep` with alternatives does, took three times that.
 
 `racli search` doesn't close the gap on its own:
 
-- it matches substrings, so `search eval_call` also returns `test_eval_binary_pipe_into_call`;
+- it matches fuzzily, so `search new` also returns `DidChangeWatchedFiles`;
 - rust-analyzer resolves a module path written from the crate root, such as `sys::mkfifo`, but
   not a type's member, such as `Fifo::name`.
 
@@ -27,7 +26,7 @@ took three times that.
 
 ```sh
 racli find-references mkfifo
-racli find-references NativeFn KeywordFn Handler
+racli find-references SymbolMatch SymbolFilter Target
 racli call-hierarchy sys::mkfifo --direction incoming
 ```
 
