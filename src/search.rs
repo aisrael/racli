@@ -12,6 +12,7 @@ use crate::proto::racli::lsp_workspace_symbol_response::Payload;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
+use crate::server::split_search_query_into_segments;
 use crate::text_position::display_path;
 use crate::text_position::position_text;
 use crate::utils::client_unix_socket_path;
@@ -48,7 +49,11 @@ pub struct SearchArgs {
     /// Crates to search (default: rust-analyzer's `workspace`); `workspace-and-dependencies` adds dependency crates.
     #[arg(long, value_enum)]
     pub scope: Option<SymbolSearchScope>,
-    /// Workspace symbol query: unescaped `|` separates alternative substring patterns (OR); use `\|` for a literal pipe (not full regex syntax).
+    /// Keep only symbols named exactly as a pattern, e.g. `mkfifo` but not `Mkfifo` or `mkfifo_at`. A
+    /// pattern's module path (`sys::mkfifo`) is still resolved by rust-analyzer.
+    #[arg(long)]
+    pub exact: bool,
+    /// Workspace symbol query: unescaped `|` separates alternative fuzzy patterns (OR); use `\|` for a literal pipe (not full regex syntax).
     pub query: String,
 }
 
@@ -95,7 +100,10 @@ pub async fn run_cli_search(args: SearchArgs) {
     )
     .await
     {
-        Ok(Ok(resp)) => {
+        Ok(Ok(mut resp)) => {
+            if args.exact {
+                keep_exact_names(&mut resp, &args.query);
+            }
             if resp.truncated {
                 eprintln!(
                     "racli search: rust-analyzer had more results than the server's \
@@ -150,6 +158,27 @@ fn print_search_response(resp: crate::proto::racli::SearchResponse) {
                 );
             }
         }
+    }
+}
+
+/// Keeps only the symbols in `resp` named exactly as one of the query's `|` patterns, comparing a
+/// qualified pattern such as `sys::mkfifo` by its last segment.
+fn keep_exact_names(resp: &mut crate::proto::racli::SearchResponse, query: &str) {
+    let segments = split_search_query_into_segments(query);
+    let names: Vec<&str> = segments
+        .iter()
+        .map(|s| s.rsplit("::").next().unwrap_or(s))
+        .collect();
+    let Some(payload) = resp
+        .workspace_symbol_response
+        .as_mut()
+        .and_then(|ws| ws.payload.as_mut())
+    else {
+        return;
+    };
+    match payload {
+        Payload::Flat(list) => list.items.retain(|it| names.contains(&it.name.as_str())),
+        Payload::Nested(list) => list.items.retain(|it| names.contains(&it.name.as_str())),
     }
 }
 
@@ -311,6 +340,7 @@ mod search_output_tests {
     use super::SearchArgs;
     use super::SearchPrintKind;
     use super::csv_escape_field;
+    use super::keep_exact_names;
     use super::search_response_to_json_rows;
     use super::write_search_response_csv;
     use crate::proto::racli::LspPosition;
@@ -459,5 +489,40 @@ mod search_output_tests {
     fn search_args_text_flag_selects_plain_text() {
         let args = SearchArgs::try_parse_from(["racli", "--text", "q"]).expect("parse");
         assert_eq!(args.print_kind(), SearchPrintKind::Text);
+    }
+
+    #[test]
+    fn keep_exact_names_drops_fuzzy_matches() {
+        let symbol = |name: &str| LspSymbolInformation {
+            name: name.into(),
+            kind: "FUNCTION".into(),
+            uri: "file:///a.rs".into(),
+            container_name: None,
+            range: None,
+        };
+        let mut resp = SearchResponse {
+            truncated: false,
+            workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
+                payload: Some(Payload::Flat(LspSymbolInformationList {
+                    items: ["mkfifo", "mkfifo_at", "Mkfifo", "unlink", "Named"]
+                        .into_iter()
+                        .map(symbol)
+                        .collect(),
+                })),
+            }),
+        };
+        keep_exact_names(&mut resp, "mkfifo|sys::unlink");
+        let Some(Payload::Flat(list)) = resp.workspace_symbol_response.and_then(|ws| ws.payload)
+        else {
+            panic!("expected a flat payload");
+        };
+        let names: Vec<&str> = list.items.iter().map(|it| it.name.as_str()).collect();
+        assert_eq!(names, ["mkfifo", "unlink"]);
+    }
+
+    #[test]
+    fn search_args_exact_flag_parses() {
+        let args = SearchArgs::try_parse_from(["racli", "--exact", "q"]).expect("parse");
+        assert!(args.exact);
     }
 }

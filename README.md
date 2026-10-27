@@ -93,6 +93,8 @@ Runs LSP [`workspace/symbol`](https://rust-analyzer.github.io/book/features.html
 
 Separate alternative patterns with a single unescaped `|` (similar to `grep -E`), for example `racli search 'Foo|Bar'`. Each pattern is still a plain substring for rust-analyzer, not a full regular expression. A literal `|` in a pattern must be written as `\|` (a backslash before the pipe). Example: `racli search 'a\|b|c'` searches for the substring `a|b` and for `c`, then merges and dedupes the combined results.
 
+rust-analyzer matches each pattern fuzzily, so `racli search name` also returns `Named`. Pass `--exact` to keep only symbols named exactly as a pattern: `racli search 'name|unlink' --kind all-symbols --exact`. A qualified pattern such as `sys::mkfifo` is compared by its last segment, after rust-analyzer resolves the module path.
+
 By default rust-analyzer returns only types (modules, structs, enums, traits, type aliases) from workspace crates. `--kind all-symbols` adds functions, methods, constants, statics, and fields, and `--scope workspace-and-dependencies` adds dependency crates and the standard library. An empty query (`racli search ''`) lists every matching symbol up to the server's `--symbol-search-limit`. The MCP `search` tool takes the same options as `kind` (`only_types` / `all_symbols`) and `scope` (`workspace` / `workspace_and_dependencies`).
 
 ### `racli find-definition --path <PATH> --line <N> --character <N>`
