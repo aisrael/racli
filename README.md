@@ -55,6 +55,8 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 
 `racli server` binds the project's gRPC Unix socket (see [Sockets](#sockets)) and, when `rust-analyzer` is available on your `PATH`, spawns it as a child in the current working directory and completes the LSP `initialize` handshake described above.
 
+If you start `racli server`, `racli tee` or `racli-tee` from a terminal in a directory that racli is already serving, it says so and exits 1 instead of starting a second rust-analyzer. When stdin isn't a terminal, the new instance takes over the socket. That's what happens when an editor restarts its server, so restarts aren't blocked by an old instance that hasn't exited yet.
+
 `--symbol-search-limit <N>` (also accepted by `racli mcp`) caps how many results rust-analyzer returns per `workspace/symbol` query (default `1000`; rust-analyzer's own default is `128`). It is sent to rust-analyzer as `workspace.symbol.search.limit` during `initialize`, and applies to each `|`-separated pattern separately.
 
 ### `racli tee`

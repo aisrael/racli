@@ -1,5 +1,6 @@
 //! `racli tee`: serves gRPC like `racli server` and proxies an editor's stdio LSP session through that socket.
 
+use std::io::IsTerminal;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -19,6 +20,7 @@ use tonic::Status;
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 
+use crate::client::ClientVersionError;
 use crate::grpc_server::GrpcServerError;
 use crate::grpc_server::install_unix_shutdown_signals;
 use crate::grpc_server::run_grpc_unix_socket_until_shutdown;
@@ -142,6 +144,9 @@ pub async fn run_tee_and_exit(args: TeeArgs) -> ! {
     if args.check {
         check_and_exit().await
     }
+    if let Ok(cwd) = std::env::current_dir() {
+        exit_if_already_serving(&unix_socket_path_for_dir(&cwd)).await;
+    }
     // A pending tokio stdin read can't be cancelled and would block runtime shutdown, so exit directly.
     if let Err(e) = run_tee(args).await {
         eprintln!("error: {}", crate::utils::error_chain(&e));
@@ -161,18 +166,9 @@ async fn check_and_exit() -> ! {
         }
     };
     let socket_path = unix_socket_path_for_dir(&cwd);
-    match crate::client::get_version(&socket_path).await {
-        Ok(resp) => {
-            let lsp = resp
-                .lsp_server_info
-                .filter(|info| !info.name.is_empty() || !info.version.is_empty())
-                .map(|info| format!(" ({} {})", info.name, info.version))
-                .unwrap_or_default();
-            println!(
-                "racli {} is serving {}{lsp}",
-                resp.version,
-                socket_path.display()
-            );
+    match describe_server(&socket_path).await {
+        Ok(serving) => {
+            println!("{serving}");
             std::process::exit(0);
         }
         Err(e) => {
@@ -185,6 +181,33 @@ async fn check_and_exit() -> ! {
             std::process::exit(1);
         }
     }
+}
+
+/// Exits 1 with a message if stdin is a terminal and racli already serves `socket_path`, so a second
+/// server isn't started by hand; editors launch servers with piped stdin and still take over on restart.
+pub(crate) async fn exit_if_already_serving(socket_path: &Path) {
+    if !std::io::stdin().is_terminal() {
+        return;
+    }
+    if let Ok(serving) = describe_server(socket_path).await {
+        eprintln!("{serving}; not starting another one");
+        std::process::exit(1);
+    }
+}
+
+/// Asks the racli on `socket_path` for its version, as `racli <version> is serving <socket> (<rust-analyzer>)`.
+async fn describe_server(socket_path: &Path) -> Result<String, ClientVersionError> {
+    let resp = crate::client::get_version(socket_path).await?;
+    let lsp = resp
+        .lsp_server_info
+        .filter(|info| !info.name.is_empty() || !info.version.is_empty())
+        .map(|info| format!(" ({} {})", info.name, info.version))
+        .unwrap_or_default();
+    Ok(format!(
+        "racli {} is serving {}{lsp}",
+        resp.version,
+        socket_path.display()
+    ))
 }
 
 /// Flattens the server task's join result so a panic is reported (and logged) like a server error.

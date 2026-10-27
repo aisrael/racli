@@ -459,3 +459,124 @@ async fn tee_relative_log_file_is_based_on_cwd() {
         "log: {contents}"
     );
 }
+
+/// Runs `bin args...` in `dir` with a pseudo-terminal on stdin (via `script`), as if typed in a shell;
+/// the output combines the child's stdout and stderr.
+async fn run_in_terminal(bin: &str, args: &[&str], dir: &std::path::Path) -> std::process::Output {
+    let mut cmd = tokio::process::Command::new("script");
+    if cfg!(target_os = "macos") {
+        cmd.args(["-q", "/dev/null", bin]).args(args);
+    } else {
+        // util-linux `script`: `-e` returns the child's exit status, `-c` takes one command line.
+        let line = format!("'{bin}' {}", args.join(" "));
+        cmd.args(["-qec", &line, "/dev/null"]);
+    }
+    let output = cmd
+        .env_remove("RACLI_UNIX_SOCKET")
+        .env_remove("RACLI_DERIVE_SOCKET_PATH")
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .output();
+    tokio::time::timeout(Duration::from_secs(30), output)
+        .await
+        .expect("command under `script` should finish in time")
+        .expect("run script")
+}
+
+/// From a terminal, `racli tee`, `racli-tee` and `racli server` refuse to start in a directory racli
+/// already serves; a piped `racli tee` (an editor restarting its server) still starts and takes over.
+#[tokio::test]
+async fn second_instance_refused_from_terminal_but_not_from_editor() {
+    if !rust_analyzer_available() {
+        return;
+    }
+
+    let project = tempdir().expect("temp dir");
+    let sock = racli::utils::derived_unix_socket_path(project.path());
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn({
+        let sock = sock.clone();
+        async move {
+            racli::grpc_server::run_grpc_unix_socket_until_shutdown(
+                &sock,
+                racli::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT,
+                async {
+                    let _ = stop_rx.await;
+                },
+            )
+            .await
+        }
+    });
+    let serving = async {
+        while get_version(&sock).await.is_err() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(120), serving)
+        .await
+        .expect("in-process server should answer");
+
+    for (bin, args) in [
+        (env!("CARGO_BIN_EXE_racli"), &["tee"][..]),
+        (env!("CARGO_BIN_EXE_racli-tee"), &[][..]),
+        (env!("CARGO_BIN_EXE_racli"), &["server"][..]),
+    ] {
+        let output = run_in_terminal(bin, args, project.path()).await;
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{bin} {args:?} should refuse; output: {text}"
+        );
+        assert!(
+            text.contains(&format!("is serving {}", sock.display()))
+                && text.contains("not starting another one"),
+            "{bin} {args:?} should say racli is already serving; output: {text}"
+        );
+    }
+
+    // An editor launches `racli tee` with piped stdin, so it starts as before.
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_racli"))
+        .arg("tee")
+        .env_remove("RACLI_UNIX_SOCKET")
+        .env_remove("RACLI_DERIVE_SOCKET_PATH")
+        .current_dir(project.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn racli tee");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let session = async {
+        send(
+            &mut stdin,
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}),
+        )
+        .await;
+        recv_response(&mut stdout, 1).await;
+        send(
+            &mut stdin,
+            json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown"}),
+        )
+        .await;
+        recv_response(&mut stdout, 2).await;
+        send(&mut stdin, json!({"jsonrpc": "2.0", "method": "exit"})).await;
+    };
+    tokio::time::timeout(Duration::from_secs(120), session)
+        .await
+        .expect("piped racli tee should serve its LSP session");
+    let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
+        .await
+        .expect("racli tee should exit after `exit`")
+        .unwrap();
+    assert!(status.success(), "piped racli tee exited with {status}");
+
+    let _ = stop_tx.send(());
+    tokio::time::timeout(Duration::from_secs(30), server)
+        .await
+        .expect("in-process server should stop")
+        .expect("server join")
+        .expect("in-process server result");
+}
