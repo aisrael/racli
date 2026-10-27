@@ -46,7 +46,7 @@ racli find-references --path src/search.rs --line <LINE> --character <COL> --tex
 
 ## Commands
 
-- **`search <QUERY>`**: fuzzy symbol search. `|` separates alternatives (`'Foo|Bar'`; `\|` is a literal pipe). Returns only types unless `--kind all-symbols`, so use that for functions, methods, constants and fields. `--scope workspace-and-dependencies` adds dependencies and std. `--text` prints `name [KIND] path:line:col`.
+- **`search <QUERY>`**: fuzzy symbol search; `--exact` keeps only exact names. `|` separates alternatives (`'Foo|Bar'`; `\|` is a literal pipe). Returns only types unless `--kind all-symbols`, so use that for functions, methods, constants and fields. `--scope workspace-and-dependencies` adds dependencies and std. `--text` prints `name [KIND] path:line:col`.
 - **`find-definition`**: where a symbol is defined.
 - **`find-references`**: every use, including the declaration.
 - **`find-implementations`**: a trait's or type's `impl` blocks, or a trait method's overrides. Nothing from inside an `impl`.
