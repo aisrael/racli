@@ -27,7 +27,7 @@ struct ImplementationQuery {
 const QUERIES: &[ImplementationQuery] = &[
     ImplementationQuery {
         file: "src/call_hierarchy.rs",
-        line: 81,
+        line: 83,
         character: 10,
         symbol: "CallHierarchyBackend",
     },
@@ -90,10 +90,11 @@ fn racli_find_implementations_cli(
         .arg("find-implementations")
         .arg("--path")
         .arg(path)
+        // The CLI takes 1-based positions; `line` and `character` are LSP's 0-based ones.
         .arg("--line")
-        .arg(line.to_string())
+        .arg((line + 1).to_string())
         .arg("--character")
-        .arg(character.to_string())
+        .arg((character + 1).to_string())
         .arg("--text")
         .env("RACLI_UNIX_SOCKET", socket)
         .stdout(Stdio::null())
@@ -180,7 +181,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::find_implementations(sock, &call_hierarchy_rs, 81, 10),
+                        racli::client::find_implementations(sock, &call_hierarchy_rs, 83, 10),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.locations.is_empty()

@@ -12,6 +12,8 @@ use crate::proto::racli::lsp_workspace_symbol_response::Payload;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
+use crate::text_position::display_path;
+use crate::text_position::position_text;
 use crate::utils::client_unix_socket_path;
 
 /// How `racli search` prints results (default is JSON).
@@ -115,7 +117,7 @@ pub async fn run_cli_search(args: SearchArgs) {
     }
 }
 
-/// Prints a [`crate::proto::racli::SearchResponse`] as human-readable lines.
+/// Prints a [`crate::proto::racli::SearchResponse`] as human-readable lines: `name [KIND] path:line:col`.
 fn print_search_response(resp: crate::proto::racli::SearchResponse) {
     let Some(ws) = resp.workspace_symbol_response else {
         println!("(no workspace symbol response)");
@@ -129,45 +131,35 @@ fn print_search_response(resp: crate::proto::racli::SearchResponse) {
         Payload::Flat(list) => {
             println!("flat: {} symbol(s)", list.items.len());
             for it in list.items {
-                let range = it
-                    .range
-                    .as_ref()
-                    .map(lsp_range_line)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| format!(" {s}"))
-                    .unwrap_or_default();
-                println!("{} [{}] {}{}", it.name, it.kind, it.uri, range);
+                println!(
+                    "{} [{}] {}",
+                    it.name,
+                    it.kind,
+                    symbol_location_text(&it.uri, it.range.as_ref())
+                );
             }
         }
         Payload::Nested(list) => {
             println!("nested: {} symbol(s)", list.items.len());
             for it in list.items {
-                let range = it
-                    .range
-                    .as_ref()
-                    .map(lsp_range_line)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| format!(" {s}"))
-                    .unwrap_or_default();
-                println!("{} [{}] {}{}", it.name, it.kind, it.uri, range);
+                println!(
+                    "{} [{}] {}",
+                    it.name,
+                    it.kind,
+                    symbol_location_text(&it.uri, it.range.as_ref())
+                );
             }
         }
     }
 }
 
-/// Formats an LSP range as `startLine:startChar-endLine:endChar` for plain-text output.
-fn lsp_range_line(r: &crate::proto::racli::LspRange) -> String {
-    let (sl, sc) = r
-        .start
-        .as_ref()
-        .map(|p| (p.line, p.character))
-        .unwrap_or((0, 0));
-    let (el, ec) = r
-        .end
-        .as_ref()
-        .map(|p| (p.line, p.character))
-        .unwrap_or((0, 0));
-    format!("{sl}:{sc}-{el}:{ec}")
+/// A symbol's location for plain-text output: `path:line:col` with 1-based line and column, or
+/// just the path when it has no range.
+fn symbol_location_text(uri: &str, range: Option<&crate::proto::racli::LspRange>) -> String {
+    match range.and_then(|r| r.start.as_ref()) {
+        Some(start) => position_text(uri, start.line, start.character),
+        None => display_path(uri),
+    }
 }
 
 /// Single symbol row emitted in JSON search output (merged from flat or nested workspace symbol payloads).

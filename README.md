@@ -52,6 +52,7 @@ Stop the server with Ctrl+C or SIGTERM to trigger LSP `shutdown`/`exit` and clea
 A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-architecture.md). Design decisions are recorded as ADRs in [docs/adrs](docs/adrs/):
 
 - [ADR 001: Lookup by Symbol](docs/adrs/001-lookup-by-symbol.md)
+- [ADR 002: 1-Based Positions and Grep-Style Text Output](docs/adrs/002-one-based-positions-and-text-output.md)
 
 ### `racli server`
 
@@ -96,11 +97,11 @@ By default rust-analyzer returns only types (modules, structs, enums, traits, ty
 
 ### `racli find-definition --path <PATH> --line <N> --character <N>`
 
-Runs LSP [`textDocument/definition`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_definition): the client calls gRPC `FindDefinition` with an absolute filesystem path (after canonicalizing `PATH` on the client) plus a **0-based** line and **0-based** UTF-16 character offset on that line, matching LSP `Position`. The server resolves the path again, builds a `file://` URI, and returns a list of definition sites (scalar, array, and link-shaped LSP results are flattened to `uri` + `range`). Default output is **JSON**; pass `--text` for one human-readable line per location. Use the same workspace and socket rules as `racli search`; rust-analyzer must have indexed the crate (if the server just started, wait until analysis has caught up—for example until `racli search` returns symbols—before relying on definitions).
+Runs LSP [`textDocument/definition`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_definition): the client calls gRPC `FindDefinition` with an absolute filesystem path (after canonicalizing `PATH` on the client) plus the position from `--line` and `--character`. Both are **1-based**, as in grep, rustc and editors, and the column counts UTF-16 units as LSP does; the client subtracts 1 from each to get LSP's 0-based `Position`. The server resolves the path again, builds a `file://` URI, and returns a list of definition sites (scalar, array, and link-shaped LSP results are flattened to `uri` + `range`). Default output is **JSON**, with LSP's absolute URIs and 0-based ranges. Pass `--text` for grep-style lines: `path:line:col: source line`, with the path relative to the current directory (absolute outside it, e.g. for dependency sources) and a 1-based line and column, so a position printed by `--text` can be passed back to `--line` and `--character`. Use the same workspace and socket rules as `racli search`; rust-analyzer must have indexed the crate (if the server just started, wait until analysis has caught up—for example until `racli search` returns symbols—before relying on definitions).
 
 ### `racli find-references --path <PATH> --line <N> --character <N>`
 
-Runs LSP [`textDocument/references`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_references): the client calls gRPC `FindReferences` with an absolute filesystem path (after canonicalizing `PATH` on the client) plus a **0-based** line and **0-based** UTF-16 character offset on that line, matching LSP `Position`. The declaration is included in the results. The server resolves the path again, builds a `file://` URI, and returns a list of reference locations (`uri` + `range`). Default output is **JSON**; pass `--text` for one human-readable line per location. Use the same workspace and socket rules as `racli search` and `racli find-definition`.
+Runs LSP [`textDocument/references`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_references): the client calls gRPC `FindReferences` with an absolute filesystem path (after canonicalizing `PATH` on the client) plus the position from `--line` and `--character`. Both are **1-based**, as in grep, rustc and editors, and the column counts UTF-16 units as LSP does; the client subtracts 1 from each to get LSP's 0-based `Position`. The declaration is included in the results. The server resolves the path again, builds a `file://` URI, and returns a list of reference locations (`uri` + `range`). Default output is **JSON**; pass `--text` for grep-style `path:line:col: source line` lines, as for `find-definition`. Use the same workspace and socket rules as `racli search` and `racli find-definition`.
 
 ### Symbol names
 
@@ -112,7 +113,7 @@ racli find-references sys::mkfifo            # a module path from the crate root
 racli find-references Fifo::name             # the type or trait that contains it
 racli find-references SymbolMatch SymbolFilter   # several names
 racli find-definition Fifo --kind struct --glob 'src/**'
-racli find-references mkfifo --path src/main.rs --line 85 --character 31   # names and a position
+racli find-references mkfifo --path src/main.rs --line 86 --character 32   # names and a position
 ```
 
 Every positional argument is a name and must be a Rust path (`mkfifo`, `sys::mkfifo`, `Fifo::name`, `r#type`). Without `--glob`, a name is looked up in the whole workspace. The client finds each name's definitions with `workspace/symbol` over all symbol kinds, keeps the ones named exactly as given, and runs the command from each one's position. rust-analyzer resolves a module path itself; for `Type::member`, the client matches the member's LSP `containerName` instead. It searches the workspace first, then its dependencies.

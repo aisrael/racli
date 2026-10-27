@@ -72,10 +72,11 @@ fn racli_call_hierarchy_cli(racli: &Path, socket: &Path, path: &Path, line: u32,
         .arg("call-hierarchy")
         .arg("--path")
         .arg(path)
+        // The CLI takes 1-based positions; `line` and `character` are LSP's 0-based ones.
         .arg("--line")
-        .arg(line.to_string())
+        .arg((line + 1).to_string())
         .arg("--character")
-        .arg(character.to_string())
+        .arg((character + 1).to_string())
         .arg("--direction")
         .arg("incoming")
         .arg("--text")
