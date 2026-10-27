@@ -71,6 +71,8 @@ Editors that take a server path with no arguments (for example VS Code's `rust-a
 "rust-analyzer.server.path": "~/.cargo/bin/racli-tee"
 ```
 
+To check whether racli is serving a project, run `racli tee --check` (or `racli-tee --check`) in the project root. It asks the server on that directory's socket for its version without starting anything. If a server answers, it prints the version and socket and exits 0. Otherwise it says why on stderr and exits 1. Unlike client commands, it doesn't look for a server in parent directories.
+
 Limitations:
 - The editor's `initialize` is answered with racli's own `InitializeResult`, and the editor's capabilities and `initializationOptions` are ignored.
 - Requests are handled one at a time, and `$/cancelRequest` is ignored.
