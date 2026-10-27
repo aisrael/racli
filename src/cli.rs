@@ -93,11 +93,9 @@ pub async fn run() -> Result<(), RunError> {
         Command::Server(opts) => {
             let cwd =
                 std::env::current_dir().map_err(|source| GrpcServerError::CurrentDir { source })?;
-            run_grpc_unix_socket_interactive(
-                unix_socket_path_for_dir(&cwd),
-                opts.symbol_search_limit,
-            )
-            .await?;
+            let socket_path = unix_socket_path_for_dir(&cwd);
+            tee::exit_if_already_serving(&socket_path).await;
+            run_grpc_unix_socket_interactive(socket_path, opts.symbol_search_limit).await?;
         }
         Command::Mcp(opts) => {
             mcp::run_stdio(opts.symbol_search_limit).await?;
