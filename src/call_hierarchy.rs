@@ -48,15 +48,18 @@ pub enum Direction {
 /// depth-bounded walk of `callHierarchy/incomingCalls`/`outgoingCalls`).
 #[derive(Parser)]
 pub struct CallHierarchyArgs {
-    /// Symbol names to look up (e.g. `mkfifo`, `sys::mkfifo`, `Fifo::name`), and/or one Rust
-    /// source file for `--line` and `--character`. An argument that isn't a Rust name is a file.
-    #[arg(required = true, value_name = "NAME|PATH")]
-    pub targets: Vec<String>,
-    /// 0-based line of the position in the file (LSP `Position.line`).
-    #[arg(long, requires = "character")]
+    /// Symbol names to look up, e.g. `mkfifo`, `sys::mkfifo` or `Fifo::name`.
+    #[arg(value_name = "NAME", required_unless_present = "path")]
+    pub names: Vec<String>,
+    /// Rust source file of a position to run from, with `--line` and `--character` (absolute or
+    /// relative to the current directory).
+    #[arg(long, value_name = "FILE", requires_all = ["line", "character"])]
+    pub path: Option<PathBuf>,
+    /// 0-based line of the position in `--path` (LSP `Position.line`).
+    #[arg(long)]
     pub line: Option<u32>,
     /// 0-based UTF-16 character offset on the line (LSP `Position.character`).
-    #[arg(long, requires = "line")]
+    #[arg(long)]
     pub character: Option<u32>,
     #[command(flatten)]
     pub symbol: SymbolArgs,
@@ -430,13 +433,19 @@ pub struct CallHierarchyRequestJson {
 }
 
 /// Runs the call-hierarchy walk over a Unix socket from each definition the symbol names find and
-/// from the position, if given, and prints the result as JSON or `--text`.
+/// from the `--path` position, if given, and prints the result as JSON or `--text`.
 pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
 
-    let specs = symbol::classify(&args.targets, args.line, args.character, &args.symbol)
-        .unwrap_or_else(|e| symbol::exit_with_usage_error(&e));
+    let specs = symbol::classify(
+        &args.names,
+        args.path.as_deref(),
+        args.line,
+        args.character,
+        &args.symbol,
+    )
+    .unwrap_or_else(|e| symbol::exit_with_usage_error(&e));
     let targets = match tokio::time::timeout(
         Duration::from_secs(60),
         symbol::targets(&sock, &args.symbol, specs),

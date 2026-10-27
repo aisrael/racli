@@ -6,11 +6,15 @@ All notable changes to racli are documented in this file. The format is based on
 
 ### Added
 
-- **Symbol names on the position commands**: `find-definition`, `find-references`, `find-implementations` and `call-hierarchy` take symbol names as well as, or instead of, a file position, e.g. `racli find-references mkfifo` or `racli find-references NativeFn KeywordFn`. An argument that's a Rust name is a symbol; anything else is the file for `--line` and `--character`, which are now optional. A name can be qualified by a module path from the crate root (`sys::mkfifo`) or by the type or trait that contains it (`Fifo::name`). Each definition gets its own result, and an unknown name lists the closest symbols. `--kind` and `--in <PATH>` narrow the definitions. When a name is given, JSON output is an array of `{"symbol": …, "result": …}`; a position on its own prints as before. Symbols are looked up in the workspace first, then in its dependencies. See [ADR 001](docs/adrs/001-lookup-by-symbol.md).
+- **Symbol names on the position commands**: `find-definition`, `find-references`, `find-implementations` and `call-hierarchy` take symbol names as positional arguments, as well as, or instead of, a position, e.g. `racli find-references mkfifo` or `racli find-references NativeFn KeywordFn`. A position is now given with `--path <PATH> --line <N> --character <N>`. A name can be qualified by a module path from the crate root (`sys::mkfifo`) or by the type or trait that contains it (`Fifo::name`). Each definition gets its own result, and an unknown name lists the closest symbols. `--kind` and `--glob <PATTERN>` narrow the definitions names find. When a name is given, JSON output is an array of `{"symbol": …, "result": …}`; a position on its own prints as before. Symbols are looked up in the workspace first, then in its dependencies. See [ADR 001](docs/adrs/001-lookup-by-symbol.md).
 - **`container_name`** on the gRPC `LspSymbolInformation` and `LspWorkspaceSymbol` messages: LSP's `containerName`, e.g. the type of a method.
 - **`racli-tee` binary**: runs `racli tee` with no subcommand, so editors whose server path takes no arguments (such as VS Code's `rust-analyzer.server.path`) can point at it directly instead of a wrapper script. `cargo install racli` installs it alongside `racli`.
 - **`racli tee --check`** (and `racli-tee --check`): exits 0 if racli is serving the current directory's socket and 1 otherwise, without starting a server, so scripts can check before starting one.
 - **No accidental second server**: `racli server`, `racli tee` and `racli-tee` started from a terminal in a directory racli already serves print that it's already serving and exit 1 instead of starting another rust-analyzer. Editors, which pipe stdin, still take over the socket on restart.
+
+### Breaking changes
+
+- **The position commands take the file with `--path`.** `racli find-references src/sys.rs --line 2 --character 7` is now `racli find-references --path src/sys.rs --line 2 --character 7`, and the same goes for `find-definition`, `find-implementations` and `call-hierarchy`. A positional argument is always a symbol name, so the old form is a usage error that points to `--path`.
 
 ## [0.2.0] - 2026-09-30
 

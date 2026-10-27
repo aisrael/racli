@@ -93,6 +93,7 @@ fn grep_definition_approx(root: &Path, symbol: &str) {
 fn racli_find_definition_cli(racli: &Path, socket: &Path, path: &Path, line: u32, character: u32) {
     let status = Command::new(racli)
         .arg("find-definition")
+        .arg("--path")
         .arg(path)
         .arg("--line")
         .arg(line.to_string())

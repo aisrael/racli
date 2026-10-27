@@ -22,16 +22,30 @@ use crate::rust_analyzer::SymbolSearchScope;
 /// How many of the closest symbols a "not found" error lists.
 const MAX_SUGGESTIONS: usize = 10;
 
-/// `--kind` and `--in`: narrow the definitions found for symbol names.
+/// `--kind` and `--glob`: narrow the definitions found for symbol names.
 #[derive(clap::Args, Debug, Default)]
 pub struct SymbolArgs {
     /// Only use definitions of this kind, as `racli search --text` prints it (e.g. `function`, `method`, `struct`).
     #[arg(long, value_name = "KIND")]
     pub kind: Option<String>,
-    /// Only use definitions under this file or directory.
-    #[arg(long = "in", value_name = "PATH")]
-    pub within: Option<PathBuf>,
+    /// Only use definitions in files that match this glob, e.g. `src/**/*.rs`. A relative pattern
+    /// matches files under the current directory.
+    #[arg(long, value_name = "PATTERN", value_parser = parse_glob)]
+    pub glob: Option<glob::Pattern>,
 }
+
+/// Parses `--glob`, so an invalid pattern is a usage error.
+fn parse_glob(pattern: &str) -> Result<glob::Pattern, glob::PatternError> {
+    glob::Pattern::new(pattern)
+}
+
+/// How `--glob` matches, as in a shell: `*` and `?` stay within one path component, and `**`
+/// spans several.
+const GLOB_OPTIONS: glob::MatchOptions = glob::MatchOptions {
+    case_sensitive: true,
+    require_literal_separator: true,
+    require_literal_leading_dot: false,
+};
 
 /// A definition found by name: the symbol, and the file and position to run a command from.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -94,11 +108,11 @@ pub enum ResolveSymbolError {
     /// The symbol search RPC failed.
     #[error(transparent)]
     Search(#[from] ClientSearchError),
-    /// No symbol has that name, or none passes `--kind` and `--in`.
+    /// No symbol has that name, or none passes `--kind` and `--glob`.
     #[error("{}", not_found_message(.name, .filtered, .suggestions))]
     NotFound {
         name: String,
-        /// Whether symbols with the name exist but `--kind` or `--in` left them all out.
+        /// Whether symbols with the name exist but `--kind` or `--glob` left them all out.
         filtered: bool,
         /// The closest symbols, to retry with.
         suggestions: Vec<SymbolMatch>,
@@ -107,7 +121,7 @@ pub enum ResolveSymbolError {
 
 fn not_found_message(name: &str, filtered: &bool, suggestions: &[SymbolMatch]) -> String {
     let mut message = if *filtered {
-        format!("no symbol named {name} passes --kind and --in")
+        format!("no symbol named {name} passes --kind and --glob")
     } else {
         format!("no symbol named {name}")
     };
@@ -121,12 +135,12 @@ fn not_found_message(name: &str, filtered: &bool, suggestions: &[SymbolMatch]) -
     message
 }
 
-/// What one positional argument asks for: a symbol name, or the file of a position.
+/// What a position command runs from: a symbol name, or a position in a file.
 #[derive(Debug, PartialEq)]
 pub enum TargetSpec {
     /// A symbol name, e.g. `mkfifo`, `sys::mkfifo` or `Fifo::name`.
     Name(String),
-    /// A file, with the `--line` and `--character` given for it.
+    /// The `--path`, `--line` and `--character` of a position.
     Position {
         path: PathBuf,
         line: u32,
@@ -134,44 +148,35 @@ pub enum TargetSpec {
     },
 }
 
-/// Sorts a position command's arguments into symbol names and at most one position, in argument
-/// order. An argument that's a Rust path is a name; anything else is a file.
+/// Checks a position command's names and position, and lists them: the names in argument order,
+/// then the position.
 pub fn classify(
-    args: &[String],
+    names: &[String],
+    path: Option<&Path>,
     line: Option<u32>,
     character: Option<u32>,
     symbol_args: &SymbolArgs,
 ) -> Result<Vec<TargetSpec>, String> {
-    let mut specs = Vec::with_capacity(args.len());
-    let mut file: Option<&str> = None;
-    for arg in args {
-        if is_rust_path(arg) {
-            specs.push(TargetSpec::Name(arg.clone()));
-            continue;
-        }
-        if let Some(first) = file {
+    let mut specs = Vec::with_capacity(names.len() + 1);
+    for name in names {
+        if !is_rust_path(name) {
             return Err(format!(
-                "only one file can be given, for --line and --character (got {first} and {arg})"
+                "{name} isn't a Rust name; for a position in a file, use --path {name} --line <N> --character <N>"
             ));
         }
-        let (Some(line), Some(character)) = (line, character) else {
-            return Err(format!(
-                "{arg} isn't a Rust name, so it's read as a file, which needs --line and --character"
-            ));
-        };
-        file = Some(arg);
-        specs.push(TargetSpec::Position {
-            path: PathBuf::from(arg),
+        specs.push(TargetSpec::Name(name.clone()));
+    }
+    match (path, line, character) {
+        (Some(path), Some(line), Some(character)) => specs.push(TargetSpec::Position {
+            path: path.to_path_buf(),
             line,
             character,
-        });
+        }),
+        (None, None, None) => {}
+        _ => return Err("--path, --line and --character are given together".into()),
     }
-    if file.is_none() && line.is_some() {
-        return Err("--line and --character need a file".into());
-    }
-    let has_names = specs.iter().any(|s| matches!(s, TargetSpec::Name(_)));
-    if !has_names && (symbol_args.kind.is_some() || symbol_args.within.is_some()) {
-        return Err("--kind and --in only apply to symbol names, and none was given".into());
+    if names.is_empty() && (symbol_args.kind.is_some() || symbol_args.glob.is_some()) {
+        return Err("--kind and --glob only apply to symbol names, and none was given".into());
     }
     Ok(specs)
 }
@@ -218,16 +223,13 @@ pub async fn targets(
     specs: Vec<TargetSpec>,
 ) -> Result<Targets, String> {
     let grouped = specs.iter().any(|s| matches!(s, TargetSpec::Name(_)));
-    let within = match &args.within {
-        Some(p) => Some(
-            p.canonicalize()
-                .map_err(|e| format!("cannot canonicalize {}: {e}", p.display()))?,
-        ),
-        None => None,
-    };
+    let cwd = std::env::current_dir()
+        .and_then(|d| d.canonicalize())
+        .map_err(|e| format!("cannot read the current directory: {e}"))?;
     let filter = SymbolFilter {
         kind: args.kind.as_deref(),
-        within: within.as_deref(),
+        glob: args.glob.as_ref(),
+        cwd: &cwd,
     };
     let mut result = Targets {
         targets: Vec::new(),
@@ -365,20 +367,32 @@ fn outline_symbol_at<'a>(
     })
 }
 
-/// `--kind` and `--in`, applied to the definitions found by name.
+/// `--kind` and `--glob`, applied to the definitions found by name.
 struct SymbolFilter<'a> {
     kind: Option<&'a str>,
-    within: Option<&'a Path>,
+    glob: Option<&'a glob::Pattern>,
+    /// The canonical current directory, which a relative `--glob` is relative to.
+    cwd: &'a Path,
 }
 
 impl SymbolFilter<'_> {
-    /// Whether `m` has the kind and lies under the path the filter asks for.
+    /// Whether `m` has the kind and lies in a file the glob matches.
     fn keeps(&self, m: &SymbolMatch) -> bool {
         let kind_ok = self.kind.is_none_or(|k| m.kind.eq_ignore_ascii_case(k));
-        let within_ok = self
-            .within
-            .is_none_or(|dir| m.file_path().is_some_and(|f| f.starts_with(dir)));
-        kind_ok && within_ok
+        let glob_ok = self
+            .glob
+            .is_none_or(|g| m.file_path().is_some_and(|f| self.glob_matches(g, &f)));
+        kind_ok && glob_ok
+    }
+
+    /// Whether `glob` matches `file`: as is for an absolute pattern, or relative to the current
+    /// directory for a relative one.
+    fn glob_matches(&self, glob: &glob::Pattern, file: &Path) -> bool {
+        if Path::new(glob.as_str()).is_absolute() {
+            return glob.matches_path_with(file, GLOB_OPTIONS);
+        }
+        file.strip_prefix(self.cwd)
+            .is_ok_and(|relative| glob.matches_path_with(relative, GLOB_OPTIONS))
     }
 }
 
@@ -592,24 +606,32 @@ mod tests {
     }
 
     #[test]
-    fn filter_keeps_kind_case_insensitively_and_paths_under_within() {
+    fn filter_keeps_kind_case_insensitively_and_files_the_glob_matches() {
         let m = exact_matches(
-            response(vec![symbol("f", None, "file:///w/src/a.rs", 1)]),
+            response(vec![symbol("f", None, "file:///w/src/sys/a.rs", 1)]),
             "f",
         )
         .remove(0);
-        let keeps = |kind: Option<&str>, within: Option<&str>| {
+        let keeps = |kind: Option<&str>, glob: Option<&str>| {
+            let glob = glob.map(|g| glob::Pattern::new(g).expect("valid glob"));
             SymbolFilter {
                 kind,
-                within: within.map(Path::new),
+                glob: glob.as_ref(),
+                cwd: Path::new("/w"),
             }
             .keeps(&m)
         };
         assert!(keeps(None, None));
         assert!(keeps(Some("function"), None));
         assert!(!keeps(Some("method"), None));
-        assert!(keeps(None, Some("/w/src")));
-        assert!(!keeps(None, Some("/w/tests")));
+        assert!(keeps(None, Some("src/**/*.rs")));
+        assert!(keeps(None, Some("src/**")));
+        assert!(keeps(None, Some("/w/src/sys/a.rs")));
+        assert!(
+            !keeps(None, Some("src/*.rs")),
+            "`*` stays within one component"
+        );
+        assert!(!keeps(None, Some("tests/**")));
     }
 
     #[test]
@@ -664,9 +686,10 @@ mod tests {
     }
 
     #[test]
-    fn classify_keeps_argument_order() {
+    fn classify_lists_names_then_the_position() {
         let specs = classify(
-            &strings(&["mkfifo", "src/sys.rs", "Fifo::name"]),
+            &strings(&["mkfifo", "Fifo::name"]),
+            Some(Path::new("src/sys.rs")),
             Some(2),
             Some(7),
             &SymbolArgs::default(),
@@ -676,12 +699,12 @@ mod tests {
             specs,
             vec![
                 TargetSpec::Name("mkfifo".into()),
+                TargetSpec::Name("Fifo::name".into()),
                 TargetSpec::Position {
                     path: "src/sys.rs".into(),
                     line: 2,
                     character: 7,
                 },
-                TargetSpec::Name("Fifo::name".into()),
             ]
         );
     }
@@ -689,17 +712,28 @@ mod tests {
     #[test]
     fn classify_rejects_bad_combinations() {
         let none = SymbolArgs::default();
-        let err = |args: &[&str], line: Option<u32>, symbol_args: &SymbolArgs| {
-            classify(&strings(args), line, line, symbol_args).expect_err("should be rejected")
+        let err = |names: &[&str], path: Option<&str>, symbol_args: &SymbolArgs| {
+            let line = path.map(|_| 1);
+            classify(
+                &strings(names),
+                path.map(Path::new),
+                line,
+                line,
+                symbol_args,
+            )
+            .expect_err("should be rejected")
         };
-        assert!(err(&["src/sys.rs"], None, &none).contains("needs --line and --character"));
-        assert!(err(&["a.rs", "b.rs"], Some(1), &none).contains("only one file"));
-        assert!(err(&["mkfifo"], Some(1), &none).contains("need a file"));
+        assert!(err(&["src/sys.rs"], None, &none).contains("use --path src/sys.rs"));
         let kind = SymbolArgs {
             kind: Some("function".into()),
-            within: None,
+            glob: None,
         };
-        assert!(err(&["src/sys.rs"], Some(1), &kind).contains("only apply to symbol names"));
+        assert!(err(&[], Some("src/sys.rs"), &kind).contains("only apply to symbol names"));
+        assert!(
+            classify(&[], Some(Path::new("a.rs")), Some(1), None, &none)
+                .expect_err("should be rejected")
+                .contains("given together")
+        );
     }
 
     #[test]

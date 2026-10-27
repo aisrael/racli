@@ -32,19 +32,19 @@ racli call-hierarchy sys::mkfifo --direction incoming
 ```
 
 A name is what a caller starts from, so it's the default way to use the four commands. Each takes
-one or more names. A position stays available, unchanged: `racli find-references src/sys.rs --line
-2 --character 7`.
+one or more names, and each must be a Rust path, such as `mkfifo`, `sys::mkfifo`, `Fifo::name` or
+`r#type`.
 
-### 2. An argument that's a Rust name is a symbol; anything else is a file
+### 2. A position is given with `--path`
 
-An argument that's a Rust path, such as `mkfifo`, `sys::mkfifo`, `Fifo::name` or `r#type`, is a
-symbol name. Anything else, such as `src/sys.rs`, is a file. This depends only on how the argument
-is written, not on what's on disk, so the same command always means the same thing. Source files
-end in `.rs`, which no Rust name can contain.
+```sh
+racli find-references --path src/sys.rs --line 2 --character 7
+```
 
-There's at most one file, and it needs both `--line` and `--character`; `--line` and
-`--character` need a file. Anything else is a usage error, which exits with status 2, as clap's
-own errors do.
+`--path`, `--line` and `--character` go together, and give the one position a command runs from,
+as `<PATH> --line --character` did before. Since the file is an option, every positional argument
+is a name. An argument that isn't a Rust name, such as `src/sys.rs`, is a usage error that points
+to `--path`. Usage errors exit with status 2, as clap's own do.
 
 ### 3. A name matches exactly, in the workspace first
 
@@ -76,18 +76,18 @@ for example by `mkfifo` and `sys::mkfifo`, is run once.
   where `result` is what the command prints for a position. The array is used even for a single
   definition, so the shape doesn't depend on how many there are.
 
-A position on its own prints exactly what it did before, in text and JSON.
+A position on its own prints what it did before, in text and JSON.
 
 ### 6. A position given with names is one more target
 
 ```sh
-racli find-references mkfifo src/main.rs --line 85 --character 31
+racli find-references mkfifo --path src/main.rs --line 85 --character 31
 ```
 
-The command runs from the position as it would on its own. To group it with the names' results,
-racli labels it with the symbol it refers to: it finds the definition from the position, takes
-the symbol's name from the outline of the definition's file, and labels it as a lookup of that
-name would. If a name already found that definition, the position isn't run again.
+The command runs from the position as it would on its own, after the names. To group it with the
+names' results, racli labels it with the symbol it refers to: it finds the definition from the
+position, takes the symbol's name from the outline of the definition's file, and labels it as a
+lookup of that name would. If a name already found that definition, the position isn't run again.
 
 ### 7. An unknown name lists the closest symbols, and doesn't stop the others
 
@@ -100,12 +100,22 @@ no symbol named mkfif; closest:
 The list is rust-analyzer's own ranking of the fuzzy matches, up to ten. It's printed on stderr,
 like racli's other client errors, and the command still runs for the names that were found.
 
-### 8. `--kind` and `--in` narrow the definitions names find
+### 8. `--kind` and `--glob` narrow the definitions names find
 
-`--kind` keeps definitions of one kind, as `racli search --text` prints it (`function`, `method`,
-`struct`, …, in any case). `--in <PATH>` keeps those under a file or directory. If they leave out
-every definition of a name, the error lists the ones they left out. They apply to names only,
-never to a position, so they're a usage error without a name.
+- `--kind` keeps definitions of one kind, as `racli search --text` prints it (`function`,
+  `method`, `struct`, …, in any case).
+- `--glob <PATTERN>` keeps definitions in files the pattern matches, as a shell glob would:
+  `*` and `?` stay within one path component, and `**` spans several, so `src/**` is everything
+  under `src/`. A relative pattern matches files under the current directory, and an absolute
+  one, such as a dependency's directory in `~/.cargo/registry`, matches as is.
+
+Both filter which definitions a name finds, not the command's results: `find-references mkfifo
+--glob 'src/sys/**'` gives every reference to the `mkfifo` defined under `src/sys/`, wherever the
+reference is. If they leave out every definition of a name, the error lists the ones they left
+out. They apply to names only, so they're a usage error without a name.
+
+LSP has nothing to filter by: `workspace/symbol` takes a query, and rust-analyzer's `searchScope`
+extension picks crates, not paths. So racli filters the symbols rust-analyzer returns.
 
 ### 9. The client looks names up
 
@@ -122,10 +132,13 @@ The MCP tools don't change for now. They should later get the same lookup by nam
 - **A `--symbol <NAME>` option** in place of the position. Rejected: it made a name the special
   case, though it's what callers usually start from, and it couldn't be combined with a position
   or given more than once.
+- **Keeping the file as a positional argument,** next to the names, and reading any argument
+  that isn't a Rust name as the file. Rejected: every argument would have two possible meanings,
+  told apart only by how it's written. With `--path`, each argument has one.
+- **A path prefix filter (`--in <PATH>`)** instead of `--glob`. Rejected: a glob covers a
+  directory (`src/**`), a file, and patterns a prefix can't, such as `src/**/tests.rs`.
 - **A `find-symbol-and-references` subcommand,** and others like it. Rejected: names on every
   position command cover all pairings at once (decision 1).
-- **Telling a file from a name by checking the disk.** Rejected: the meaning of a command would
-  change with the files in the current directory (decision 2).
 - **Picking the first definition, or failing when a name is ambiguous.** Rejected: the first
   definition is often the wrong one, and failing makes the caller look up the position after all.
 - **Changing the JSON shape only when a name is ambiguous.** Rejected: a script would need to
@@ -139,11 +152,14 @@ The MCP tools don't change for now. They should later get the same lookup by nam
 
 ## Consequences
 
-- The four position commands take `<NAME|PATH>...`, plus `--kind` and `--in`. `--line` and
-  `--character` become optional, and each requires the other. A position on its own works and
-  prints as before.
+- **Breaking:** the four position commands no longer take the file as a positional argument.
+  `racli find-references src/sys.rs --line 2 --character 7` becomes `racli find-references --path
+  src/sys.rs --line 2 --character 7`, and the old form is a usage error that says so.
+- The four commands take `[NAME]...`, `--path`, `--line`, `--character`, `--kind` and `--glob`.
+  A position on its own prints as before.
 - New field: `container_name` on the gRPC `LspSymbolInformation` and `LspWorkspaceSymbol`
   messages.
+- New dependency: the `glob` crate, for `--glob`.
 - When any name is given, JSON output has the grouped shape of decision 5.
 - A lookup can cost several `Search` calls: one for the name, one more for a member qualified by a
   type, and the same again in the dependencies when the workspace has no match. A position given
