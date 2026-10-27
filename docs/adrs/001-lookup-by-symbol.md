@@ -120,18 +120,10 @@ extension picks crates, not paths. So racli filters the symbols rust-analyzer re
 ### 9. A search cut off at the limit says so
 
 rust-analyzer returns at most `--symbol-search-limit` symbols per query, 1000 by default, and its
-fuzzy matching doesn't rank exact matches first. So an exact match can fall past the limit and
-never reach racli. In flt, with a limit high enough to cut nothing off:
-
-| Name | Scope | Results | Exact matches | At positions | Past 1000 |
-|---|---|---|---|---|---|
-| `new` | workspace | 73 | 14 | 5–18 | 0 |
-| `new` | with dependencies | 1459 | 738 | 278–1016 | 17 |
-| `len` | with dependencies | 2597 | 106 | 1378–1520 | all 106 |
-
-Within the workspace, every name tried had at most 259 results, so the limit didn't matter. With
-dependencies, it did: at the default limit, a search for `len` returned 1000 results and not one
-was named `len`.
+fuzzy matching doesn't rank exact matches first. So the results can be cut off before an exact
+match, which then never reaches racli. This rarely matters within a workspace, but a short,
+common name searched with dependencies, such as `len` or `min`, can have thousands of fuzzy
+matches, and some or all of its exact matches can fall past the limit.
 
 LSP can't say whether a `workspace/symbol` result was cut off, and 1000 results could also be an
 exact fit. So the server asks rust-analyzer for one more result than its limit. If it gets that
