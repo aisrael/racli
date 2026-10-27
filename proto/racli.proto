@@ -72,6 +72,8 @@ message LspWorkspaceSymbol {
   string kind = 2;
   string uri = 3;
   optional LspRange range = 4;
+  // The item that contains this symbol, e.g. the type of a method (LSP `containerName`).
+  optional string container_name = 5;
 }
 
 // Subset of LSP `SymbolInformation` used on the wire.
@@ -80,6 +82,8 @@ message LspSymbolInformation {
   string kind = 2;
   string uri = 3;
   LspRange range = 4;
+  // The item that contains this symbol, e.g. the type of a method (LSP `containerName`).
+  optional string container_name = 5;
 }
 
 // Subset of LSP `DocumentSymbol` (hierarchical; `children` recurses for nested symbols, e.g. methods under an `impl`).

@@ -40,6 +40,8 @@ pub mod rust_analyzer;
 pub mod search;
 /// Shared server logic and future service wiring.
 pub mod server;
+/// Symbol names as targets: finds the definitions of the names given to the position commands.
+pub mod symbol;
 /// `racli tee`: gRPC server plus an editor-facing stdio LSP proxy routed through it.
 pub mod tee;
 /// Transport layer components

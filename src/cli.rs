@@ -54,13 +54,13 @@ enum Command {
     Version,
     /// Search workspace symbols via rust-analyzer (LSP `workspace/symbol`).
     Search(search::SearchArgs),
-    /// Resolve the definition at a file position via rust-analyzer (LSP `textDocument/definition`).
+    /// Resolve the definitions of symbol names or at a file position via rust-analyzer (LSP `textDocument/definition`).
     FindDefinition(find_definition::FindDefinitionArgs),
-    /// List references to the symbol at a file position via rust-analyzer (LSP `textDocument/references`; always includes the declaration).
+    /// List references to symbol names or the symbol at a file position via rust-analyzer (LSP `textDocument/references`; always includes the declaration).
     FindReferences(find_references::FindReferencesArgs),
-    /// Resolve trait/type implementations at a file position via rust-analyzer (LSP `textDocument/implementation`).
+    /// Resolve trait/type implementations for symbol names or at a file position via rust-analyzer (LSP `textDocument/implementation`).
     FindImplementations(find_implementations::FindImplementationsArgs),
-    /// Walk the call hierarchy (callers/callees) at a file position via rust-analyzer (LSP `prepareCallHierarchy` + `incoming`/`outgoingCalls`).
+    /// Walk the call hierarchy (callers/callees) of symbol names or at a file position via rust-analyzer (LSP `prepareCallHierarchy` + `incoming`/`outgoingCalls`).
     CallHierarchy(call_hierarchy::CallHierarchyArgs),
     /// Print the hierarchical symbol outline for one file via rust-analyzer (LSP `textDocument/documentSymbol`).
     DocumentSymbols(document_symbols::DocumentSymbolsArgs),

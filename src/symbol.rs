@@ -1,0 +1,726 @@
+//! Symbol names as targets: finds the definitions of each name given to a position command
+//! (`find-definition`, `find-references`, `find-implementations`, `call-hierarchy`), so it can
+//! run from names as well as, or instead of, a file position.
+
+use std::collections::HashSet;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
+
+use serde::Serialize;
+
+use crate::client;
+use crate::client::ClientSearchError;
+use crate::proto::racli::LspDocumentSymbol;
+use crate::proto::racli::LspRange;
+use crate::proto::racli::SearchResponse;
+use crate::proto::racli::lsp_workspace_symbol_response::Payload;
+use crate::rust_analyzer::SymbolSearchKind;
+use crate::rust_analyzer::SymbolSearchOptions;
+use crate::rust_analyzer::SymbolSearchScope;
+
+/// How many of the closest symbols a "not found" error lists.
+const MAX_SUGGESTIONS: usize = 10;
+
+/// `--kind` and `--in`: narrow the definitions found for symbol names.
+#[derive(clap::Args, Debug, Default)]
+pub struct SymbolArgs {
+    /// Only use definitions of this kind, as `racli search --text` prints it (e.g. `function`, `method`, `struct`).
+    #[arg(long, value_name = "KIND")]
+    pub kind: Option<String>,
+    /// Only use definitions under this file or directory.
+    #[arg(long = "in", value_name = "PATH")]
+    pub within: Option<PathBuf>,
+}
+
+/// A definition found by name: the symbol, and the file and position to run a command from.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SymbolMatch {
+    pub name: String,
+    pub kind: String,
+    /// The item that contains the symbol, e.g. the type of a method.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_name: Option<String>,
+    pub uri: String,
+    pub range: RangeJson,
+}
+
+/// LSP range as JSON with `start` and `end` positions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+pub struct RangeJson {
+    pub start: PositionJson,
+    pub end: PositionJson,
+}
+
+/// LSP zero-based line and UTF-16 character offset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+pub struct PositionJson {
+    pub line: u32,
+    pub character: u32,
+}
+
+impl SymbolMatch {
+    /// The local path of the file that defines the symbol, or `None` if its URI isn't a `file:` URI.
+    pub fn file_path(&self) -> Option<PathBuf> {
+        url::Url::parse(&self.uri).ok()?.to_file_path().ok()
+    }
+
+    /// One line describing the symbol, in the layout of `racli search --text`.
+    pub fn header(&self) -> String {
+        let container = self
+            .container_name
+            .as_ref()
+            .map(|c| format!(" in {c}"))
+            .unwrap_or_default();
+        let RangeJson { start, end } = self.range;
+        format!(
+            "{} [{}]{container} {} {}:{}-{}:{}",
+            self.name, self.kind, self.uri, start.line, start.character, end.line, end.character
+        )
+    }
+}
+
+/// A command's result for one definition, as printed in JSON when symbol names were given.
+#[derive(Serialize)]
+pub struct SymbolResultJson<'a, T: Serialize> {
+    pub symbol: &'a SymbolMatch,
+    pub result: T,
+}
+
+/// Why a symbol name found no definition to run the command from.
+#[derive(Debug, thiserror::Error)]
+pub enum ResolveSymbolError {
+    /// The symbol search RPC failed.
+    #[error(transparent)]
+    Search(#[from] ClientSearchError),
+    /// No symbol has that name, or none passes `--kind` and `--in`.
+    #[error("{}", not_found_message(.name, .filtered, .suggestions))]
+    NotFound {
+        name: String,
+        /// Whether symbols with the name exist but `--kind` or `--in` left them all out.
+        filtered: bool,
+        /// The closest symbols, to retry with.
+        suggestions: Vec<SymbolMatch>,
+    },
+}
+
+fn not_found_message(name: &str, filtered: &bool, suggestions: &[SymbolMatch]) -> String {
+    let mut message = if *filtered {
+        format!("no symbol named {name} passes --kind and --in")
+    } else {
+        format!("no symbol named {name}")
+    };
+    if !suggestions.is_empty() {
+        message.push_str(if *filtered { "; found:" } else { "; closest:" });
+        for s in suggestions {
+            message.push_str("\n  ");
+            message.push_str(&s.header());
+        }
+    }
+    message
+}
+
+/// What one positional argument asks for: a symbol name, or the file of a position.
+#[derive(Debug, PartialEq)]
+pub enum TargetSpec {
+    /// A symbol name, e.g. `mkfifo`, `sys::mkfifo` or `Fifo::name`.
+    Name(String),
+    /// A file, with the `--line` and `--character` given for it.
+    Position {
+        path: PathBuf,
+        line: u32,
+        character: u32,
+    },
+}
+
+/// Sorts a position command's arguments into symbol names and at most one position, in argument
+/// order. An argument that's a Rust path is a name; anything else is a file.
+pub fn classify(
+    args: &[String],
+    line: Option<u32>,
+    character: Option<u32>,
+    symbol_args: &SymbolArgs,
+) -> Result<Vec<TargetSpec>, String> {
+    let mut specs = Vec::with_capacity(args.len());
+    let mut file: Option<&str> = None;
+    for arg in args {
+        if is_rust_path(arg) {
+            specs.push(TargetSpec::Name(arg.clone()));
+            continue;
+        }
+        if let Some(first) = file {
+            return Err(format!(
+                "only one file can be given, for --line and --character (got {first} and {arg})"
+            ));
+        }
+        let (Some(line), Some(character)) = (line, character) else {
+            return Err(format!(
+                "{arg} isn't a Rust name, so it's read as a file, which needs --line and --character"
+            ));
+        };
+        file = Some(arg);
+        specs.push(TargetSpec::Position {
+            path: PathBuf::from(arg),
+            line,
+            character,
+        });
+    }
+    if file.is_none() && line.is_some() {
+        return Err("--line and --character need a file".into());
+    }
+    let has_names = specs.iter().any(|s| matches!(s, TargetSpec::Name(_)));
+    if !has_names && (symbol_args.kind.is_some() || symbol_args.within.is_some()) {
+        return Err("--kind and --in only apply to symbol names, and none was given".into());
+    }
+    Ok(specs)
+}
+
+/// Prints a usage error in clap's style and exits with clap's status for one.
+pub fn exit_with_usage_error(message: &str) -> ! {
+    eprintln!("error: {message}");
+    std::process::exit(2);
+}
+
+/// Whether `arg` is a Rust path such as `mkfifo`, `sys::mkfifo`, `Fifo::name` or `r#type`.
+fn is_rust_path(arg: &str) -> bool {
+    arg.split("::").all(|segment| {
+        let ident = segment.strip_prefix("r#").unwrap_or(segment);
+        let mut chars = ident.chars();
+        chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
+            && chars.all(|c| c.is_alphanumeric() || c == '_')
+    })
+}
+
+/// A position a command runs from: the file and position, plus the symbol it's labelled with.
+pub struct Target {
+    pub symbol: Option<SymbolMatch>,
+    pub file_path: String,
+    pub line: u32,
+    pub character: u32,
+}
+
+/// Where a position command runs from, and whether its results are grouped by symbol.
+pub struct Targets {
+    pub targets: Vec<Target>,
+    /// Whether any symbol name was given. Then every target is labelled with its symbol, and the
+    /// results are grouped by it.
+    pub grouped: bool,
+    /// Names that found no definition, and positions with no symbol, which don't stop the others.
+    pub errors: Vec<String>,
+}
+
+/// Finds where a position command runs from: each definition the names find, and the position.
+/// A definition found twice, by two names or by a name and the position, is run once.
+pub async fn targets(
+    socket_path: &Path,
+    args: &SymbolArgs,
+    specs: Vec<TargetSpec>,
+) -> Result<Targets, String> {
+    let grouped = specs.iter().any(|s| matches!(s, TargetSpec::Name(_)));
+    let within = match &args.within {
+        Some(p) => Some(
+            p.canonicalize()
+                .map_err(|e| format!("cannot canonicalize {}: {e}", p.display()))?,
+        ),
+        None => None,
+    };
+    let filter = SymbolFilter {
+        kind: args.kind.as_deref(),
+        within: within.as_deref(),
+    };
+    let mut result = Targets {
+        targets: Vec::new(),
+        grouped,
+        errors: Vec::new(),
+    };
+    let mut seen = HashSet::new();
+    for spec in specs {
+        match spec {
+            TargetSpec::Name(name) => match resolve_symbol(socket_path, &name, &filter).await {
+                Ok(matches) => {
+                    for m in matches {
+                        if !seen.insert((m.uri.clone(), m.range)) {
+                            continue;
+                        }
+                        let Some(file_path) = m.file_path() else {
+                            result.errors.push(format!("{} isn't a local file", m.uri));
+                            continue;
+                        };
+                        result.targets.push(Target {
+                            file_path: file_path.display().to_string(),
+                            line: m.range.start.line,
+                            character: m.range.start.character,
+                            symbol: Some(m),
+                        });
+                    }
+                }
+                Err(ResolveSymbolError::Search(e)) => return Err(e.to_string()),
+                Err(e) => result.errors.push(e.to_string()),
+            },
+            TargetSpec::Position {
+                path,
+                line,
+                character,
+            } => {
+                let file_path = path
+                    .canonicalize()
+                    .map_err(|e| format!("cannot canonicalize {}: {e}", path.display()))?
+                    .display()
+                    .to_string();
+                let symbol = if grouped {
+                    match symbol_at(socket_path, &file_path, line, character).await? {
+                        Some(m) if !seen.insert((m.uri.clone(), m.range)) => continue,
+                        Some(m) => Some(m),
+                        None => {
+                            result.errors.push(format!(
+                                "no symbol at {} {line}:{character}",
+                                path.display()
+                            ));
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
+                result.targets.push(Target {
+                    symbol,
+                    file_path,
+                    line,
+                    character,
+                });
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// The symbol whose definition the position refers to, to label a position given with names.
+async fn symbol_at(
+    socket_path: &Path,
+    file_path: &str,
+    line: u32,
+    character: u32,
+) -> Result<Option<SymbolMatch>, String> {
+    let definition = client::find_definition(socket_path, file_path, line, character)
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some((uri, lsp_range)) = definition
+        .locations
+        .into_iter()
+        .find_map(|loc| Some((loc.uri, loc.range?)))
+    else {
+        return Ok(None);
+    };
+    let Some(range) = range_json(lsp_range) else {
+        return Ok(None);
+    };
+    let Some(path) = url::Url::parse(&uri)
+        .ok()
+        .and_then(|u| u.to_file_path().ok())
+    else {
+        return Ok(None);
+    };
+    let outline = client::document_symbols(socket_path, path.display().to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(symbol) = outline_symbol_at(&outline.symbols, &lsp_range) else {
+        return Ok(None);
+    };
+    // Label it as a name lookup would, so its container matches; the outline has no containers.
+    for scope in [
+        SymbolSearchScope::Workspace,
+        SymbolSearchScope::WorkspaceAndDependencies,
+    ] {
+        let found = exact_matches(
+            search(socket_path, &symbol.name, scope)
+                .await
+                .map_err(|e| e.to_string())?,
+            &symbol.name,
+        );
+        if let Some(m) = found.into_iter().find(|m| m.uri == uri && m.range == range) {
+            return Ok(Some(m));
+        }
+    }
+    Ok(Some(SymbolMatch {
+        name: symbol.name.clone(),
+        kind: symbol.kind.clone(),
+        container_name: None,
+        uri,
+        range,
+    }))
+}
+
+/// The symbol in a file outline whose name is at `range`, searching nested symbols too.
+fn outline_symbol_at<'a>(
+    symbols: &'a [LspDocumentSymbol],
+    range: &LspRange,
+) -> Option<&'a LspDocumentSymbol> {
+    symbols.iter().find_map(|s| {
+        if s.selection_range.as_ref() == Some(range) {
+            Some(s)
+        } else {
+            outline_symbol_at(&s.children, range)
+        }
+    })
+}
+
+/// `--kind` and `--in`, applied to the definitions found by name.
+struct SymbolFilter<'a> {
+    kind: Option<&'a str>,
+    within: Option<&'a Path>,
+}
+
+impl SymbolFilter<'_> {
+    /// Whether `m` has the kind and lies under the path the filter asks for.
+    fn keeps(&self, m: &SymbolMatch) -> bool {
+        let kind_ok = self.kind.is_none_or(|k| m.kind.eq_ignore_ascii_case(k));
+        let within_ok = self
+            .within
+            .is_none_or(|dir| m.file_path().is_some_and(|f| f.starts_with(dir)));
+        kind_ok && within_ok
+    }
+}
+
+/// Finds the definitions named `name`, searching the workspace first and then its dependencies.
+async fn resolve_symbol(
+    socket_path: &Path,
+    name: &str,
+    filter: &SymbolFilter<'_>,
+) -> Result<Vec<SymbolMatch>, ResolveSymbolError> {
+    let (container, leaf) = split_qualified(name);
+    let mut suggestions = Vec::new();
+    let mut unfiltered = Vec::new();
+    for scope in [
+        SymbolSearchScope::Workspace,
+        SymbolSearchScope::WorkspaceAndDependencies,
+    ] {
+        // rust-analyzer resolves a module path such as `raw::mkfifo` itself.
+        let results = search(socket_path, name, scope).await?;
+        if suggestions.is_empty() {
+            suggestions = all_symbols(results.clone());
+        }
+        let mut found = exact_matches(results, leaf);
+        if found.is_empty()
+            && let Some(container) = container
+        {
+            // It doesn't resolve `Type::member`, so match the container's name instead.
+            let leaf_results = search(socket_path, leaf, scope).await?;
+            if scope == SymbolSearchScope::Workspace {
+                suggestions = all_symbols(leaf_results.clone());
+            }
+            found = exact_matches(leaf_results, leaf)
+                .into_iter()
+                .filter(|m| m.container_name.as_deref() == Some(last_segment(container)))
+                .collect();
+        }
+        let kept: Vec<SymbolMatch> = found.iter().filter(|m| filter.keeps(m)).cloned().collect();
+        if !kept.is_empty() {
+            return Ok(kept);
+        }
+        if unfiltered.is_empty() {
+            unfiltered = found;
+        }
+    }
+    if !unfiltered.is_empty() {
+        return Err(ResolveSymbolError::NotFound {
+            name: name.to_string(),
+            filtered: true,
+            suggestions: unfiltered,
+        });
+    }
+    suggestions.truncate(MAX_SUGGESTIONS);
+    Err(ResolveSymbolError::NotFound {
+        name: name.to_string(),
+        filtered: false,
+        suggestions,
+    })
+}
+
+/// Runs `workspace/symbol` for `query` over all symbol kinds in `scope`.
+async fn search(
+    socket_path: &Path,
+    query: &str,
+    scope: SymbolSearchScope,
+) -> Result<SearchResponse, ClientSearchError> {
+    let options = SymbolSearchOptions {
+        kind: Some(SymbolSearchKind::AllSymbols),
+        scope: Some(scope),
+    };
+    client::search_with_options(socket_path, query, options).await
+}
+
+/// Splits `a::b::c` into its qualifier `a::b` and its name `c`.
+fn split_qualified(name: &str) -> (Option<&str>, &str) {
+    match name.rsplit_once("::") {
+        Some((qualifier, leaf)) => (Some(qualifier), leaf),
+        None => (None, name),
+    }
+}
+
+/// The last segment of a path such as `a::b`.
+fn last_segment(path: &str) -> &str {
+    path.rsplit("::").next().unwrap_or(path)
+}
+
+/// The symbols in `resp` named exactly `name`.
+fn exact_matches(resp: SearchResponse, name: &str) -> Vec<SymbolMatch> {
+    all_symbols(resp)
+        .into_iter()
+        .filter(|m| m.name == name)
+        .collect()
+}
+
+/// Every symbol in `resp` that has a range, in rust-analyzer's order, without duplicates.
+fn all_symbols(resp: SearchResponse) -> Vec<SymbolMatch> {
+    let payload = resp.workspace_symbol_response.and_then(|r| r.payload);
+    let symbols: Vec<SymbolMatch> = match payload {
+        Some(Payload::Flat(list)) => list
+            .items
+            .into_iter()
+            .filter_map(|it| symbol_match(it.name, it.kind, it.container_name, it.uri, it.range))
+            .collect(),
+        Some(Payload::Nested(list)) => list
+            .items
+            .into_iter()
+            .filter_map(|it| symbol_match(it.name, it.kind, it.container_name, it.uri, it.range))
+            .collect(),
+        None => Vec::new(),
+    };
+    let mut unique: Vec<SymbolMatch> = Vec::with_capacity(symbols.len());
+    for s in symbols {
+        if !unique.iter().any(|u| u.uri == s.uri && u.range == s.range) {
+            unique.push(s);
+        }
+    }
+    unique
+}
+
+/// A [`SymbolMatch`] from a symbol's fields, or `None` if it has no range to run a command from.
+fn symbol_match(
+    name: String,
+    kind: String,
+    container_name: Option<String>,
+    uri: String,
+    range: Option<LspRange>,
+) -> Option<SymbolMatch> {
+    Some(SymbolMatch {
+        name,
+        kind,
+        container_name,
+        uri,
+        range: range_json(range?)?,
+    })
+}
+
+/// A [`RangeJson`] from a protobuf range, or `None` if it lacks a start or an end.
+fn range_json(range: LspRange) -> Option<RangeJson> {
+    let position = |p: Option<crate::proto::racli::LspPosition>| {
+        p.map(|p| PositionJson {
+            line: p.line,
+            character: p.character,
+        })
+    };
+    Some(RangeJson {
+        start: position(range.start)?,
+        end: position(range.end)?,
+    })
+}
+
+/// Prints each definition's result as JSON: `[{"symbol": …, "result": …}]`.
+pub fn print_symbol_results_json<T: Serialize>(command: &str, results: &[SymbolResultJson<'_, T>]) {
+    let mut stdout = std::io::stdout().lock();
+    if let Err(e) = serde_json::to_writer(&mut stdout, results) {
+        eprintln!("racli {command}: failed to serialize JSON: {e}");
+        return;
+    }
+    let _ = writeln!(stdout);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::racli::LspPosition;
+    use crate::proto::racli::LspSymbolInformation;
+    use crate::proto::racli::LspSymbolInformationList;
+    use crate::proto::racli::LspWorkspaceSymbolResponse;
+
+    fn symbol(name: &str, container: Option<&str>, uri: &str, line: u32) -> LspSymbolInformation {
+        LspSymbolInformation {
+            name: name.into(),
+            kind: "FUNCTION".into(),
+            uri: uri.into(),
+            range: Some(LspRange {
+                start: Some(LspPosition { line, character: 4 }),
+                end: Some(LspPosition {
+                    line,
+                    character: 10,
+                }),
+            }),
+            container_name: container.map(Into::into),
+        }
+    }
+
+    fn response(items: Vec<LspSymbolInformation>) -> SearchResponse {
+        SearchResponse {
+            workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
+                payload: Some(Payload::Flat(LspSymbolInformationList { items })),
+            }),
+        }
+    }
+
+    #[test]
+    fn split_qualified_separates_the_last_segment() {
+        assert_eq!(split_qualified("mkfifo"), (None, "mkfifo"));
+        assert_eq!(split_qualified("raw::mkfifo"), (Some("raw"), "mkfifo"));
+        assert_eq!(split_qualified("a::B::c"), (Some("a::B"), "c"));
+        assert_eq!(last_segment("a::B"), "B");
+    }
+
+    #[test]
+    fn exact_matches_drop_fuzzy_hits_and_duplicates() {
+        let resp = response(vec![
+            symbol("mkfifo", None, "file:///a.rs", 1),
+            symbol("mkfifo_raw", None, "file:///a.rs", 2),
+            symbol("mkfifo", None, "file:///a.rs", 1),
+            symbol("mkfifo", Some("raw"), "file:///a.rs", 3),
+        ]);
+        let found = exact_matches(resp, "mkfifo");
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].range.start.line, 1);
+        assert_eq!(found[1].container_name.as_deref(), Some("raw"));
+    }
+
+    #[test]
+    fn filter_keeps_kind_case_insensitively_and_paths_under_within() {
+        let m = exact_matches(
+            response(vec![symbol("f", None, "file:///w/src/a.rs", 1)]),
+            "f",
+        )
+        .remove(0);
+        let keeps = |kind: Option<&str>, within: Option<&str>| {
+            SymbolFilter {
+                kind,
+                within: within.map(Path::new),
+            }
+            .keeps(&m)
+        };
+        assert!(keeps(None, None));
+        assert!(keeps(Some("function"), None));
+        assert!(!keeps(Some("method"), None));
+        assert!(keeps(None, Some("/w/src")));
+        assert!(!keeps(None, Some("/w/tests")));
+    }
+
+    #[test]
+    fn header_matches_search_text_layout() {
+        let m = exact_matches(
+            response(vec![symbol("name", Some("Fifo"), "file:///a.rs", 36)]),
+            "name",
+        )
+        .remove(0);
+        assert_eq!(
+            m.header(),
+            "name [FUNCTION] in Fifo file:///a.rs 36:4-36:10"
+        );
+    }
+
+    #[test]
+    fn not_found_lists_suggestions() {
+        let suggestions = exact_matches(
+            response(vec![symbol("mkfifo", None, "file:///a.rs", 1)]),
+            "mkfifo",
+        );
+        let e = ResolveSymbolError::NotFound {
+            name: "mkfif".into(),
+            filtered: false,
+            suggestions,
+        };
+        assert_eq!(
+            e.to_string(),
+            "no symbol named mkfif; closest:\n  mkfifo [FUNCTION] file:///a.rs 1:4-1:10"
+        );
+    }
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn rust_paths_are_names_and_anything_else_is_a_file() {
+        for name in [
+            "mkfifo",
+            "sys::mkfifo",
+            "Fifo::name",
+            "r#type",
+            "_private",
+            "crate::a",
+        ] {
+            assert!(is_rust_path(name), "{name} should be a Rust path");
+        }
+        for file in ["src/sys.rs", "main.rs", "Vec<T>", "a::", "::a", "1st", ""] {
+            assert!(!is_rust_path(file), "{file} should not be a Rust path");
+        }
+    }
+
+    #[test]
+    fn classify_keeps_argument_order() {
+        let specs = classify(
+            &strings(&["mkfifo", "src/sys.rs", "Fifo::name"]),
+            Some(2),
+            Some(7),
+            &SymbolArgs::default(),
+        )
+        .expect("valid arguments");
+        assert_eq!(
+            specs,
+            vec![
+                TargetSpec::Name("mkfifo".into()),
+                TargetSpec::Position {
+                    path: "src/sys.rs".into(),
+                    line: 2,
+                    character: 7,
+                },
+                TargetSpec::Name("Fifo::name".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn classify_rejects_bad_combinations() {
+        let none = SymbolArgs::default();
+        let err = |args: &[&str], line: Option<u32>, symbol_args: &SymbolArgs| {
+            classify(&strings(args), line, line, symbol_args).expect_err("should be rejected")
+        };
+        assert!(err(&["src/sys.rs"], None, &none).contains("needs --line and --character"));
+        assert!(err(&["a.rs", "b.rs"], Some(1), &none).contains("only one file"));
+        assert!(err(&["mkfifo"], Some(1), &none).contains("need a file"));
+        let kind = SymbolArgs {
+            kind: Some("function".into()),
+            within: None,
+        };
+        assert!(err(&["src/sys.rs"], Some(1), &kind).contains("only apply to symbol names"));
+    }
+
+    #[test]
+    fn outline_symbol_at_finds_nested_symbols_by_name_range() {
+        let range = |line| LspRange {
+            start: Some(LspPosition { line, character: 0 }),
+            end: Some(LspPosition { line, character: 4 }),
+        };
+        let symbol = |name: &str, line, children| LspDocumentSymbol {
+            name: name.into(),
+            detail: None,
+            kind: "FUNCTION".into(),
+            range: Some(range(line)),
+            selection_range: Some(range(line)),
+            children,
+        };
+        let outline = vec![symbol("outer", 1, vec![symbol("inner", 2, vec![])])];
+        assert_eq!(
+            outline_symbol_at(&outline, &range(2)).map(|s| s.name.as_str()),
+            Some("inner")
+        );
+        assert!(outline_symbol_at(&outline, &range(3)).is_none());
+    }
+}

@@ -49,7 +49,9 @@ Client commands find it automatically. Starting from their own working directory
 
 Stop the server with Ctrl+C or SIGTERM to trigger LSP `shutdown`/`exit` and clean termination of the child.
 
-A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-architecture.md).
+A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-architecture.md). Design decisions are recorded as ADRs in [docs/adrs](docs/adrs/):
+
+- [ADR 001: Lookup by Symbol](docs/adrs/001-lookup-by-symbol.md)
 
 ### `racli server`
 
@@ -99,6 +101,23 @@ Runs LSP [`textDocument/definition`](https://microsoft.github.io/language-server
 ### `racli find-references <PATH> --line <N> --character <N>`
 
 Runs LSP [`textDocument/references`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_references): the client calls gRPC `FindReferences` with an absolute filesystem path (after canonicalizing `PATH` on the client) plus a **0-based** line and **0-based** UTF-16 character offset on that line, matching LSP `Position`. The declaration is included in the results. The server resolves the path again, builds a `file://` URI, and returns a list of reference locations (`uri` + `range`). Default output is **JSON**; pass `--text` for one human-readable line per location. Use the same workspace and socket rules as `racli search` and `racli find-definition`.
+
+### Symbol names
+
+`find-definition`, `find-references`, `find-implementations` and `call-hierarchy` take symbol names as well as, or instead of, `<PATH> --line <N> --character <N>`:
+
+```sh
+racli find-references mkfifo
+racli find-references sys::mkfifo            # a module path from the crate root
+racli find-references Fifo::name             # the type or trait that contains it
+racli find-references NativeFn KeywordFn     # several names
+racli find-definition Fifo --kind struct --in src/
+racli find-references mkfifo src/main.rs --line 85 --character 31   # names and a position
+```
+
+An argument that's a Rust name (`mkfifo`, `sys::mkfifo`, `Fifo::name`, `r#type`) is a symbol; anything else is the file for `--line` and `--character`. There's at most one file, and it needs both. The client finds each name's definitions with `workspace/symbol` over all symbol kinds, keeps the ones named exactly as given, and runs the command from each one's position. rust-analyzer resolves a module path itself; for `Type::member`, the client matches the member's LSP `containerName` instead. It searches the workspace first, then its dependencies. `--kind` keeps definitions of one kind, as `racli search --text` prints it (`function`, `method`, `struct`, …, in any case), and `--in <PATH>` keeps those under a file or directory. Both apply to names only.
+
+Each definition gets its own result, and a definition found twice is run once. With `--text`, each result follows a line naming the symbol, in the layout of `racli search --text`; JSON output is an array of `{"symbol": {name, kind, containerName?, uri, range}, "result": …}`, where `result` is what the command prints for a position. A position given with names is labelled with the symbol it refers to. A position on its own prints as before. If no symbol has a name, the error lists the closest symbols to retry with, and the other names still run. See [ADR 001](docs/adrs/001-lookup-by-symbol.md).
 
 ### `racli document-symbols <PATH>`
 

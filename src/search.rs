@@ -332,6 +332,7 @@ mod search_output_tests {
                         name: "foo".into(),
                         kind: "FUNCTION".into(),
                         uri: "file:///a.rs".into(),
+                        container_name: None,
                         range: Some(LspRange {
                             start: Some(LspPosition {
                                 line: 1,
@@ -364,6 +365,7 @@ mod search_output_tests {
                         name: "bar".into(),
                         kind: "MODULE".into(),
                         uri: "file:///b.rs".into(),
+                        container_name: None,
                         range: None,
                     }],
                 })),
@@ -384,6 +386,7 @@ mod search_output_tests {
                         name: "x".into(),
                         kind: "CLASS".into(),
                         uri: "file:///c.rs".into(),
+                        container_name: None,
                         range: None,
                     }],
                 })),
@@ -406,6 +409,7 @@ mod search_output_tests {
                         name: "a,b".into(),
                         kind: "FN".into(),
                         uri: "file:///d.rs".into(),
+                        container_name: None,
                         range: Some(LspRange {
                             start: Some(LspPosition {
                                 line: 0,
