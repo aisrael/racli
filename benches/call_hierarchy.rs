@@ -29,7 +29,7 @@ struct CallHierarchyQuery {
 const QUERIES: &[CallHierarchyQuery] = &[
     CallHierarchyQuery {
         file: "src/rust_analyzer.rs",
-        line: 789,
+        line: 816,
         character: 7,
         symbol: "document_uri_from_path",
     },
@@ -70,6 +70,7 @@ fn grep_callers_approx(root: &Path, symbol: &str) {
 fn racli_call_hierarchy_cli(racli: &Path, socket: &Path, path: &Path, line: u32, character: u32) {
     let status = Command::new(racli)
         .arg("call-hierarchy")
+        .arg("--path")
         .arg(path)
         .arg("--line")
         .arg(line.to_string())
@@ -163,7 +164,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::prepare_call_hierarchy(sock, &rust_analyzer_rs, 789, 7),
+                        racli::client::prepare_call_hierarchy(sock, &rust_analyzer_rs, 816, 7),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.items.is_empty()

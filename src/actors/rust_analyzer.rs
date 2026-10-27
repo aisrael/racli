@@ -16,10 +16,13 @@ use crate::proto::racli::LspServerInfo;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
 use crate::rust_analyzer::SymbolSearchOptions;
+use crate::rust_analyzer::SymbolSearchResult;
 use crate::server::Core;
 
 /// Reply port for an LSP request that returns the raw JSON-RPC `result`.
 pub(crate) type LspReply = RpcReplyPort<Result<Value, RustAnalyzerError>>;
+/// Reply port for [`RustAnalyzerMsg::Search`]: the result, and whether it was cut to the limit.
+pub(crate) type SearchReply = RpcReplyPort<Result<SymbolSearchResult, RustAnalyzerError>>;
 
 /// Messages handled by [`RustAnalyzerActor`]; request variants mirror the [`Core`] methods.
 pub(crate) enum RustAnalyzerMsg {
@@ -29,7 +32,7 @@ pub(crate) enum RustAnalyzerMsg {
     Search {
         query: String,
         options: SymbolSearchOptions,
-        reply: LspReply,
+        reply: SearchReply,
     },
     /// LSP `textDocument/definition`.
     FindDefinition {

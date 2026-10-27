@@ -26,6 +26,10 @@ use crate::proto::racli::LspCallHierarchyOutgoingCall;
 use crate::proto::racli::LspPosition;
 use crate::proto::racli::LspRange;
 use crate::racli_session::RacliSession;
+use crate::symbol;
+use crate::symbol::SymbolArgs;
+use crate::symbol::SymbolResultJson;
+use crate::symbol::print_symbol_results_json;
 use crate::utils::client_unix_socket_path;
 
 /// Which side of the call graph to walk from the resolved item.
@@ -44,14 +48,21 @@ pub enum Direction {
 /// depth-bounded walk of `callHierarchy/incomingCalls`/`outgoingCalls`).
 #[derive(Parser)]
 pub struct CallHierarchyArgs {
-    /// Rust source file (absolute or relative to the current directory).
-    pub path: PathBuf,
-    /// 0-based line (LSP `Position.line`).
+    /// Symbol names to look up, e.g. `mkfifo`, `sys::mkfifo` or `Fifo::name`.
+    #[arg(value_name = "NAME", required_unless_present = "path")]
+    pub names: Vec<String>,
+    /// Rust source file of a position to run from, with `--line` and `--character` (absolute or
+    /// relative to the current directory).
+    #[arg(long, value_name = "FILE", requires_all = ["line", "character"])]
+    pub path: Option<PathBuf>,
+    /// 0-based line of the position in `--path` (LSP `Position.line`).
     #[arg(long)]
-    pub line: u32,
+    pub line: Option<u32>,
     /// 0-based UTF-16 character offset on the line (LSP `Position.character`).
     #[arg(long)]
-    pub character: u32,
+    pub character: Option<u32>,
+    #[command(flatten)]
+    pub symbol: SymbolArgs,
     /// Which side of the call graph to walk.
     #[arg(long, value_enum, default_value = "both")]
     pub direction: Direction,
@@ -421,63 +432,110 @@ pub struct CallHierarchyRequestJson {
     pub depth: Option<u32>,
 }
 
-/// Runs the call-hierarchy walk over a Unix socket and prints the result as JSON or `--text`.
+/// Runs the call-hierarchy walk over a Unix socket from each definition the symbol names find and
+/// from the `--path` position, if given, and prints the result as JSON or `--text`.
 pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
 
-    let abs = match args.path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!(
-                "racli call-hierarchy: cannot canonicalize {}: {e}",
-                args.path.display()
-            );
-            return;
-        }
-    };
-    let file_path = abs.display().to_string();
-    let backend = SocketBackend {
-        socket: sock.clone(),
-    };
-
-    match tokio::time::timeout(
+    let specs = symbol::classify(
+        &args.names,
+        args.path.as_deref(),
+        args.line,
+        args.character,
+        &args.symbol,
+    )
+    .unwrap_or_else(|e| symbol::exit_with_usage_error(&e));
+    let targets = match tokio::time::timeout(
         Duration::from_secs(60),
-        run_call_hierarchy(
-            &backend,
-            file_path,
-            args.line,
-            args.character,
-            args.direction,
-            args.depth,
-        ),
+        symbol::targets(&sock, &args.symbol, specs),
     )
     .await
     {
-        Ok(Ok(result)) => {
-            for candidate in &result.other_candidates {
-                eprintln!(
-                    "racli call-hierarchy: did you mean {} ({}) at {}?",
-                    candidate.name,
-                    candidate.uri,
-                    format_range_json(&candidate.selection_range)
-                );
-            }
-            if args.text {
-                print_call_hierarchy_text(&result);
-            } else {
-                print_call_hierarchy_json(&result);
-            }
-        }
-        Ok(Err(CallHierarchyError::NoItem)) => {
-            println!("(no call hierarchy item at that position)");
-        }
-        Ok(Err(CallHierarchyError::Backend(e))) => {
-            eprintln!("racli call-hierarchy ({sock_display}): {e}");
+        Ok(Ok(targets)) => targets,
+        Ok(Err(err)) => {
+            eprintln!("racli call-hierarchy ({sock_display}): {err}");
+            return;
         }
         Err(_elapsed) => {
             eprintln!("racli call-hierarchy ({sock_display}): request timed out after 60 seconds");
+            return;
         }
+    };
+    let backend = SocketBackend {
+        socket: sock.clone(),
+    };
+    for err in &targets.errors {
+        eprintln!("racli call-hierarchy ({sock_display}): {err}");
+    }
+    let grouped = targets.grouped;
+
+    let mut results = Vec::with_capacity(targets.targets.len());
+    for target in targets.targets {
+        match tokio::time::timeout(
+            Duration::from_secs(60),
+            run_call_hierarchy(
+                &backend,
+                target.file_path,
+                target.line,
+                target.character,
+                args.direction,
+                args.depth,
+            ),
+        )
+        .await
+        {
+            Ok(Ok(result)) => {
+                for candidate in &result.other_candidates {
+                    eprintln!(
+                        "racli call-hierarchy: did you mean {} ({}) at {}?",
+                        candidate.name,
+                        candidate.uri,
+                        format_range_json(&candidate.selection_range)
+                    );
+                }
+                results.push((target.symbol, result));
+            }
+            Ok(Err(CallHierarchyError::NoItem)) => match &target.symbol {
+                Some(symbol) => {
+                    eprintln!(
+                        "racli call-hierarchy: no call hierarchy item for {}",
+                        symbol.header()
+                    );
+                }
+                None => println!("(no call hierarchy item at that position)"),
+            },
+            Ok(Err(CallHierarchyError::Backend(e))) => {
+                eprintln!("racli call-hierarchy ({sock_display}): {e}");
+                return;
+            }
+            Err(_elapsed) => {
+                eprintln!(
+                    "racli call-hierarchy ({sock_display}): request timed out after 60 seconds"
+                );
+                return;
+            }
+        }
+    }
+
+    if args.text {
+        // Each tree starts with its item, which already names the symbol.
+        for (_, result) in &results {
+            print_call_hierarchy_text(result);
+        }
+    } else if grouped {
+        let grouped: Vec<_> = results
+            .iter()
+            .filter_map(|(symbol, result)| {
+                Some(SymbolResultJson {
+                    symbol: symbol.as_ref()?,
+                    result,
+                })
+            })
+            .collect();
+        print_symbol_results_json("call-hierarchy", &grouped);
+    } else if let Some((_, result)) = results.first() {
+        print_call_hierarchy_json(result);
     }
 }
 

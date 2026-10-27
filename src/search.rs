@@ -93,11 +93,19 @@ pub async fn run_cli_search(args: SearchArgs) {
     )
     .await
     {
-        Ok(Ok(resp)) => match args.print_kind() {
-            SearchPrintKind::Text => print_search_response(resp),
-            SearchPrintKind::Json => print_search_response_json(resp),
-            SearchPrintKind::Csv => print_search_response_csv(resp),
-        },
+        Ok(Ok(resp)) => {
+            if resp.truncated {
+                eprintln!(
+                    "racli search: rust-analyzer had more results than the server's \
+                     --symbol-search-limit, so some are missing; narrow the query or raise the limit"
+                );
+            }
+            match args.print_kind() {
+                SearchPrintKind::Text => print_search_response(resp),
+                SearchPrintKind::Json => print_search_response_json(resp),
+                SearchPrintKind::Csv => print_search_response_csv(resp),
+            }
+        }
         Ok(Err(err)) => {
             eprintln!("racli search ({sock_display}): {err}");
         }
@@ -326,12 +334,14 @@ mod search_output_tests {
     #[test]
     fn json_rows_merge_flat_and_include_range() {
         let resp = SearchResponse {
+            truncated: false,
             workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
                 payload: Some(Payload::Flat(LspSymbolInformationList {
                     items: vec![LspSymbolInformation {
                         name: "foo".into(),
                         kind: "FUNCTION".into(),
                         uri: "file:///a.rs".into(),
+                        container_name: None,
                         range: Some(LspRange {
                             start: Some(LspPosition {
                                 line: 1,
@@ -358,12 +368,14 @@ mod search_output_tests {
     #[test]
     fn json_rows_omit_range_when_absent() {
         let resp = SearchResponse {
+            truncated: false,
             workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
                 payload: Some(Payload::Nested(LspWorkspaceSymbolList {
                     items: vec![LspWorkspaceSymbol {
                         name: "bar".into(),
                         kind: "MODULE".into(),
                         uri: "file:///b.rs".into(),
+                        container_name: None,
                         range: None,
                     }],
                 })),
@@ -378,12 +390,14 @@ mod search_output_tests {
     #[test]
     fn csv_writes_header_and_rows() {
         let resp = SearchResponse {
+            truncated: false,
             workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
                 payload: Some(Payload::Flat(LspSymbolInformationList {
                     items: vec![LspSymbolInformation {
                         name: "x".into(),
                         kind: "CLASS".into(),
                         uri: "file:///c.rs".into(),
+                        container_name: None,
                         range: None,
                     }],
                 })),
@@ -400,12 +414,14 @@ mod search_output_tests {
     #[test]
     fn csv_escapes_commas_in_fields() {
         let resp = SearchResponse {
+            truncated: false,
             workspace_symbol_response: Some(LspWorkspaceSymbolResponse {
                 payload: Some(Payload::Flat(LspSymbolInformationList {
                     items: vec![LspSymbolInformation {
                         name: "a,b".into(),
                         kind: "FN".into(),
                         uri: "file:///d.rs".into(),
+                        container_name: None,
                         range: Some(LspRange {
                             start: Some(LspPosition {
                                 line: 0,
@@ -435,6 +451,7 @@ mod search_output_tests {
     #[test]
     fn json_rows_empty_when_no_payload() {
         let resp = SearchResponse {
+            truncated: false,
             workspace_symbol_response: None,
         };
         assert!(search_response_to_json_rows(resp).is_empty());

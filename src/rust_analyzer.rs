@@ -76,8 +76,28 @@ use crate::lsp_events::FORWARDED_METHODS;
 use crate::lsp_events::LspEvents;
 use crate::proto::racli::LspServerInfo;
 
-/// Default `workspace.symbol.search.limit` sent to rust-analyzer at startup (rust-analyzer's own default is 128).
+/// Default cap on `workspace/symbol` results per query (rust-analyzer's own default is 128).
 pub const DEFAULT_SYMBOL_SEARCH_LIMIT: u32 = 1000;
+
+/// A `workspace/symbol` result cut to the session's limit, and whether there were more.
+#[derive(Debug)]
+pub struct SymbolSearchResult {
+    /// The JSON-RPC `result`: an array of symbols, or `null`.
+    pub value: Value,
+    /// Whether rust-analyzer had more results than the limit, so some were left out.
+    pub truncated: bool,
+}
+
+/// Cuts a `workspace/symbol` result to `limit` symbols, and says whether it had more.
+fn cut_to_limit(value: &mut Value, limit: u32) -> bool {
+    match value {
+        Value::Array(items) if items.len() > limit as usize => {
+            items.truncate(limit as usize);
+            true
+        }
+        _ => false,
+    }
+}
 
 /// Which symbol kinds rust-analyzer's `workspace/symbol` returns (its `searchKind` LSP extension).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum, Deserialize, Serialize, JsonSchema)]
@@ -321,6 +341,8 @@ pub struct RustAnalyzerSession {
     pub events: Arc<LspEvents>,
     /// Tasks forwarding notification subscriptions into [`Self::events`]; aborted on teardown.
     event_tasks: Vec<JoinHandle<()>>,
+    /// The most `workspace/symbol` results [`Self::workspace_symbol`] returns per query.
+    symbol_search_limit: u32,
 }
 
 impl RustAnalyzerSession {
@@ -374,8 +396,9 @@ impl RustAnalyzerSession {
             process_id: None,
             root_uri: Some(root_uri.clone()),
             capabilities: racli_lsp_client_capabilities(),
+            // One more than the limit, so `workspace_symbol` can tell a cut-off from an exact fit.
             initialization_options: Some(serde_json::json!({
-                "workspace": { "symbol": { "search": { "limit": symbol_search_limit } } }
+                "workspace": { "symbol": { "search": { "limit": symbol_search_limit.saturating_add(1) } } }
             })),
             client_info: Some(ClientInfo {
                 name: "racli".into(),
@@ -422,6 +445,7 @@ impl RustAnalyzerSession {
             initialize_result,
             events,
             event_tasks,
+            symbol_search_limit,
         };
 
         tracing::info!(
@@ -511,12 +535,13 @@ impl RustAnalyzerSession {
         Ok(())
     }
 
-    /// Sends LSP `workspace/symbol` with the given query and kind/scope overrides and returns the JSON-RPC `result` (often an array or `null`).
+    /// Sends LSP `workspace/symbol` with the given query and kind/scope overrides, and returns the
+    /// result cut to the session's limit, noting whether rust-analyzer had more.
     pub async fn workspace_symbol(
         &mut self,
         query: impl Into<String>,
         options: SymbolSearchOptions,
-    ) -> Result<Value, RustAnalyzerError> {
+    ) -> Result<SymbolSearchResult, RustAnalyzerError> {
         let lsp = self
             .lsp
             .as_ref()
@@ -527,7 +552,9 @@ impl RustAnalyzerSession {
                 options,
             ))
             .await?;
-        serde_json::to_value(result).map_err(RustAnalyzerError::from)
+        let mut value = serde_json::to_value(result).map_err(RustAnalyzerError::from)?;
+        let truncated = cut_to_limit(&mut value, self.symbol_search_limit);
+        Ok(SymbolSearchResult { value, truncated })
     }
 
     /// Sends LSP `textDocument/definition` for `document_uri` at `line` / `character` (0-based LSP position) and returns the JSON-RPC `result` (`null` or a location payload).
@@ -802,5 +829,26 @@ fn lsp_server_info_from_server_info(server: Option<lsp_types::ServerInfo>) -> Ls
     LspServerInfo {
         name: si.name,
         version,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn cut_to_limit_tells_a_cut_off_from_an_exact_fit() {
+        let mut more = json!([1, 2, 3, 4]);
+        assert!(cut_to_limit(&mut more, 3));
+        assert_eq!(more, json!([1, 2, 3]));
+
+        let mut exact = json!([1, 2, 3]);
+        assert!(!cut_to_limit(&mut exact, 3));
+        assert_eq!(exact, json!([1, 2, 3]));
+
+        let mut null = Value::Null;
+        assert!(!cut_to_limit(&mut null, 3));
     }
 }

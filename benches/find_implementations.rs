@@ -27,13 +27,13 @@ struct ImplementationQuery {
 const QUERIES: &[ImplementationQuery] = &[
     ImplementationQuery {
         file: "src/call_hierarchy.rs",
-        line: 70,
+        line: 81,
         character: 10,
         symbol: "CallHierarchyBackend",
     },
     ImplementationQuery {
         file: "src/rust_analyzer.rs",
-        line: 307,
+        line: 327,
         character: 11,
         symbol: "RustAnalyzerSession",
     },
@@ -88,6 +88,7 @@ fn racli_find_implementations_cli(
 ) {
     let status = Command::new(racli)
         .arg("find-implementations")
+        .arg("--path")
         .arg(path)
         .arg("--line")
         .arg(line.to_string())
@@ -179,7 +180,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::find_implementations(sock, &call_hierarchy_rs, 70, 10),
+                        racli::client::find_implementations(sock, &call_hierarchy_rs, 81, 10),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.locations.is_empty()

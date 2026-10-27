@@ -28,7 +28,7 @@ struct ReferenceQuery {
 const QUERIES: &[ReferenceQuery] = &[
     ReferenceQuery {
         file: "src/rust_analyzer.rs",
-        line: 307,
+        line: 327,
         character: 11,
         symbol: "RustAnalyzerSession",
     },
@@ -46,7 +46,7 @@ const QUERIES: &[ReferenceQuery] = &[
     },
     ReferenceQuery {
         file: "src/lib.rs",
-        line: 58,
+        line: 60,
         character: 15,
         symbol: "effective_unix_socket_path",
     },
@@ -88,6 +88,7 @@ fn grep_references_approx(root: &Path, symbol: &str) {
 fn racli_find_references_cli(racli: &Path, socket: &Path, path: &Path, line: u32, character: u32) {
     let status = Command::new(racli)
         .arg("find-references")
+        .arg("--path")
         .arg(path)
         .arg("--line")
         .arg(line.to_string())
@@ -179,7 +180,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::find_references(sock, &rust_analyzer_rs, 307, 11),
+                        racli::client::find_references(sock, &rust_analyzer_rs, 327, 11),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.locations.is_empty()

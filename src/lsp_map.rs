@@ -209,6 +209,7 @@ fn symbol_information_to_proto(si: SymbolInformation) -> LspSymbolInformation {
         kind: symbol_kind_to_string(si.kind),
         uri: uri_to_string(&si.location.uri),
         range: Some(range_to_proto(si.location.range)),
+        container_name: si.container_name,
     }
 }
 
@@ -230,6 +231,7 @@ fn workspace_symbol_to_proto(ws: WorkspaceSymbol) -> LspWorkspaceSymbol {
         kind: symbol_kind_to_string(ws.kind),
         uri,
         range,
+        container_name: ws.container_name,
     }
 }
 

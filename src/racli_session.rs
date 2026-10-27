@@ -213,11 +213,12 @@ impl RacliSession {
         query: String,
         options: SymbolSearchOptions,
     ) -> Result<SearchResponse, RacliRpcError> {
-        let value = ractor::call!(self.rust_analyzer, |reply| RustAnalyzerMsg::Search {
+        let result = ractor::call!(self.rust_analyzer, |reply| RustAnalyzerMsg::Search {
             query,
             options,
             reply,
         })??;
+        let value = result.value;
 
         let ws: LspWorkspaceSymbolResponse = if value.is_null() {
             LspWorkspaceSymbolResponse { payload: None }
@@ -229,6 +230,7 @@ impl RacliSession {
 
         Ok(SearchResponse {
             workspace_symbol_response: Some(ws),
+            truncated: result.truncated,
         })
     }
 
