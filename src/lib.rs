@@ -44,6 +44,8 @@ pub mod server;
 pub mod symbol;
 /// `racli tee`: gRPC server plus an editor-facing stdio LSP proxy routed through it.
 pub mod tee;
+/// 1-based CLI positions, and `path:line:col` locations for `--text` output.
+pub mod text_position;
 /// Transport layer components
 pub mod transport;
 /// Shared small helpers (e.g. Unix socket path resolution).

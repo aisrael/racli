@@ -26,7 +26,7 @@ For **Rust symbol / identifier search**, do not use `grep`. Use `racli search <Q
 
 - **Query syntax:** A single unescaped `|` separates **alternative substring patterns** (each is a plain substring for rust-analyzer, not full regex). Example: `racli search 'Foo|Bar'`. A literal pipe in a pattern is written as `\|` (e.g. `racli search 'a\|b|c'` searches for `a|b` and for `c`; results are merged and deduped).
 - **Kinds and scope:** By default, only **types** (modules, structs, enums, traits, type aliases) from **workspace crates** are returned. Add `--kind all-symbols` to include functions, methods, constants, statics and fields. Add `--scope workspace-and-dependencies` to include dependency crates and the standard library. When a types-only search finds no types, rust-analyzer falls back to all symbols. When it finds any type, functions and methods are left out, so use `--kind all-symbols` whenever you are looking for a function, method, constant or field.
-- **Output:** Default is **JSON** (array of objects with fields such as `name`, `kind`, `uri`, optional `range`). Use `--text` for one human-readable line per symbol, `--csv` or `--output-format csv` for CSV with headers, `--json` or `--output-format json` to be explicit about JSON.
+- **Output:** Default is **JSON** (array of objects with fields such as `name`, `kind`, `uri`, optional `range`). Use `--text` for one line per symbol (`name [KIND] path:line:col`, 1-based), `--csv` or `--output-format csv` for CSV with headers, `--json` or `--output-format json` to be explicit about JSON.
 
 ## Looking up by name
 
@@ -34,7 +34,7 @@ When you know a symbol's name, pass it to `find-definition`, `find-references`, 
 
 - **Names:** a bare name (`mkfifo`), a module path from the crate root (`sys::mkfifo`, not `raw::mkfifo` for `sys::raw::mkfifo`), or the type or trait that contains a member (`Fifo::name`). Matching is exact. The workspace is searched first, then its dependencies.
 - **Several names:** `racli find-references SymbolMatch SymbolFilter Target` checks them all in one call.
-- **Names and a position:** every positional argument is a name; a position always goes in `--path`, `--line` and `--character`. They can be mixed: `racli find-references mkfifo --path src/main.rs --line 85 --character 31`. The position is labelled with its symbol.
+- **Names and a position:** every positional argument is a name; a position always goes in `--path`, `--line` and `--character`. They can be mixed: `racli find-references mkfifo --path src/main.rs --line 86 --character 32`. The position is labelled with its symbol.
 - **Several definitions:** each gets its own result, and one found twice is run once. `--text` prints a line naming each symbol, in the layout of `racli search --text`, with its results indented under it. JSON is an array of `{"symbol": …, "result": …}`. A position on its own prints as before.
 - **Narrowing:** `--kind <KIND>` keeps one kind, as `racli search --text` prints it (`function`, `method`, `struct`, in any case). `--glob <PATTERN>` keeps definitions in files the pattern matches, as a shell glob would (`src/**`, `src/**/tests.rs`); a relative pattern matches under the current directory. Both choose which definitions a name finds, not which results are shown.
 - **Not found:** the error on stderr lists the closest symbols, to retry with a qualified name. The other names still run.
@@ -45,8 +45,8 @@ When you know a symbol's name, pass it to `find-definition`, `find-references`, 
 For **go-to-definition**, do not use `grep`. Use `racli find-definition` with the symbol's name, or with a file path and LSP position when you already have one.
 
 - **Invocation:** `racli find-definition <NAME>...`, e.g. `racli find-definition RacliSession`, as in [Looking up by name](#looking-up-by-name).
-- **By position:** `racli find-definition --path <PATH> --line <N> --character <N>`. `PATH` may be absolute or relative to the current directory; the client canonicalizes it before calling the server. `--line` is **0-based**; `--character` is **0-based UTF-16** offset on that line (same as LSP `Position` and rust-analyzer diagnostics).
-- **Output:** Default is **JSON** (definition locations; with names, grouped per symbol). Use `--text` for one human-readable line per location.
+- **By position:** `racli find-definition --path <PATH> --line <N> --character <N>`. `PATH` may be absolute or relative to the current directory; the client canonicalizes it before calling the server. `--line` and `--character` are **1-based**, as in grep, rustc and editors; `--character` counts UTF-16 units, as LSP does. A position printed by `--text` (`path:line:col`) can be passed back as is.
+- **Output:** Default is **JSON** (definition locations, with LSP's absolute URIs and 0-based ranges; with names, grouped per symbol). Use `--text` for grep-style lines: `path:line:col: source line`, with the path relative to the current directory and a 1-based line and column.
 
 ## find-references (`textDocument/references`)
 
@@ -54,7 +54,7 @@ For **finding usages of a symbol**, do not use `grep`. Use `racli find-reference
 
 - **Invocation:** `racli find-references <NAME>...`, e.g. `racli find-references run_cli_search`, or several at once: `racli find-references SymbolMatch SymbolFilter`.
 - **By position:** `racli find-references --path <PATH> --line <N> --character <N>`, with the same path and position rules as `find-definition`.
-- **Output:** Default is **JSON** (reference locations, each with `uri` and `range`; with names, grouped per symbol). The declaration is always included. Use `--text` for one human-readable line per location.
+- **Output:** Default is **JSON** (reference locations, each with `uri` and `range`; with names, grouped per symbol). The declaration is always included. Use `--text` for grep-style `path:line:col: source line` lines.
 
 ## find-implementations (`textDocument/implementation`)
 
@@ -63,13 +63,13 @@ For **finding the implementations of a trait or type**, do not use `grep`. Use `
 - **Invocation:** `racli find-implementations <NAME>...`, e.g. `racli find-implementations CallHierarchyBackend`, or `CallHierarchyBackend::prepare` for a trait method's overrides.
 - **By position:** `racli find-implementations --path <PATH> --line <N> --character <N>`, with the same path and position rules as `find-definition`.
 - **Behavior:** On a trait or type, returns its `impl` blocks. On a trait method, returns each `impl`'s override. On a position inside an `impl` block, returns nothing, because it only goes from a trait or type to its impls.
-- **Output:** Default is **JSON** (locations, each with `uri` and `range`). Use `--text` for one human-readable line per location.
+- **Output:** Default is **JSON** (locations, each with `uri` and `range`). Use `--text` for grep-style `path:line:col: source line` lines.
 
 ## document-symbols (`textDocument/documentSymbol`)
 
 For **an outline of the symbols in one file**, use `racli document-symbols <PATH>` instead of reading or grepping the whole file. It takes no line or character, since it covers the whole file.
 
-- **Output:** Default is **JSON**: an array of top-level symbols, each with `name`, `kind`, `range`, `selectionRange`, optional `detail`, and nested `children` (for example, methods under their `impl` block). Use `--text` for an indented tree with one symbol per line.
+- **Output:** Default is **JSON**: an array of top-level symbols, each with `name`, `kind`, `range`, `selectionRange`, optional `detail`, and nested `children` (for example, methods under their `impl` block). Use `--text` for an indented tree with one symbol per line and its 1-based range, e.g. `mkfifo (FUNCTION) 3:1-9:2`.
 
 ## call-hierarchy (call hierarchy)
 
@@ -77,7 +77,7 @@ For **finding the callers or callees of a function or method**, use `racli call-
 
 - **Invocation:** `racli call-hierarchy <NAME>... [--direction incoming|outgoing|both] [--depth <N>]`, e.g. `racli call-hierarchy search::run_cli_search --direction incoming`. `--direction` defaults to `both`, and `--depth` (default `1`) sets how many levels of callers or callees to walk. Each extra level costs one more round trip per node.
 - **By position:** `racli call-hierarchy --path <PATH> --line <N> --character <N>`, with the same path and position rules as `find-definition`.
-- **Output:** Default is **JSON**: an object with `item` (the resolved function), plus `incoming` and/or `outgoing` arrays; with names, an array of `{"symbol": …, "result": <that object>}`. Each array entry has the caller's or callee's `name`, `kind`, `uri`, `range`, `selectionRange`, the `callSites` where the call appears, and nested `children` when `--depth` is greater than 1. Use `--text` for an indented outline.
+- **Output:** Default is **JSON**: an object with `item` (the resolved function), plus `incoming` and/or `outgoing` arrays; with names, an array of `{"symbol": …, "result": <that object>}`. Each array entry has the caller's or callee's `name`, `kind`, `uri`, `range`, `selectionRange`, the `callSites` where the call appears, and nested `children` when `--depth` is greater than 1. Use `--text` for an indented outline with each item's `path:line:col`.
 - If the position matches more than one item, the extra candidates are listed in `otherCandidates` and printed as "did you mean" hints on stderr. If nothing matches, it prints `(no call hierarchy item at that position)`, or, for a name, `no call hierarchy item for <symbol>` on stderr (e.g. for a struct).
 
 If the server just started, wait until analysis has caught up (for example until `racli search` returns sensible symbols) before relying on definitions, references, implementations or call hierarchies.

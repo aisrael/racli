@@ -12,6 +12,7 @@ use crate::client;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspRange;
+use crate::text_position::range_text;
 use crate::utils::client_unix_socket_path;
 
 /// How `racli document-symbols` prints results (default is JSON).
@@ -185,7 +186,8 @@ fn print_document_symbols_json(resp: &DocumentSymbolsResponse) {
     let _ = writeln!(stdout);
 }
 
-/// Prints a depth-first indented tree: `name (KIND) startLine:startChar-endLine:endChar` per line, two spaces per depth.
+/// Prints a depth-first indented tree: `name (KIND) startLine:startCol-endLine:endCol` per line, with
+/// 1-based lines and columns, two spaces per depth.
 fn print_document_symbols_text(resp: &DocumentSymbolsResponse) {
     if resp.symbols.is_empty() {
         println!("(no symbols)");
@@ -211,19 +213,12 @@ fn print_symbol_tree_line(sym: &LspDocumentSymbol, depth: usize) {
     }
 }
 
-/// Formats an LSP range as `startLine:startChar-endLine:endChar` for plain-text output.
+/// Formats an LSP range as `startLine:startCol-endLine:endCol`, 1-based, for plain-text output.
 fn lsp_range_line(r: &LspRange) -> String {
-    let (sl, sc) = r
-        .start
-        .as_ref()
-        .map(|p| (p.line, p.character))
-        .unwrap_or((0, 0));
-    let (el, ec) = r
-        .end
-        .as_ref()
-        .map(|p| (p.line, p.character))
-        .unwrap_or((0, 0));
-    format!("{sl}:{sc}-{el}:{ec}")
+    let position = |p: Option<&crate::proto::racli::LspPosition>| {
+        p.map(|p| (p.line, p.character)).unwrap_or((0, 0))
+    };
+    range_text(position(r.start.as_ref()), position(r.end.as_ref()))
 }
 
 #[cfg(test)]

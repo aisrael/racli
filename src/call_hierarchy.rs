@@ -30,6 +30,8 @@ use crate::symbol;
 use crate::symbol::SymbolArgs;
 use crate::symbol::SymbolResultJson;
 use crate::symbol::print_symbol_results_json;
+use crate::text_position::parse_one_based;
+use crate::text_position::position_text;
 use crate::utils::client_unix_socket_path;
 
 /// Which side of the call graph to walk from the resolved item.
@@ -55,11 +57,11 @@ pub struct CallHierarchyArgs {
     /// relative to the current directory).
     #[arg(long, value_name = "FILE", requires_all = ["line", "character"])]
     pub path: Option<PathBuf>,
-    /// 0-based line of the position in `--path` (LSP `Position.line`).
-    #[arg(long)]
+    /// 1-based line of the position in `--path`.
+    #[arg(long, value_parser = parse_one_based)]
     pub line: Option<u32>,
-    /// 0-based UTF-16 character offset on the line (LSP `Position.character`).
-    #[arg(long)]
+    /// 1-based column of the position on the line, in UTF-16 units as LSP counts them.
+    #[arg(long, value_parser = parse_one_based)]
     pub character: Option<u32>,
     #[command(flatten)]
     pub symbol: SymbolArgs,
@@ -300,14 +302,6 @@ fn item_to_json(item: &LspCallHierarchyItem) -> CallHierarchyItemJson {
     }
 }
 
-/// Formats a [`RangeJson`] as `startLine:startChar-endLine:endChar` for plain-text/stderr output.
-fn format_range_json(r: &RangeJson) -> String {
-    format!(
-        "{}:{}-{}:{}",
-        r.start.line, r.start.character, r.end.line, r.end.character
-    )
-}
-
 /// Fetches one level of callers (`incoming: true`) or callees for `item`, then recurses into each
 /// newly-visited result while `depth_remaining` allows, guarding cycles via `visited`.
 fn walk<'a>(
@@ -488,10 +482,9 @@ pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
             Ok(Ok(result)) => {
                 for candidate in &result.other_candidates {
                     eprintln!(
-                        "racli call-hierarchy: did you mean {} ({}) at {}?",
+                        "racli call-hierarchy: did you mean {} at {}?",
                         candidate.name,
-                        candidate.uri,
-                        format_range_json(&candidate.selection_range)
+                        item_position_text(candidate)
                     );
                 }
                 results.push((target.symbol, result));
@@ -548,10 +541,14 @@ fn print_call_hierarchy_json(result: &CallHierarchyOutput) {
     let _ = writeln!(stdout);
 }
 
+/// Prints the call tree as an indented outline: `name (KIND) path:line:col` per item, with 1-based
+/// line and column.
 fn print_call_hierarchy_text(result: &CallHierarchyOutput) {
     println!(
         "{} ({}) {}",
-        result.item.name, result.item.kind, result.item.uri
+        result.item.name,
+        result.item.kind,
+        item_position_text(&result.item)
     );
     if let Some(incoming) = &result.incoming {
         println!("<- callers:");
@@ -576,10 +573,16 @@ fn print_call_nodes_text(nodes: &[CallNodeJson], indent: usize) {
             "  ".repeat(indent),
             node.item.name,
             node.item.kind,
-            node.item.uri
+            item_position_text(&node.item)
         );
         print_call_nodes_text(&node.children, indent + 1);
     }
+}
+
+/// An item's `path:line:col`, at the start of its name, with 1-based line and column.
+fn item_position_text(item: &CallHierarchyItemJson) -> String {
+    let start = &item.selection_range.start;
+    position_text(&item.uri, start.line, start.character)
 }
 
 #[cfg(test)]

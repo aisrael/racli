@@ -13,6 +13,8 @@ use crate::symbol;
 use crate::symbol::SymbolArgs;
 use crate::symbol::SymbolResultJson;
 use crate::symbol::print_symbol_results_json;
+use crate::text_position::SourceLines;
+use crate::text_position::parse_one_based;
 use crate::utils::client_unix_socket_path;
 
 /// Arguments for `racli find-definition` (LSP `textDocument/definition`).
@@ -25,11 +27,11 @@ pub struct FindDefinitionArgs {
     /// relative to the current directory).
     #[arg(long, value_name = "FILE", requires_all = ["line", "character"])]
     pub path: Option<PathBuf>,
-    /// 0-based line of the position in `--path` (LSP `Position.line`).
-    #[arg(long)]
+    /// 1-based line of the position in `--path`.
+    #[arg(long, value_parser = parse_one_based)]
     pub line: Option<u32>,
-    /// 0-based UTF-16 character offset on the line (LSP `Position.character`).
-    #[arg(long)]
+    /// 1-based column of the position on the line, in UTF-16 units as LSP counts them.
+    #[arg(long, value_parser = parse_one_based)]
     pub character: Option<u32>,
     #[command(flatten)]
     pub symbol: SymbolArgs,
@@ -96,13 +98,14 @@ pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
     }
 
     if args.text {
+        let mut sources = SourceLines::default();
         for (symbol, resp) in &results {
             match symbol {
                 Some(symbol) => {
                     println!("{}", symbol.header());
-                    print_find_definition_text(resp, "  ");
+                    print_find_definition_text(resp, "  ", &mut sources);
                 }
-                None => print_find_definition_text(resp, ""),
+                None => print_find_definition_text(resp, "", &mut sources),
             }
         }
     } else if grouped {
@@ -194,35 +197,24 @@ fn proto_lsp_range_to_json(r: &crate::proto::racli::LspRange) -> DefinitionRange
     }
 }
 
-/// Prints locations as one line each, after `indent`: `uri` plus `startLine:startChar-endLine:endChar`.
-fn print_find_definition_text(resp: &FindDefinitionResponse, indent: &str) {
+/// Prints locations as one line each, after `indent`: `path:line:col: source line`, with the path
+/// relative to the current directory and 1-based line and column.
+fn print_find_definition_text(
+    resp: &FindDefinitionResponse,
+    indent: &str,
+    sources: &mut SourceLines,
+) {
     if resp.locations.is_empty() {
         println!("{indent}(no definition)");
         return;
     }
     for loc in &resp.locations {
-        let range = loc
+        let (line, character) = loc
             .range
             .as_ref()
-            .map(lsp_range_line)
-            .filter(|s| !s.is_empty())
-            .map(|s| format!(" {s}"))
-            .unwrap_or_default();
-        println!("{indent}{}{}", loc.uri, range);
+            .and_then(|r| r.start.as_ref())
+            .map(|p| (p.line, p.character))
+            .unwrap_or((0, 0));
+        println!("{indent}{}", sources.location(&loc.uri, line, character));
     }
-}
-
-/// Formats an LSP range as `startLine:startChar-endLine:endChar` for plain-text output.
-fn lsp_range_line(r: &crate::proto::racli::LspRange) -> String {
-    let (sl, sc) = r
-        .start
-        .as_ref()
-        .map(|p| (p.line, p.character))
-        .unwrap_or((0, 0));
-    let (el, ec) = r
-        .end
-        .as_ref()
-        .map(|p| (p.line, p.character))
-        .unwrap_or((0, 0));
-    format!("{sl}:{sc}-{el}:{ec}")
 }

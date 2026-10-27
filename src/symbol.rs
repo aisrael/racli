@@ -18,6 +18,7 @@ use crate::proto::racli::lsp_workspace_symbol_response::Payload;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
+use crate::text_position::position_text;
 
 /// How many of the closest symbols a "not found" error lists.
 const MAX_SUGGESTIONS: usize = 10;
@@ -84,17 +85,20 @@ impl SymbolMatch {
         url::Url::parse(&self.uri).ok()?.to_file_path().ok()
     }
 
-    /// One line describing the symbol, in the layout of `racli search --text`.
+    /// One line describing the symbol, in the layout of `racli search --text`: its name, kind,
+    /// container and `path:line:col`.
     pub fn header(&self) -> String {
         let container = self
             .container_name
             .as_ref()
             .map(|c| format!(" in {c}"))
             .unwrap_or_default();
-        let RangeJson { start, end } = self.range;
+        let start = self.range.start;
         format!(
-            "{} [{}]{container} {} {}:{}-{}:{}",
-            self.name, self.kind, self.uri, start.line, start.character, end.line, end.character
+            "{} [{}]{container} {}",
+            self.name,
+            self.kind,
+            position_text(&self.uri, start.line, start.character)
         )
     }
 }
@@ -154,7 +158,8 @@ fn not_found_message(
 pub enum TargetSpec {
     /// A symbol name, e.g. `mkfifo`, `sys::mkfifo` or `Fifo::name`.
     Name(String),
-    /// The `--path`, `--line` and `--character` of a position.
+    /// The `--path`, `--line` and `--character` of a position, converted to LSP's 0-based line and
+    /// character.
     Position {
         path: PathBuf,
         line: u32,
@@ -181,10 +186,11 @@ pub fn classify(
         specs.push(TargetSpec::Name(name.clone()));
     }
     match (path, line, character) {
+        // clap's parser has already rejected 0, so the subtraction can't wrap.
         (Some(path), Some(line), Some(character)) => specs.push(TargetSpec::Position {
             path: path.to_path_buf(),
-            line,
-            character,
+            line: line - 1,
+            character: character - 1,
         }),
         (None, None, None) => {}
         _ => return Err("--path, --line and --character are given together".into()),
@@ -293,8 +299,10 @@ pub async fn targets(
                         Some(m) => Some(m),
                         None => {
                             result.errors.push(format!(
-                                "no symbol at {} {line}:{character}",
-                                path.display()
+                                "no symbol at {}:{}:{}",
+                                path.display(),
+                                line + 1,
+                                character + 1
                             ));
                             continue;
                         }
@@ -666,10 +674,7 @@ mod tests {
             "name",
         )
         .remove(0);
-        assert_eq!(
-            m.header(),
-            "name [FUNCTION] in Fifo file:///a.rs 36:4-36:10"
-        );
+        assert_eq!(m.header(), "name [FUNCTION] in Fifo /a.rs:37:5");
     }
 
     #[test]
@@ -686,7 +691,7 @@ mod tests {
         };
         assert_eq!(
             e.to_string(),
-            "no symbol named mkfif; closest:\n  mkfifo [FUNCTION] file:///a.rs 1:4-1:10"
+            "no symbol named mkfif; closest:\n  mkfifo [FUNCTION] /a.rs:2:5"
         );
         let e = ResolveSymbolError::NotFound {
             name: "len".into(),
@@ -722,7 +727,7 @@ mod tests {
     }
 
     #[test]
-    fn classify_lists_names_then_the_position() {
+    fn classify_lists_names_then_the_position_converted_to_zero_based() {
         let specs = classify(
             &strings(&["mkfifo", "Fifo::name"]),
             Some(Path::new("src/sys.rs")),
@@ -738,8 +743,8 @@ mod tests {
                 TargetSpec::Name("Fifo::name".into()),
                 TargetSpec::Position {
                     path: "src/sys.rs".into(),
-                    line: 2,
-                    character: 7,
+                    line: 1,
+                    character: 6,
                 },
             ]
         );

@@ -13,9 +13,16 @@ All notable changes to racli are documented in this file. The format is based on
 - **`racli tee --check`** (and `racli-tee --check`): exits 0 if racli is serving the current directory's socket and 1 otherwise, without starting a server, so scripts can check before starting one.
 - **No accidental second server**: `racli server`, `racli tee` and `racli-tee` started from a terminal in a directory racli already serves print that it's already serving and exit 1 instead of starting another rust-analyzer. Editors, which pipe stdin, still take over the socket on restart.
 
+### Changed
+
+- **`--text` output reads like grep's.** Every command prints paths relative to the current directory instead of `file://` URIs, and 1-based lines and columns instead of LSP's 0-based ones. `find-definition`, `find-references` and `find-implementations` print each location's source line, e.g. `fixtures/queue/src/sys.rs:3:8: pub fn mkfifo(path: &str, mode: u16) -> i32 {`. `search` prints `name [KIND] path:line:col`, `call-hierarchy` prints `path:line:col` for each item, and `document-symbols` prints 1-based ranges. JSON and CSV output don't change. See [ADR 002](docs/adrs/002-one-based-positions-and-text-output.md).
+- **`--line` and `--character` are 1-based**, so a position from `--text` output can be passed back as is. They used to be 0-based, as in LSP, and `0` is now rejected. The MCP tools still take 0-based positions.
+
 ### Breaking changes
 
-- **The position commands take the file with `--path`.** `racli find-references src/sys.rs --line 2 --character 7` is now `racli find-references --path src/sys.rs --line 2 --character 7`, and the same goes for `find-definition`, `find-implementations` and `call-hierarchy`. A positional argument is always a symbol name, so the old form is a usage error that points to `--path`.
+- Scripts that parse `--text` output need updating: paths are relative, positions are 1-based, and locations end with the source line.
+- Scripts that pass `--line` or `--character` need to add 1 to each.
+- **The position commands take the file with `--path`.** `racli find-references src/sys.rs --line 2 --character 7` is now `racli find-references --path src/sys.rs --line 3 --character 8` (with the 1-based position above), and the same goes for `find-definition`, `find-implementations` and `call-hierarchy`. A positional argument is always a symbol name, so the old form is a usage error that points to `--path`.
 
 ## [0.2.0] - 2026-09-30
 

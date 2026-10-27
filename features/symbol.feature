@@ -66,7 +66,7 @@ Feature: racli position commands by symbol name
   Scenario: a position given with a name is labelled with its symbol
     When the following command is run:
       """
-      racli find-references Fifo --path fixtures/queue/src/main.rs --line 85 --character 31
+      racli find-references Fifo --path fixtures/queue/src/main.rs --line 86 --character 32
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 2 items
@@ -75,7 +75,7 @@ Feature: racli position commands by symbol name
   Scenario: a position whose symbol a name already found is run once
     When the following command is run:
       """
-      racli find-references mkfifo --path fixtures/queue/src/sys.rs --line 2 --character 7
+      racli find-references mkfifo --path fixtures/queue/src/sys.rs --line 3 --character 8
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 2 items
@@ -130,7 +130,7 @@ Feature: racli position commands by symbol name
       """
     Then it should exit with status code 0
     And the output should contain "Named [INTERFACE]"
-    And the output should contain "sys.rs 35:15-35:19"
+    And the output should contain "fixtures/queue/src/sys.rs:36:16: impl Named for Fifo {"
 
   Scenario: call-hierarchy by name shows the caller
     When the following command is run:
@@ -151,9 +151,9 @@ Feature: racli position commands by symbol name
 
     Examples:
       | args                                                                    | error                                        |
-      | fixtures/queue/src/sys.rs --line 2 --character 7                        | use --path fixtures/queue/src/sys.rs         |
+      | fixtures/queue/src/sys.rs --line 3 --character 8                        | use --path fixtures/queue/src/sys.rs         |
       | --path fixtures/queue/src/sys.rs                                        | --line                                       |
-      | mkfifo --line 2 --character 7                                           | --path                                       |
-      | --kind function --path fixtures/queue/src/sys.rs --line 2 --character 7 | --kind and --glob only apply to symbol names |
+      | mkfifo --line 3 --character 8                                           | --path                                       |
+      | --kind function --path fixtures/queue/src/sys.rs --line 3 --character 8 | --kind and --glob only apply to symbol names |
       | mkfifo --glob '[unclosed'                                               | invalid value                                |
       |                                                                         | <NAME>                                       |
