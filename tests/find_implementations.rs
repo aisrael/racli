@@ -85,7 +85,7 @@ async fn grpc_find_implementations_call_hierarchy_backend() {
         .expect("canonicalize call_hierarchy.rs");
 
     // 0-based LSP position on `CallHierarchyBackend` in `pub trait CallHierarchyBackend: Send + Sync {`.
-    let resp = find_implementations(sock.as_path(), file_path.to_string_lossy().as_ref(), 68, 10)
+    let resp = find_implementations(sock.as_path(), file_path.to_string_lossy().as_ref(), 70, 10)
         .await
         .expect("find_implementations");
 

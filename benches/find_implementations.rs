@@ -27,7 +27,7 @@ struct ImplementationQuery {
 const QUERIES: &[ImplementationQuery] = &[
     ImplementationQuery {
         file: "src/call_hierarchy.rs",
-        line: 68,
+        line: 70,
         character: 10,
         symbol: "CallHierarchyBackend",
     },
@@ -179,7 +179,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::find_implementations(sock, &call_hierarchy_rs, 68, 10),
+                        racli::client::find_implementations(sock, &call_hierarchy_rs, 70, 10),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.locations.is_empty()

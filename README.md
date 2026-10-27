@@ -65,11 +65,10 @@ Because sockets are per project, each editor window gets its own `racli tee`, an
 
 It stops when the editor sends `exit` or closes stdin, or on SIGINT/SIGTERM. Logs go to stderr, or to `$RACLI_SERVER_LOG_FILE`, and never to stdout. A relative `RACLI_SERVER_LOG_FILE` is based on the working directory, and missing directories are created. So `RACLI_SERVER_LOG_FILE=.racli/racli.log` gives each project its own log, and you may want to add `.racli/` to that project's `.gitignore`.
 
-Editors that take a server path with no arguments (for example VS Code's `rust-analyzer.server.path`) need a small wrapper script:
+Editors that take a server path with no arguments (for example VS Code's `rust-analyzer.server.path`) can use the `racli-tee` binary, which `cargo install racli` installs alongside `racli`. It behaves exactly like `racli tee` and takes the same options:
 
-```sh
-#!/bin/sh
-exec racli tee "$@"
+```json
+"rust-analyzer.server.path": "~/.cargo/bin/racli-tee"
 ```
 
 Limitations:
