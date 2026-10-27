@@ -1,7 +1,7 @@
 # ADR 002: 1-Based Positions and Grep-Style Text Output
 
 - **Date:** 2026-10-27
-- **Status:** Proposed.
+- **Status:** Accepted.
 
 ## Context
 
