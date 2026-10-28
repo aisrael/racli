@@ -39,7 +39,7 @@ const QUERIES: &[ImplementationQuery] = &[
     },
     ImplementationQuery {
         file: "src/racli_session.rs",
-        line: 123,
+        line: 124,
         character: 11,
         symbol: "RacliSession",
     },

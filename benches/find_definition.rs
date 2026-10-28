@@ -1,4 +1,5 @@
-//! Compares a naive `grep`-based approximation of go-to-definition against `racli find-definition`.
+//! Compares a naive `grep`-based approximation of go-to-definition against `racli find-definition`,
+//! and `racli find-definition` with and without `--hover`.
 
 mod support;
 
@@ -10,6 +11,7 @@ use std::time::Duration;
 
 use criterion::BenchmarkId;
 use criterion::Criterion;
+use racli::backend_status::BackendStatus;
 
 /// A `(file, 0-based line, 0-based UTF-16 character, bare symbol name)` case exercised by both baselines.
 struct DefinitionQuery {
@@ -40,13 +42,13 @@ const QUERIES: &[DefinitionQuery] = &[
     },
     DefinitionQuery {
         file: "src/racli_session.rs",
-        line: 124,
+        line: 125,
         character: 10,
         symbol: "Core",
     },
     DefinitionQuery {
         file: "src/cli.rs",
-        line: 105,
+        line: 106,
         character: 23,
         symbol: "client_unix_socket_path",
     },
@@ -89,9 +91,18 @@ fn grep_definition_approx(root: &Path, symbol: &str) {
     );
 }
 
-/// Runs `racli find-definition` for `(path, line, character)` against `socket` (discards output).
-fn racli_find_definition_cli(racli: &Path, socket: &Path, path: &Path, line: u32, character: u32) {
-    let status = Command::new(racli)
+/// Runs `racli find-definition` for `(path, line, character)` against `socket`, with `--hover` if
+/// `hover` (discards output).
+fn racli_find_definition_cli(
+    racli: &Path,
+    socket: &Path,
+    path: &Path,
+    line: u32,
+    character: u32,
+    hover: bool,
+) {
+    let mut command = Command::new(racli);
+    command
         .arg("find-definition")
         .arg("--path")
         .arg(path)
@@ -100,7 +111,11 @@ fn racli_find_definition_cli(racli: &Path, socket: &Path, path: &Path, line: u32
         .arg((line + 1).to_string())
         .arg("--character")
         .arg((character + 1).to_string())
-        .arg("--text")
+        .arg("--text");
+    if hover {
+        command.arg("--hover");
+    }
+    let status = command
         .env("RACLI_UNIX_SOCKET", socket)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -140,6 +155,22 @@ fn bench_grep_vs_racli_find_definition(
                         black_box(&abs_path),
                         black_box(query.line),
                         black_box(query.character),
+                        false,
+                    );
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new("racli_find_definition_hover", query.symbol),
+            |b| {
+                b.iter(|| {
+                    racli_find_definition_cli(
+                        black_box(racli),
+                        black_box(socket),
+                        black_box(&abs_path),
+                        black_box(query.line),
+                        black_box(query.character),
+                        true,
                     );
                 });
             },
@@ -195,6 +226,17 @@ fn main() {
                 )
             },
             "racli server did not resolve the `RustAnalyzerSession` definition in time",
+        );
+        // Hovers taken while rust-analyzer is still indexing can come back empty, and faster.
+        support::poll_until(
+            Duration::from_secs(120),
+            || async {
+                matches!(
+                    racli::client::Client::new(sock).unwrap().get_version().await,
+                    Ok(reply) if reply.backend == BackendStatus::Ready
+                )
+            },
+            "rust-analyzer did not finish loading the workspace in time",
         );
     });
     let socket = server.socket().to_path_buf();
