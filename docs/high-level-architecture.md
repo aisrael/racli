@@ -10,8 +10,8 @@ sequenceDiagram
     participant Server as racli server
     participant RA as rust-analyzer
 
-    Client->>Server: request via gRPC (per-project Unix socket /tmp/racli-<hash>.sock)
-    Server->>RA: request via LSP over stdio (initialize; workspace = server cwd)
+    Client->>Server: request via gRPC (per-project Unix socket /tmp/racli-#lt;hash#gt;.sock)
+    Server->>RA: request via LSP over stdio (initialize, workspace = server cwd)
     RA-->>Server: response
     Server-->>Client: response
 ```
