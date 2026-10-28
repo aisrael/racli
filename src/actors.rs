@@ -1,11 +1,12 @@
 //! ractor supervision tree for `racli server` / `racli mcp`: startup and shutdown sequencing of the
-//! rust-analyzer child, the workspace file watcher, and the gRPC/MCP front end.
+//! rust-analyzer child, the workspace file watcher (with the `notify` feature), and the gRPC/MCP
+//! front end.
 //!
 //! ```text
 //! RootActor
 //! ├── BackendSupervisor
 //! │   ├── RustAnalyzerActor
-//! │   └── FileWatcherActor
+//! │   └── FileWatcherActor (`notify` feature only)
 //! └── GrpcFrontend | McpFrontend
 //! ```
 //!
@@ -14,6 +15,7 @@
 /// [`backend::BackendSupervisor`]: owns the rust-analyzer and file watcher actors plus the shared [`crate::racli_session::RacliSession`].
 pub(crate) mod backend;
 /// [`file_watcher::FileWatcherActor`]: forwards workspace filesystem changes to rust-analyzer.
+#[cfg(feature = "notify")]
 pub(crate) mod file_watcher;
 /// gRPC and MCP front-end actors that serve requests from the shared session.
 pub(crate) mod frontend;

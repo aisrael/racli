@@ -1,4 +1,5 @@
-//! Supervisor for the rust-analyzer and file watcher actors; sequences their startup and shutdown.
+//! Supervisor for the rust-analyzer and (with the `notify` feature) file watcher actors; sequences
+//! their startup and shutdown.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,8 +10,11 @@ use ractor::ActorRef;
 use ractor::RpcReplyPort;
 use ractor::SupervisionEvent;
 
+#[cfg(feature = "notify")]
 use crate::actors::file_watcher::FileWatcherActor;
+#[cfg(feature = "notify")]
 use crate::actors::file_watcher::FileWatcherArgs;
+#[cfg(feature = "notify")]
 use crate::actors::file_watcher::FileWatcherMsg;
 use crate::actors::rust_analyzer::RustAnalyzerActor;
 use crate::actors::rust_analyzer::RustAnalyzerArgs;
@@ -24,7 +28,7 @@ use crate::server::Core;
 pub(crate) enum BackendMsg {
     /// Returns the shared session used by gRPC/MCP handlers.
     GetSession(RpcReplyPort<Arc<RacliSession>>),
-    /// Stops the watcher, then shuts rust-analyzer down gracefully, then stops the supervisor.
+    /// Stops the watcher (if any), then shuts rust-analyzer down gracefully, then stops the supervisor.
     Shutdown(RpcReplyPort<Result<(), RustAnalyzerError>>),
 }
 
@@ -40,10 +44,12 @@ pub(crate) struct BackendArgs {
 pub(crate) struct BackendState {
     session: Arc<RacliSession>,
     rust_analyzer: ActorRef<RustAnalyzerMsg>,
+    #[cfg(feature = "notify")]
     watcher: ActorRef<FileWatcherMsg>,
 }
 
-/// Starts rust-analyzer then the watcher; stops them in reverse order. Child failures are logged, never restarted.
+/// Starts rust-analyzer then, with the `notify` feature, the watcher (otherwise rust-analyzer watches the
+/// workspace itself); stops them in reverse order. Child failures are logged, never restarted.
 pub(crate) struct BackendSupervisor;
 
 impl Actor for BackendSupervisor {
@@ -68,21 +74,24 @@ impl Actor for BackendSupervisor {
         .await
         .map_err(startup_error)?;
 
-        let watcher = Actor::spawn_linked(
-            None,
-            FileWatcherActor,
-            FileWatcherArgs {
-                workspace_root: args.workspace_root,
-                rust_analyzer: rust_analyzer.clone(),
-            },
-            myself.get_cell(),
-        )
-        .await;
-        let watcher = match watcher {
-            Ok((watcher, _)) => watcher,
-            Err(e) => {
-                shutdown_rust_analyzer(&rust_analyzer).await?;
-                return Err(startup_error(e));
+        #[cfg(feature = "notify")]
+        let watcher = {
+            let watcher = Actor::spawn_linked(
+                None,
+                FileWatcherActor,
+                FileWatcherArgs {
+                    workspace_root: args.workspace_root,
+                    rust_analyzer: rust_analyzer.clone(),
+                },
+                myself.get_cell(),
+            )
+            .await;
+            match watcher {
+                Ok((watcher, _)) => watcher,
+                Err(e) => {
+                    shutdown_rust_analyzer(&rust_analyzer).await?;
+                    return Err(startup_error(e));
+                }
             }
         };
 
@@ -100,6 +109,7 @@ impl Actor for BackendSupervisor {
         Ok(BackendState {
             session,
             rust_analyzer,
+            #[cfg(feature = "notify")]
             watcher,
         })
     }
@@ -116,6 +126,7 @@ impl Actor for BackendSupervisor {
             }
             BackendMsg::Shutdown(reply) => {
                 // Drain so already-queued file events reach rust-analyzer before its LSP shutdown.
+                #[cfg(feature = "notify")]
                 if let Err(e) = state.watcher.drain_and_wait(None).await {
                     tracing::debug!(error = %e, "file watcher already stopped");
                 }

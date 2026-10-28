@@ -29,7 +29,7 @@ struct CallHierarchyQuery {
 const QUERIES: &[CallHierarchyQuery] = &[
     CallHierarchyQuery {
         file: "src/rust_analyzer.rs",
-        line: 844,
+        line: 864,
         character: 7,
         symbol: "document_uri_from_path",
     },
@@ -167,7 +167,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::Client::new(sock).unwrap().prepare_call_hierarchy(&rust_analyzer_rs, 844, 7),
+                        racli::client::Client::new(sock).unwrap().prepare_call_hierarchy(&rust_analyzer_rs, 864, 7),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.value.items.is_empty()

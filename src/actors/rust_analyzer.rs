@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use lsp_types::CallHierarchyItem;
+#[cfg(feature = "notify")]
 use lsp_types::DidChangeWatchedFilesParams;
 use ractor::Actor;
 use ractor::ActorProcessingErr;
@@ -98,6 +99,7 @@ pub(crate) enum RustAnalyzerMsg {
         reply: RpcReplyPort<Result<(), RustAnalyzerError>>,
     },
     /// Fire-and-forget LSP `workspace/didChangeWatchedFiles` from the file watcher.
+    #[cfg(feature = "notify")]
     DidChangeWatchedFiles(DidChangeWatchedFilesParams),
     /// Graceful LSP `shutdown`/`exit` and child wait; later requests fail.
     Shutdown(RpcReplyPort<Result<(), RustAnalyzerError>>),
@@ -249,6 +251,7 @@ impl Actor for RustAnalyzerActor {
                 character,
                 reply,
             } => reply_with_session!(state, reply, |ra| core.hover(ra, uri, line, character)),
+            #[cfg(feature = "notify")]
             RustAnalyzerMsg::DidChangeWatchedFiles(params) => {
                 let Some(ra) = state.session.as_mut() else {
                     tracing::debug!(

@@ -44,3 +44,10 @@ jobs:
 
       - name: Run tests
         run: cargo test
+
+      # racli's own file watcher is behind the `notify` feature (ADR 005); keep that build green too.
+      - name: Run clippy (notify feature)
+        run: cargo clippy --all-targets --features notify -- -D warnings
+
+      - name: Run file-watching tests (notify feature)
+        run: cargo test --features notify --test live_backend

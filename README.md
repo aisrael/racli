@@ -14,6 +14,8 @@ The latest version is **0.2.0**, which adds `racli tee` for sharing rust-analyze
 cargo install racli
 ```
 
+rust-analyzer watches the workspace for changes itself. To have racli watch it instead and send rust-analyzer the changes, as racli did before, build with the `notify` feature: `cargo install racli --features notify`. That links the [notify](https://docs.rs/notify) crate, which on macOS loads CoreFoundation and CoreServices every time `racli` starts, CLI commands included. See [ADR 005](docs/adrs/005-file-watching-by-rust-analyzer.md).
+
 ## Usage
 
 In a Rust project folder, first run the server:
@@ -45,7 +47,7 @@ Client commands find it automatically. Starting from their own working directory
 - `RACLI_UNIX_SOCKET=<path>` sets an explicit socket path. It overrides discovery on both the server and the client side.
 - `RACLI_DERIVE_SOCKET_PATH=0` (or `false`) turns per-project sockets off, so servers and clients both use the single `/tmp/racli.sock`. Clients with this setting don't find per-project servers, and vice versa.
 - **racli tee** — `racli server` plus an LSP server on stdio for editors: the editor launches `racli tee` in place of `rust-analyzer`, and CLI/MCP clients share the same rust-analyzer through the socket.
-- **racli mcp** — MCP over stdio only: spawns rust-analyzer and the workspace file watcher inside the MCP child process (no Unix socket). Use **`racli server`** for `racli search`, `racli find-definition`, `racli find-references`, `racli document-symbols`, and `racli version`.
+- **racli mcp** — MCP over stdio only: spawns rust-analyzer (and, with the `notify` feature, racli's file watcher) inside the MCP child process (no Unix socket). Use **`racli server`** for `racli search`, `racli find-definition`, `racli find-references`, `racli document-symbols`, and `racli version`.
 
 Stop the server with Ctrl+C or SIGTERM to trigger LSP `shutdown`/`exit` and clean termination of the child.
 
@@ -55,6 +57,7 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 - [ADR 002: 1-Based Positions and Grep-Style Text Output](docs/adrs/002-one-based-positions-and-text-output.md)
 - [ADR 003: A High-Level Client](docs/adrs/003-high-level-client.md)
 - [ADR 004: Backend Status in Response Metadata](docs/adrs/004-backend-status-in-response-metadata.md)
+- [ADR 005: File Watching by rust-analyzer](docs/adrs/005-file-watching-by-rust-analyzer.md)
 
 ### `racli server`
 
