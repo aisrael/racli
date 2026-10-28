@@ -7,7 +7,7 @@ use std::time::Duration;
 use clap::Parser;
 use serde::Serialize;
 
-use crate::client;
+use crate::client::Client;
 use crate::proto::racli::FindImplementationsResponse;
 use crate::symbol;
 use crate::symbol::SymbolArgs;
@@ -47,6 +47,13 @@ pub struct FindImplementationsArgs {
 pub async fn run_cli_find_implementations(args: FindImplementationsArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
+    let client = match Client::new(&sock) {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("racli find-implementations ({sock_display}): {err}");
+            return;
+        }
+    };
 
     let specs = symbol::classify(
         &args.names,
@@ -58,7 +65,7 @@ pub async fn run_cli_find_implementations(args: FindImplementationsArgs) {
     .unwrap_or_else(|e| symbol::exit_with_usage_error(&e));
     let targets = match tokio::time::timeout(
         Duration::from_secs(60),
-        symbol::targets(&sock, &args.symbol, specs),
+        symbol::targets(&client, &args.symbol, specs),
     )
     .await
     {
@@ -83,7 +90,7 @@ pub async fn run_cli_find_implementations(args: FindImplementationsArgs) {
     for target in targets.targets {
         match tokio::time::timeout(
             Duration::from_secs(60),
-            client::find_implementations(&sock, &target.file_path, target.line, target.character),
+            client.find_implementations(&target.file_path, target.line, target.character),
         )
         .await
         {

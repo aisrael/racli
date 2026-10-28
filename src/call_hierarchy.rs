@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::client;
+use crate::client::Client;
 use crate::proto::racli::LspCallHierarchyIncomingCall;
 use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::LspCallHierarchyOutgoingCall;
@@ -103,7 +103,7 @@ pub trait CallHierarchyBackend: Send + Sync {
 
 /// [`CallHierarchyBackend`] over a `racli server` Unix socket, used by the CLI.
 struct SocketBackend {
-    socket: PathBuf,
+    client: Client,
 }
 
 #[tonic::async_trait]
@@ -114,7 +114,8 @@ impl CallHierarchyBackend for SocketBackend {
         line: u32,
         character: u32,
     ) -> Result<Vec<LspCallHierarchyItem>, String> {
-        client::prepare_call_hierarchy(&self.socket, file_path, line, character)
+        self.client
+            .prepare_call_hierarchy(file_path, line, character)
             .await
             .map(|r| r.items)
             .map_err(|e| e.to_string())
@@ -124,7 +125,8 @@ impl CallHierarchyBackend for SocketBackend {
         &self,
         item: LspCallHierarchyItem,
     ) -> Result<Vec<LspCallHierarchyIncomingCall>, String> {
-        client::incoming_calls(&self.socket, item)
+        self.client
+            .incoming_calls(item)
             .await
             .map(|r| r.calls)
             .map_err(|e| e.to_string())
@@ -134,7 +136,8 @@ impl CallHierarchyBackend for SocketBackend {
         &self,
         item: LspCallHierarchyItem,
     ) -> Result<Vec<LspCallHierarchyOutgoingCall>, String> {
-        client::outgoing_calls(&self.socket, item)
+        self.client
+            .outgoing_calls(item)
             .await
             .map(|r| r.calls)
             .map_err(|e| e.to_string())
@@ -431,6 +434,13 @@ pub struct CallHierarchyRequestJson {
 pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
+    let client = match Client::new(&sock) {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("racli call-hierarchy ({sock_display}): {err}");
+            return;
+        }
+    };
 
     let specs = symbol::classify(
         &args.names,
@@ -442,7 +452,7 @@ pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
     .unwrap_or_else(|e| symbol::exit_with_usage_error(&e));
     let targets = match tokio::time::timeout(
         Duration::from_secs(60),
-        symbol::targets(&sock, &args.symbol, specs),
+        symbol::targets(&client, &args.symbol, specs),
     )
     .await
     {
@@ -456,9 +466,7 @@ pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
             return;
         }
     };
-    let backend = SocketBackend {
-        socket: sock.clone(),
-    };
+    let backend = SocketBackend { client };
     for err in &targets.errors {
         eprintln!("racli call-hierarchy ({sock_display}): {err}");
     }

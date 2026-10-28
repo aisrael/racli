@@ -280,7 +280,9 @@ impl RacliServer {
         while Instant::now() < deadline {
             let probe = tokio::time::timeout(
                 Duration::from_secs(10),
-                racli::client::search(&self.socket, "mkfifo"),
+                racli::client::Client::new(&self.socket)
+                    .unwrap()
+                    .search("mkfifo"),
             )
             .await;
             let found = match probe {
@@ -317,7 +319,9 @@ impl RacliServer {
         while Instant::now() < deadline {
             let probe = tokio::time::timeout(
                 Duration::from_secs(10),
-                racli::client::find_definition(&self.socket, &main_rs, 80, 21),
+                racli::client::Client::new(&self.socket)
+                    .unwrap()
+                    .find_definition(&main_rs, 80, 21),
             )
             .await;
             if matches!(probe, Ok(Ok(resp)) if !resp.locations.is_empty()) {

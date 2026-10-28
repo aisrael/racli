@@ -16,6 +16,7 @@ use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::FindImplementationsResponse;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionResponse;
+use crate::proto::racli::HoverResponse;
 use crate::proto::racli::IncomingCallsResponse;
 use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::LspEvent;
@@ -479,6 +480,39 @@ impl RacliSession {
         };
 
         Ok(DocumentSymbolsResponse { symbols })
+    }
+
+    /// Runs LSP `textDocument/hover` at `file_path` + LSP position (`Racli.Hover`) and returns its contents as Markdown.
+    pub async fn hover(
+        &self,
+        file_path: String,
+        line: u32,
+        character: u32,
+    ) -> Result<HoverResponse, RacliRpcError> {
+        let path = PathBuf::from(file_path.trim());
+        if path.as_os_str().is_empty() {
+            return Err(RacliRpcError::InvalidArgument(
+                "file_path must not be empty".into(),
+            ));
+        }
+        let abs = std::fs::canonicalize(&path).map_err(|e| {
+            RacliRpcError::InvalidArgument(format!("cannot resolve file path: {e}"))
+        })?;
+        let uri = crate::rust_analyzer::document_uri_from_path(&abs)
+            .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
+
+        let value = ractor::call!(self.rust_analyzer, |reply| {
+            RustAnalyzerMsg::Hover {
+                uri,
+                line,
+                character,
+                reply,
+            }
+        })??;
+
+        Ok(HoverResponse {
+            markdown: crate::lsp_map::hover_contents(&value["contents"]),
+        })
     }
 }
 

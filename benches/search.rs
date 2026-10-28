@@ -141,7 +141,9 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::search(sock, "RustAnalyzerSession")
+                        racli::client::Client::new(sock)
+                            .unwrap()
+                            .search("RustAnalyzerSession")
                     )
                     .await,
                     Ok(Ok(_))

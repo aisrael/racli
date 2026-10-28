@@ -1,8 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use racli::client::document_symbols;
-use racli::client::search;
+use racli::client::Client;
 use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
 use racli::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
@@ -24,7 +23,9 @@ async fn wait_until_socket_path_exists(sock: &Path) {
 async fn search_until_non_empty(sock: &Path) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
-        let resp = search(sock, "")
+        let resp = Client::new(sock)
+            .unwrap()
+            .search("")
             .await
             .expect("search should succeed when rust-analyzer is available");
         let non_empty = match resp.workspace_symbol_response.as_ref() {
@@ -80,7 +81,9 @@ async fn grpc_document_symbols_server_rs_core_struct() {
     let server_rs = std::env::current_dir().expect("cwd").join("src/server.rs");
     let file_path = server_rs.canonicalize().expect("canonicalize server.rs");
 
-    let resp = document_symbols(sock.as_path(), file_path.to_string_lossy().as_ref())
+    let resp = Client::new(sock.as_path())
+        .unwrap()
+        .document_symbols(file_path.to_string_lossy().as_ref())
         .await
         .expect("document_symbols");
 

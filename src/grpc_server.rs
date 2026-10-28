@@ -21,6 +21,8 @@ use crate::proto::racli::FindReferencesRequest;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
+use crate::proto::racli::HoverRequest;
+use crate::proto::racli::HoverResponse;
 use crate::proto::racli::IncomingCallsResponse;
 use crate::proto::racli::LspEvent;
 use crate::proto::racli::LspEventsRequest;
@@ -291,6 +293,26 @@ impl Racli for RacliGrpc {
         );
         self.session
             .document_symbols(inner.file_path)
+            .await
+            .map(Response::new)
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Runs LSP `textDocument/hover` and returns its contents as Markdown.
+    async fn hover(
+        &self,
+        request: Request<HoverRequest>,
+    ) -> Result<Response<HoverResponse>, Status> {
+        let inner = request.into_inner();
+        tracing::debug!(
+            rpc = "Racli.Hover",
+            file_path = %inner.file_path,
+            line = inner.line,
+            character = inner.character,
+            "gRPC endpoint invoked"
+        );
+        self.session
+            .hover(inner.file_path, inner.line, inner.character)
             .await
             .map(Response::new)
             .map_err(racli_rpc_error_to_status)

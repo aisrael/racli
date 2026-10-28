@@ -1,8 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use racli::client::search;
-use racli::client::search_with_options;
+use racli::client::Client;
 use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
 use racli::proto::racli::SearchResponse;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
@@ -67,7 +66,9 @@ async fn search_until_all_symbols_named(
 ) -> SearchResponse {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
-        let resp = search(sock, query)
+        let resp = Client::new(sock)
+            .unwrap()
+            .search(query)
             .await
             .expect("search should succeed when rust-analyzer is available");
         if let Some(ws) = resp.workspace_symbol_response.as_ref()
@@ -93,7 +94,9 @@ async fn search_with_options_until(
 ) -> SearchResponse {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
-        let resp = search_with_options(sock, query, options)
+        let resp = Client::new(sock)
+            .unwrap()
+            .search_with_options(query, options)
             .await
             .expect("search should succeed when rust-analyzer is available");
         if let Some(ws) = resp.workspace_symbol_response.as_ref()
@@ -122,7 +125,9 @@ fn payload_of(resp: &SearchResponse) -> Payload {
 async fn search_until_non_empty(sock: &Path, query: &str) -> SearchResponse {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
-        let resp = search(sock, query)
+        let resp = Client::new(sock)
+            .unwrap()
+            .search(query)
             .await
             .expect("search should succeed when rust-analyzer is available");
         if let Some(ws) = resp.workspace_symbol_response.as_ref()
@@ -143,7 +148,9 @@ async fn search_until_non_empty(sock: &Path, query: &str) -> SearchResponse {
 async fn search_until_symbol_named(sock: &Path, query: &str, needle: &str) -> SearchResponse {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
-        let resp = search(sock, query)
+        let resp = Client::new(sock)
+            .unwrap()
+            .search(query)
             .await
             .expect("search should succeed when rust-analyzer is available");
         if let Some(ws) = resp.workspace_symbol_response.as_ref()
@@ -412,7 +419,9 @@ async fn grpc_search_kind_and_scope_overrides() {
         kind: Some(SymbolSearchKind::OnlyTypes),
         scope: None,
     };
-    let resp = search_with_options(sock.as_path(), "", only_types)
+    let resp = Client::new(sock.as_path())
+        .unwrap()
+        .search_with_options("", only_types)
         .await
         .expect("only-types search");
     let payload = payload_of(&resp);
@@ -431,7 +440,9 @@ async fn grpc_search_kind_and_scope_overrides() {
         payload_has_symbol_named(p, "HashMap")
     })
     .await;
-    let resp = search(sock.as_path(), "HashMap")
+    let resp = Client::new(sock.as_path())
+        .unwrap()
+        .search("HashMap")
         .await
         .expect("workspace search");
     assert!(

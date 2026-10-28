@@ -7,7 +7,7 @@ use clap::Parser;
 use clap::ValueEnum;
 use serde::Serialize;
 
-use crate::client;
+use crate::client::Client;
 use crate::proto::racli::lsp_workspace_symbol_response::Payload;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
@@ -90,13 +90,20 @@ impl SearchArgs {
 pub async fn run_cli_search(args: SearchArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
+    let client = match Client::new(&sock) {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("racli search ({sock_display}): {err}");
+            return;
+        }
+    };
     let options = SymbolSearchOptions {
         kind: args.kind,
         scope: args.scope,
     };
     match tokio::time::timeout(
         Duration::from_secs(60),
-        client::search_with_options(&sock, &args.query, options),
+        client.search_with_options(&args.query, options),
     )
     .await
     {

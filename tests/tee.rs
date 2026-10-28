@@ -1,7 +1,7 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use racli::client::get_version;
+use racli::client::Client;
 use serde_json::Value;
 use serde_json::json;
 use tempfile::tempdir;
@@ -108,7 +108,11 @@ async fn tee_proxies_stdio_lsp_through_grpc() {
         .await;
 
         // The gRPC socket is shared with other clients while the editor session is live.
-        let version = get_version(&sock).await.expect("get_version");
+        let version = Client::new(&sock)
+            .unwrap()
+            .get_version()
+            .await
+            .expect("get_version");
         assert_eq!(version.version, env!("CARGO_PKG_VERSION"));
 
         // Like an editor, open the document first (forwarded via `LspNotify`).
@@ -270,7 +274,9 @@ async fn tee_derives_socket_path_from_cwd() {
         .await;
         recv_response(&mut stdout, 1).await;
 
-        let version = get_version(&sock)
+        let version = Client::new(&sock)
+            .unwrap()
+            .get_version()
             .await
             .expect("get_version on derived socket");
         assert_eq!(version.version, env!("CARGO_PKG_VERSION"));
@@ -508,7 +514,7 @@ async fn second_instance_refused_from_terminal_but_not_from_editor() {
         }
     });
     let serving = async {
-        while get_version(&sock).await.is_err() {
+        while Client::new(&sock).unwrap().get_version().await.is_err() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     };

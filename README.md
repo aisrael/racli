@@ -53,6 +53,7 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 
 - [ADR 001: Lookup by Symbol](docs/adrs/001-lookup-by-symbol.md)
 - [ADR 002: 1-Based Positions and Grep-Style Text Output](docs/adrs/002-one-based-positions-and-text-output.md)
+- [ADR 003: A High-Level Client](docs/adrs/003-high-level-client.md)
 
 ### `racli server`
 

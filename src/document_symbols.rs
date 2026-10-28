@@ -8,7 +8,7 @@ use clap::Parser;
 use clap::ValueEnum;
 use serde::Serialize;
 
-use crate::client;
+use crate::client::Client;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspRange;
@@ -69,6 +69,13 @@ impl DocumentSymbolsArgs {
 pub async fn run_cli_document_symbols(args: DocumentSymbolsArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
+    let client = match Client::new(&sock) {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("racli document-symbols ({sock_display}): {err}");
+            return;
+        }
+    };
 
     let abs = match args.path.canonicalize() {
         Ok(p) => p,
@@ -83,12 +90,7 @@ pub async fn run_cli_document_symbols(args: DocumentSymbolsArgs) {
 
     let file_path = abs.display().to_string();
 
-    match tokio::time::timeout(
-        Duration::from_secs(60),
-        client::document_symbols(&sock, &file_path),
-    )
-    .await
-    {
+    match tokio::time::timeout(Duration::from_secs(60), client.document_symbols(&file_path)).await {
         Ok(Ok(resp)) => match args.print_kind() {
             DocumentSymbolsPrintKind::Text => print_document_symbols_text(&resp),
             DocumentSymbolsPrintKind::Json => print_document_symbols_json(&resp),
