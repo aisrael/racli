@@ -198,7 +198,7 @@ pub(crate) async fn exit_if_already_serving(socket_path: &Path) {
 
 /// Asks the racli on `socket_path` for its version, as `racli <version> is serving <socket> (<rust-analyzer>)`.
 async fn describe_server(socket_path: &Path) -> Result<String, ClientError> {
-    let resp = Client::new(socket_path)?.get_version().await?;
+    let resp = Client::new(socket_path)?.get_version().await?.value;
     let lsp = resp
         .lsp_server_info
         .filter(|info| !info.name.is_empty() || !info.version.is_empty())

@@ -286,7 +286,11 @@ impl RacliServer {
             )
             .await;
             let found = match probe {
-                Ok(Ok(resp)) => match resp.workspace_symbol_response.and_then(|ws| ws.payload) {
+                Ok(Ok(resp)) => match resp
+                    .value
+                    .workspace_symbol_response
+                    .and_then(|ws| ws.payload)
+                {
                     Some(Payload::Flat(list)) => !list.items.is_empty(),
                     Some(Payload::Nested(list)) => !list.items.is_empty(),
                     None => false,
@@ -324,7 +328,7 @@ impl RacliServer {
                     .find_definition(&main_rs, 80, 21),
             )
             .await;
-            if matches!(probe, Ok(Ok(resp)) if !resp.locations.is_empty()) {
+            if matches!(probe, Ok(Ok(resp)) if !resp.value.locations.is_empty()) {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(200)).await;

@@ -74,6 +74,7 @@ async fn hover_markdown(
     let resp = client
         .hover(path.display().to_string(), start.line, start.character)
         .await
+        .map(|reply| reply.value)
         .map_err(|e| e.to_string())?;
     Ok(resp.markdown)
 }
@@ -95,6 +96,7 @@ async fn definition_source(
     let outline = client
         .document_symbols(path.display().to_string())
         .await
+        .map(|reply| reply.value)
         .map_err(|e| e.to_string())?;
     let Some(full) = outline_symbol_at(&outline.symbols, range)
         .and_then(|symbol| symbol.range)

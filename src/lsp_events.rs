@@ -68,6 +68,13 @@ impl LspEvents {
         let _ = self.tx.send(event);
     }
 
+    /// The params of rust-analyzer's latest `experimental/serverStatus`, if it has sent one.
+    pub fn server_status(&self) -> Option<serde_json::Value> {
+        let latest = self.latest.lock().unwrap_or_else(|e| e.into_inner());
+        let event = latest.get(SERVER_STATUS)?;
+        serde_json::from_str(&event.params_json).ok()
+    }
+
     /// Returns the cached events followed by a receiver for all later events.
     pub fn subscribe(&self) -> (Vec<LspEvent>, broadcast::Receiver<LspEvent>) {
         let latest = self.latest.lock().unwrap_or_else(|e| e.into_inner());

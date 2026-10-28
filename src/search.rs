@@ -8,6 +8,7 @@ use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::client::Client;
+use crate::client::Reply;
 use crate::proto::racli::lsp_workspace_symbol_response::Payload;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
@@ -107,7 +108,9 @@ pub async fn run_cli_search(args: SearchArgs) {
     )
     .await
     {
-        Ok(Ok(mut resp)) => {
+        Ok(Ok(Reply {
+            value: mut resp, ..
+        })) => {
             if args.exact {
                 keep_exact_names(&mut resp, &args.query);
             }

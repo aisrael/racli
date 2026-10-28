@@ -191,7 +191,7 @@ fn main() {
                         racli::client::Client::new(sock).unwrap().find_definition(&server_rs, 36, 17),
                     )
                     .await,
-                    Ok(Ok(resp)) if !resp.locations.is_empty()
+                    Ok(Ok(resp)) if !resp.value.locations.is_empty()
                 )
             },
             "racli server did not resolve the `RustAnalyzerSession` definition in time",

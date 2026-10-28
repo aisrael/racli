@@ -124,6 +124,15 @@ impl RacliGrpc {
     pub(crate) fn new(session: Arc<RacliSession>) -> Self {
         Self { session }
     }
+
+    /// Wraps `value` in a response whose metadata carries the backend's status (ADR 004).
+    fn respond<T>(&self, value: T) -> Response<T> {
+        let mut response = Response::new(value);
+        self.session
+            .backend_status()
+            .insert_into(response.metadata_mut());
+        response
+    }
 }
 
 /// Server stream type for `Racli.LspEvents`.
@@ -141,7 +150,7 @@ impl Racli for RacliGrpc {
         tracing::debug!(rpc = "Racli.GetVersion", "gRPC endpoint invoked");
         let resp = self.session.get_version();
         tracing::debug!(rpc = "Racli.GetVersion", %resp.version, "returning GetVersion response");
-        Ok(Response::new(resp))
+        Ok(self.respond(resp))
     }
 
     /// Runs LSP `workspace/symbol` and returns a protobuf mirror of [`lsp_types::WorkspaceSymbolResponse`].
@@ -162,7 +171,7 @@ impl Racli for RacliGrpc {
         self.session
             .search(inner.query, options)
             .await
-            .map(Response::new)
+            .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -182,7 +191,7 @@ impl Racli for RacliGrpc {
         self.session
             .find_definition(inner.file_path, inner.line, inner.character)
             .await
-            .map(Response::new)
+            .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -202,7 +211,7 @@ impl Racli for RacliGrpc {
         self.session
             .find_implementations(inner.file_path, inner.line, inner.character)
             .await
-            .map(Response::new)
+            .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -222,7 +231,7 @@ impl Racli for RacliGrpc {
         self.session
             .find_references(inner.file_path, inner.line, inner.character)
             .await
-            .map(Response::new)
+            .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -242,7 +251,7 @@ impl Racli for RacliGrpc {
         self.session
             .prepare_call_hierarchy(inner.file_path, inner.line, inner.character)
             .await
-            .map(Response::new)
+            .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -259,7 +268,7 @@ impl Racli for RacliGrpc {
         self.session
             .incoming_calls(item)
             .await
-            .map(Response::new)
+            .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -276,7 +285,7 @@ impl Racli for RacliGrpc {
         self.session
             .outgoing_calls(item)
             .await
-            .map(Response::new)
+            .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -294,7 +303,7 @@ impl Racli for RacliGrpc {
         self.session
             .document_symbols(inner.file_path)
             .await
-            .map(Response::new)
+            .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -314,7 +323,7 @@ impl Racli for RacliGrpc {
         self.session
             .hover(inner.file_path, inner.line, inner.character)
             .await
-            .map(Response::new)
+            .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -324,7 +333,7 @@ impl Racli for RacliGrpc {
         _request: Request<LspInitializeRequest>,
     ) -> Result<Response<LspInitializeResponse>, Status> {
         tracing::debug!(rpc = "Racli.LspInitialize", "gRPC endpoint invoked");
-        Ok(Response::new(self.session.lsp_initialize()))
+        Ok(self.respond(self.session.lsp_initialize()))
     }
 
     /// Forwards an arbitrary LSP request to rust-analyzer.
@@ -337,7 +346,7 @@ impl Racli for RacliGrpc {
         self.session
             .lsp_request(inner.method, &inner.params_json)
             .await
-            .map(Response::new)
+            .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -351,7 +360,7 @@ impl Racli for RacliGrpc {
         self.session
             .lsp_notify(inner.method, &inner.params_json)
             .await
-            .map(|()| Response::new(LspNotifyResponse {}))
+            .map(|()| self.respond(LspNotifyResponse {}))
             .map_err(racli_rpc_error_to_status)
     }
 
@@ -370,7 +379,7 @@ impl Racli for RacliGrpc {
             }
         });
         let stream = tokio_stream::iter(snapshot.into_iter().map(Ok)).chain(live);
-        Ok(Response::new(Box::pin(stream)))
+        Ok(self.respond(Box::pin(stream)))
     }
 }
 

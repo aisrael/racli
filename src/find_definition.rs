@@ -8,6 +8,7 @@ use clap::Parser;
 use serde::Serialize;
 
 use crate::client::Client;
+use crate::client::Reply;
 use crate::definition_details::DefinitionDetails;
 use crate::definition_details::DefinitionSource;
 use crate::definition_details::definition_details;
@@ -102,7 +103,7 @@ pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
         )
         .await
         {
-            Ok(Ok(resp)) => {
+            Ok(Ok(Reply { value: resp, .. })) => {
                 let mut details = Vec::new();
                 if args.hover || args.source {
                     for loc in &resp.locations {

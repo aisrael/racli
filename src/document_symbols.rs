@@ -9,6 +9,7 @@ use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::client::Client;
+use crate::client::Reply;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspRange;
@@ -91,7 +92,7 @@ pub async fn run_cli_document_symbols(args: DocumentSymbolsArgs) {
     let file_path = abs.display().to_string();
 
     match tokio::time::timeout(Duration::from_secs(60), client.document_symbols(&file_path)).await {
-        Ok(Ok(resp)) => match args.print_kind() {
+        Ok(Ok(Reply { value: resp, .. })) => match args.print_kind() {
             DocumentSymbolsPrintKind::Text => print_document_symbols_text(&resp),
             DocumentSymbolsPrintKind::Json => print_document_symbols_json(&resp),
         },

@@ -9,6 +9,7 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::actors::rust_analyzer::RustAnalyzerMsg;
+use crate::backend_status::BackendStatus;
 use crate::lsp_client::LspError;
 use crate::lsp_events::LspEvents;
 use crate::proto::racli::DocumentSymbolsResponse;
@@ -191,6 +192,11 @@ impl RacliSession {
             reply,
         })??;
         Ok(())
+    }
+
+    /// Whether rust-analyzer has finished loading and indexing, from its latest `experimental/serverStatus`.
+    pub fn backend_status(&self) -> BackendStatus {
+        BackendStatus::from_server_status(self.events.server_status().as_ref())
     }
 
     /// Subscribes to rust-analyzer notifications (`Racli.LspEvents`): cached diagnostics, then a live receiver.

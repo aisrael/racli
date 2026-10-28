@@ -70,7 +70,8 @@ async fn search_until_all_symbols_named(
             .unwrap()
             .search(query)
             .await
-            .expect("search should succeed when rust-analyzer is available");
+            .expect("search should succeed when rust-analyzer is available")
+            .value;
         if let Some(ws) = resp.workspace_symbol_response.as_ref()
             && let Some(p) = ws.payload.as_ref()
             && payload_has_all_symbol_names(p, names)
@@ -98,7 +99,8 @@ async fn search_with_options_until(
             .unwrap()
             .search_with_options(query, options)
             .await
-            .expect("search should succeed when rust-analyzer is available");
+            .expect("search should succeed when rust-analyzer is available")
+            .value;
         if let Some(ws) = resp.workspace_symbol_response.as_ref()
             && let Some(p) = ws.payload.as_ref()
             && pred(p)
@@ -129,7 +131,8 @@ async fn search_until_non_empty(sock: &Path, query: &str) -> SearchResponse {
             .unwrap()
             .search(query)
             .await
-            .expect("search should succeed when rust-analyzer is available");
+            .expect("search should succeed when rust-analyzer is available")
+            .value;
         if let Some(ws) = resp.workspace_symbol_response.as_ref()
             && let Some(p) = ws.payload.as_ref()
             && payload_non_empty(p)
@@ -152,7 +155,8 @@ async fn search_until_symbol_named(sock: &Path, query: &str, needle: &str) -> Se
             .unwrap()
             .search(query)
             .await
-            .expect("search should succeed when rust-analyzer is available");
+            .expect("search should succeed when rust-analyzer is available")
+            .value;
         if let Some(ws) = resp.workspace_symbol_response.as_ref()
             && let Some(p) = ws.payload.as_ref()
             && payload_has_symbol_named(p, needle)
@@ -423,7 +427,8 @@ async fn grpc_search_kind_and_scope_overrides() {
         .unwrap()
         .search_with_options("", only_types)
         .await
-        .expect("only-types search");
+        .expect("only-types search")
+        .value;
     let payload = payload_of(&resp);
     assert!(payload_len(&payload) > 0, "expected types for empty query");
     assert!(
@@ -444,7 +449,8 @@ async fn grpc_search_kind_and_scope_overrides() {
         .unwrap()
         .search("HashMap")
         .await
-        .expect("workspace search");
+        .expect("workspace search")
+        .value;
     assert!(
         !payload_has_symbol_named(&payload_of(&resp), "HashMap"),
         "workspace scope returned a dependency symbol"

@@ -8,6 +8,7 @@ use clap::Subcommand;
 use crate::VERSION;
 use crate::call_hierarchy;
 use crate::client::Client;
+use crate::client::Reply;
 use crate::document_symbols;
 use crate::find_definition;
 use crate::find_implementations;
@@ -107,7 +108,7 @@ pub async fn run() -> Result<(), RunError> {
             let sock_display = sock.display().to_string();
             let version = async { Client::new(&sock)?.get_version().await };
             match tokio::time::timeout(Duration::from_secs(10), version).await {
-                Ok(Ok(resp)) => {
+                Ok(Ok(Reply { value: resp, .. })) => {
                     println!("client: {VERSION}");
                     println!("server: {}", resp.version);
                     let lsp = resp.lsp_server_info.as_ref();

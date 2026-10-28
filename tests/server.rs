@@ -38,7 +38,8 @@ async fn grpc_get_version_round_trip() {
         .unwrap()
         .get_version()
         .await
-        .expect("get_version");
+        .expect("get_version")
+        .value;
     assert_eq!(resp.version, env!("CARGO_PKG_VERSION"));
     let lsp = resp.lsp_server_info.expect("lsp_server_info");
     assert_eq!(lsp.name, "rust-analyzer");

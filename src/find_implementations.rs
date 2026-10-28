@@ -8,6 +8,7 @@ use clap::Parser;
 use serde::Serialize;
 
 use crate::client::Client;
+use crate::client::Reply;
 use crate::proto::racli::FindImplementationsResponse;
 use crate::symbol;
 use crate::symbol::SymbolArgs;
@@ -94,7 +95,7 @@ pub async fn run_cli_find_implementations(args: FindImplementationsArgs) {
         )
         .await
         {
-            Ok(Ok(resp)) => results.push((target.symbol, resp)),
+            Ok(Ok(Reply { value: resp, .. })) => results.push((target.symbol, resp)),
             Ok(Err(err)) => {
                 eprintln!("racli find-implementations ({sock_display}): {err}");
                 return;

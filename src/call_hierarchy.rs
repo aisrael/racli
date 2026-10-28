@@ -117,7 +117,7 @@ impl CallHierarchyBackend for SocketBackend {
         self.client
             .prepare_call_hierarchy(file_path, line, character)
             .await
-            .map(|r| r.items)
+            .map(|r| r.value.items)
             .map_err(|e| e.to_string())
     }
 
@@ -128,7 +128,7 @@ impl CallHierarchyBackend for SocketBackend {
         self.client
             .incoming_calls(item)
             .await
-            .map(|r| r.calls)
+            .map(|r| r.value.calls)
             .map_err(|e| e.to_string())
     }
 
@@ -139,7 +139,7 @@ impl CallHierarchyBackend for SocketBackend {
         self.client
             .outgoing_calls(item)
             .await
-            .map(|r| r.calls)
+            .map(|r| r.value.calls)
             .map_err(|e| e.to_string())
     }
 }

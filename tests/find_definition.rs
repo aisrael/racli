@@ -27,7 +27,8 @@ async fn search_until_non_empty(sock: &Path) {
             .unwrap()
             .search("")
             .await
-            .expect("search should succeed when rust-analyzer is available");
+            .expect("search should succeed when rust-analyzer is available")
+            .value;
         let non_empty = match resp.workspace_symbol_response.as_ref() {
             Some(ws) => match ws.payload.as_ref() {
                 Some(Payload::Flat(list)) => !list.items.is_empty(),
@@ -86,7 +87,8 @@ async fn grpc_find_definition_rust_analyzer_session() {
         .unwrap()
         .find_definition(file_path.to_string_lossy().as_ref(), 13, 27)
         .await
-        .expect("find_definition");
+        .expect("find_definition")
+        .value;
 
     let mut saw_rust_analyzer = false;
     for loc in &resp.locations {

@@ -6,6 +6,7 @@ use std::time::Duration;
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 
+use crate::backend_status::BackendStatus;
 use crate::proto::racli::CallHierarchyCallsRequest;
 use crate::proto::racli::DocumentSymbolsRequest;
 use crate::proto::racli::DocumentSymbolsResponse;
@@ -53,6 +54,26 @@ pub enum ClientError {
     Status(#[from] tonic::Status),
 }
 
+/// A response's value with the backend's status when the server produced it (ADR 004).
+#[derive(Clone, Debug)]
+pub struct Reply<T> {
+    /// The RPC's response message.
+    pub value: T,
+    /// Whether rust-analyzer had finished loading and indexing when the server answered.
+    pub backend: BackendStatus,
+}
+
+impl<T> Reply<T> {
+    /// Takes the value and the backend's status from a gRPC response.
+    fn from_response(response: tonic::Response<T>) -> Self {
+        let backend = BackendStatus::from_metadata(response.metadata());
+        Self {
+            value: response.into_inner(),
+            backend,
+        }
+    }
+}
+
 /// A client for the `racli server` on a Unix socket; its calls share one connection, opened on the first call.
 #[derive(Clone, Debug)]
 pub struct Client {
@@ -72,7 +93,7 @@ impl Client {
     }
 
     /// Calls `GetVersion`, with a 10s timeout.
-    pub async fn get_version(&self) -> Result<GetVersionResponse, ClientError> {
+    pub async fn get_version(&self) -> Result<Reply<GetVersionResponse>, ClientError> {
         let mut client = self.inner.clone();
         let resp = tokio::time::timeout(
             GET_VERSION_TIMEOUT,
@@ -80,11 +101,14 @@ impl Client {
         )
         .await
         .map_err(|_| tonic::Status::deadline_exceeded("GetVersion timed out after 10 seconds"))??;
-        Ok(resp.into_inner())
+        Ok(Reply::from_response(resp))
     }
 
     /// Calls `Search` with the server's default symbol kind and scope (see [`Client::search_with_options`]).
-    pub async fn search(&self, query: impl AsRef<str>) -> Result<SearchResponse, ClientError> {
+    pub async fn search(
+        &self,
+        query: impl AsRef<str>,
+    ) -> Result<Reply<SearchResponse>, ClientError> {
         self.search_with_options(query, SymbolSearchOptions::default())
             .await
     }
@@ -94,7 +118,7 @@ impl Client {
         &self,
         query: impl AsRef<str>,
         options: SymbolSearchOptions,
-    ) -> Result<SearchResponse, ClientError> {
+    ) -> Result<Reply<SearchResponse>, ClientError> {
         let mut client = self.inner.clone();
         let resp = client
             .search(SearchRequest {
@@ -115,7 +139,7 @@ impl Client {
                     }) as i32,
             })
             .await?;
-        Ok(resp.into_inner())
+        Ok(Reply::from_response(resp))
     }
 
     /// Calls `FindDefinition` at a 0-based position in `file_path`.
@@ -124,7 +148,7 @@ impl Client {
         file_path: impl AsRef<str>,
         line: u32,
         character: u32,
-    ) -> Result<FindDefinitionResponse, ClientError> {
+    ) -> Result<Reply<FindDefinitionResponse>, ClientError> {
         let mut client = self.inner.clone();
         let resp = client
             .find_definition(FindDefinitionRequest {
@@ -133,7 +157,7 @@ impl Client {
                 character,
             })
             .await?;
-        Ok(resp.into_inner())
+        Ok(Reply::from_response(resp))
     }
 
     /// Calls `FindImplementations` at a 0-based position in `file_path`.
@@ -142,7 +166,7 @@ impl Client {
         file_path: impl AsRef<str>,
         line: u32,
         character: u32,
-    ) -> Result<FindImplementationsResponse, ClientError> {
+    ) -> Result<Reply<FindImplementationsResponse>, ClientError> {
         let mut client = self.inner.clone();
         let resp = client
             .find_implementations(FindImplementationsRequest {
@@ -151,7 +175,7 @@ impl Client {
                 character,
             })
             .await?;
-        Ok(resp.into_inner())
+        Ok(Reply::from_response(resp))
     }
 
     /// Calls `FindReferences` at a 0-based position in `file_path`.
@@ -160,7 +184,7 @@ impl Client {
         file_path: impl AsRef<str>,
         line: u32,
         character: u32,
-    ) -> Result<FindReferencesResponse, ClientError> {
+    ) -> Result<Reply<FindReferencesResponse>, ClientError> {
         let mut client = self.inner.clone();
         let resp = client
             .find_references(FindReferencesRequest {
@@ -169,7 +193,7 @@ impl Client {
                 character,
             })
             .await?;
-        Ok(resp.into_inner())
+        Ok(Reply::from_response(resp))
     }
 
     /// Calls `PrepareCallHierarchy` at a 0-based position in `file_path`.
@@ -178,7 +202,7 @@ impl Client {
         file_path: impl AsRef<str>,
         line: u32,
         character: u32,
-    ) -> Result<PrepareCallHierarchyResponse, ClientError> {
+    ) -> Result<Reply<PrepareCallHierarchyResponse>, ClientError> {
         let mut client = self.inner.clone();
         let resp = client
             .prepare_call_hierarchy(PrepareCallHierarchyRequest {
@@ -187,45 +211,45 @@ impl Client {
                 character,
             })
             .await?;
-        Ok(resp.into_inner())
+        Ok(Reply::from_response(resp))
     }
 
     /// Calls `DocumentSymbols` for `file_path`.
     pub async fn document_symbols(
         &self,
         file_path: impl AsRef<str>,
-    ) -> Result<DocumentSymbolsResponse, ClientError> {
+    ) -> Result<Reply<DocumentSymbolsResponse>, ClientError> {
         let mut client = self.inner.clone();
         let resp = client
             .document_symbols(DocumentSymbolsRequest {
                 file_path: file_path.as_ref().to_string(),
             })
             .await?;
-        Ok(resp.into_inner())
+        Ok(Reply::from_response(resp))
     }
 
     /// Calls `IncomingCalls` for `item`, which must be the exact item returned by [`Client::prepare_call_hierarchy`] (or a prior `IncomingCalls`/`OutgoingCalls` call).
     pub async fn incoming_calls(
         &self,
         item: LspCallHierarchyItem,
-    ) -> Result<IncomingCallsResponse, ClientError> {
+    ) -> Result<Reply<IncomingCallsResponse>, ClientError> {
         let mut client = self.inner.clone();
         let resp = client
             .incoming_calls(CallHierarchyCallsRequest { item: Some(item) })
             .await?;
-        Ok(resp.into_inner())
+        Ok(Reply::from_response(resp))
     }
 
     /// Calls `OutgoingCalls` for `item`, which must be the exact item returned by [`Client::prepare_call_hierarchy`] (or a prior `IncomingCalls`/`OutgoingCalls` call).
     pub async fn outgoing_calls(
         &self,
         item: LspCallHierarchyItem,
-    ) -> Result<OutgoingCallsResponse, ClientError> {
+    ) -> Result<Reply<OutgoingCallsResponse>, ClientError> {
         let mut client = self.inner.clone();
         let resp = client
             .outgoing_calls(CallHierarchyCallsRequest { item: Some(item) })
             .await?;
-        Ok(resp.into_inner())
+        Ok(Reply::from_response(resp))
     }
 
     /// Calls `Hover` at a 0-based position in `file_path`.
@@ -234,7 +258,7 @@ impl Client {
         file_path: impl AsRef<str>,
         line: u32,
         character: u32,
-    ) -> Result<HoverResponse, ClientError> {
+    ) -> Result<Reply<HoverResponse>, ClientError> {
         let mut client = self.inner.clone();
         let resp = client
             .hover(HoverRequest {
@@ -243,6 +267,6 @@ impl Client {
                 character,
             })
             .await?;
-        Ok(resp.into_inner())
+        Ok(Reply::from_response(resp))
     }
 }

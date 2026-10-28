@@ -332,6 +332,7 @@ async fn symbol_at(
     let definition = client
         .find_definition(file_path, line, character)
         .await
+        .map(|reply| reply.value)
         .map_err(|e| e.to_string())?;
     let Some((uri, lsp_range)) = definition
         .locations
@@ -352,6 +353,7 @@ async fn symbol_at(
     let outline = client
         .document_symbols(path.display().to_string())
         .await
+        .map(|reply| reply.value)
         .map_err(|e| e.to_string())?;
     let Some(symbol) = outline_symbol_at(&outline.symbols, &lsp_range) else {
         return Ok(None);
@@ -495,7 +497,10 @@ async fn search(
         kind: Some(SymbolSearchKind::AllSymbols),
         scope: Some(scope),
     };
-    client.search_with_options(query, options).await
+    client
+        .search_with_options(query, options)
+        .await
+        .map(|reply| reply.value)
 }
 
 /// Splits `a::b::c` into its qualifier `a::b` and its name `c`.

@@ -186,7 +186,7 @@ fn main() {
                         racli::client::Client::new(sock).unwrap().find_implementations(&call_hierarchy_rs, 83, 10),
                     )
                     .await,
-                    Ok(Ok(resp)) if !resp.locations.is_empty()
+                    Ok(Ok(resp)) if !resp.value.locations.is_empty()
                 )
             },
             "racli server did not resolve the `CallHierarchyBackend` implementations in time",

@@ -27,7 +27,8 @@ async fn search_until_non_empty(sock: &Path) {
             .unwrap()
             .search("")
             .await
-            .expect("search should succeed when rust-analyzer is available");
+            .expect("search should succeed when rust-analyzer is available")
+            .value;
         let non_empty = match resp.workspace_symbol_response.as_ref() {
             Some(ws) => match ws.payload.as_ref() {
                 Some(Payload::Flat(list)) => !list.items.is_empty(),
@@ -91,7 +92,8 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
         .unwrap()
         .prepare_call_hierarchy(file_path.to_string_lossy().as_ref(), 844, 7)
         .await
-        .expect("prepare_call_hierarchy");
+        .expect("prepare_call_hierarchy")
+        .value;
 
     assert!(
         !prepared.items.is_empty(),
@@ -104,7 +106,8 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
         .unwrap()
         .incoming_calls(item)
         .await
-        .expect("incoming_calls");
+        .expect("incoming_calls")
+        .value;
 
     assert!(
         calls.calls.len() >= 2,
