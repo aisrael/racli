@@ -2,7 +2,9 @@
 //! `--text` output as `path:line:col`, with the path relative to the current directory.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// Parses a 1-based `--line` or `--character`, rejecting `0`.
 pub fn parse_one_based(value: &str) -> Result<u32, String> {
@@ -22,11 +24,18 @@ pub fn display_path(uri: &str) -> String {
     else {
         return uri.to_string();
     };
-    let cwd = std::env::current_dir().and_then(|d| d.canonicalize());
-    match cwd.as_ref().map(|cwd| path.strip_prefix(cwd)) {
-        Ok(Ok(relative)) => relative.display().to_string(),
+    match canonical_current_dir().map(|cwd| path.strip_prefix(cwd)) {
+        Some(Ok(relative)) => relative.display().to_string(),
         _ => path.display().to_string(),
     }
+}
+
+/// The canonical current directory, resolved once per process since `--text` output can print
+/// thousands of locations; `None` if it can't be read.
+fn canonical_current_dir() -> Option<&'static Path> {
+    static CWD: OnceLock<Option<PathBuf>> = OnceLock::new();
+    CWD.get_or_init(|| std::env::current_dir().and_then(|d| d.canonicalize()).ok())
+        .as_deref()
 }
 
 /// `path:line:col` for a 0-based LSP position in `uri`, with 1-based line and column.
