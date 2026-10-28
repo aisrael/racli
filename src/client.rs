@@ -1,6 +1,7 @@
 //! gRPC client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`, `FindReferences`, `FindImplementations`, `PrepareCallHierarchy`, `IncomingCalls`, `OutgoingCalls`, `DocumentSymbols`, `Hover`). It wraps only racli's typed RPCs, not the LSP passthrough used by `racli tee` (see ADR 003).
 
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use tonic::transport::Channel;
@@ -33,6 +34,12 @@ use crate::proto::racli::racli_client::RacliClient;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
+use crate::utils::derive_socket_path_enabled;
+use crate::utils::derived_unix_socket_path;
+use crate::utils::effective_unix_socket_path;
+use crate::utils::explicit_socket_path_set;
+use crate::utils::find_live_socket;
+use crate::utils::socket_is_live;
 
 /// Timeout for connecting to the server's socket.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -42,6 +49,32 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Timeout for `GetVersion`, which the server answers without asking rust-analyzer.
 const GET_VERSION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Socket for client commands: `RACLI_UNIX_SOCKET` if set, [`DEFAULT_UNIX_SOCKET_PATH`](crate::utils::DEFAULT_UNIX_SOCKET_PATH) if
+/// deriving is off, else the live derived socket of the cwd or its nearest ancestor (so clients work
+/// from any subdirectory of a served project). With no live server, warns and returns the cwd's derived path.
+pub fn client_unix_socket_path() -> PathBuf {
+    if explicit_socket_path_set() || !derive_socket_path_enabled() {
+        return effective_unix_socket_path();
+    }
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => std::fs::canonicalize(&cwd).unwrap_or(cwd),
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot read current directory; using the default socket");
+            return effective_unix_socket_path();
+        }
+    };
+    find_live_socket(&cwd, socket_is_live).unwrap_or_else(|| {
+        let socket = derived_unix_socket_path(&cwd);
+        tracing::warn!(
+            cwd = %cwd.display(),
+            socket = %socket.display(),
+            "no running racli server found for this directory or its parents; start `racli server` \
+             or `racli tee` in the project root, or set RACLI_UNIX_SOCKET"
+        );
+        socket
+    })
+}
 
 /// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status.
 #[derive(Debug, thiserror::Error)]

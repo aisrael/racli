@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use crate::client::Client;
 use crate::client::Reply;
+use crate::client::client_unix_socket_path;
 use crate::proto::racli::lsp_workspace_symbol_response::Payload;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
@@ -16,7 +17,6 @@ use crate::rust_analyzer::SymbolSearchScope;
 use crate::server::split_search_query_into_segments;
 use crate::text_position::display_path;
 use crate::text_position::position_text;
-use crate::utils::client_unix_socket_path;
 
 /// How `racli search` prints results (default is JSON).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]

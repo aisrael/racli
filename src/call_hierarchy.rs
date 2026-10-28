@@ -20,6 +20,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::client::Client;
+use crate::client::client_unix_socket_path;
 use crate::proto::racli::LspCallHierarchyIncomingCall;
 use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::LspCallHierarchyOutgoingCall;
@@ -32,7 +33,6 @@ use crate::symbol::SymbolResultJson;
 use crate::symbol::print_symbol_results_json;
 use crate::text_position::parse_one_based;
 use crate::text_position::position_text;
-use crate::utils::client_unix_socket_path;
 
 /// Which side of the call graph to walk from the resolved item.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum, Deserialize, Serialize, JsonSchema)]

@@ -10,11 +10,11 @@ use serde::Serialize;
 
 use crate::client::Client;
 use crate::client::Reply;
+use crate::client::client_unix_socket_path;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspRange;
 use crate::text_position::range_text;
-use crate::utils::client_unix_socket_path;
 
 /// How `racli document-symbols` prints results (default is JSON).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]

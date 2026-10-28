@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use crate::client::Client;
 use crate::client::Reply;
+use crate::client::client_unix_socket_path;
 use crate::definition_details::DefinitionDetails;
 use crate::definition_details::DefinitionSource;
 use crate::definition_details::definition_details;
@@ -21,7 +22,6 @@ use crate::symbol::SymbolResultJson;
 use crate::symbol::print_symbol_results_json;
 use crate::text_position::SourceLines;
 use crate::text_position::parse_one_based;
-use crate::utils::client_unix_socket_path;
 
 /// Arguments for `racli find-definition` (LSP `textDocument/definition`).
 #[derive(Parser)]

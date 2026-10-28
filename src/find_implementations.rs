@@ -9,6 +9,7 @@ use serde::Serialize;
 
 use crate::client::Client;
 use crate::client::Reply;
+use crate::client::client_unix_socket_path;
 use crate::proto::racli::FindImplementationsResponse;
 use crate::symbol;
 use crate::symbol::SymbolArgs;
@@ -16,7 +17,6 @@ use crate::symbol::SymbolResultJson;
 use crate::symbol::print_symbol_results_json;
 use crate::text_position::SourceLines;
 use crate::text_position::parse_one_based;
-use crate::utils::client_unix_socket_path;
 
 /// Arguments for `racli find-implementations` (LSP `textDocument/implementation`).
 #[derive(Parser)]
