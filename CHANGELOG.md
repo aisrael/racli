@@ -4,6 +4,8 @@ All notable changes to racli are documented in this file. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-28
+
 ### Added
 
 - **Symbol names on the position commands**: `find-definition`, `find-references`, `find-implementations` and `call-hierarchy` take symbol names as positional arguments, as well as, or instead of, a position, e.g. `racli find-references mkfifo` or `racli find-references SymbolMatch SymbolFilter`. A position is now given with `--path <PATH> --line <N> --character <N>`. A name can be qualified by a module path from the crate root (`sys::mkfifo`) or by the type or trait that contains it (`Fifo::name`). Each definition gets its own result, and an unknown name lists the closest symbols. `--kind` and `--glob <PATTERN>` narrow the definitions names find. When a name is given, JSON output is an array of `{"symbol": …, "result": …}`; a position on its own prints as before. Symbols are looked up in the workspace first, then in its dependencies. See [ADR 001](docs/adrs/001-lookup-by-symbol.md).
@@ -80,6 +82,7 @@ Changes since 0.1.1.
 - `racli server` and `racli mcp` log at `info` instead of `debug` by default. Set `RACLI_SERVER_LOG_LEVEL=debug` to get the old output.
 - Library API: the `transport::socket_server` and `transport::socketwrapper` modules were removed, and `RACLI_SERVER_LOG_LEVEL_ENV` moved from `grpc_server` to `logging`.
 
+[0.3.0]: https://github.com/aisrael/racli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aisrael/racli/compare/v0.1.1...v0.2.0
 [#2]: https://github.com/aisrael/racli/pull/2
 [#3]: https://github.com/aisrael/racli/pull/3
