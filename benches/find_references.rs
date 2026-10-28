@@ -34,7 +34,7 @@ const QUERIES: &[ReferenceQuery] = &[
     },
     ReferenceQuery {
         file: "src/racli_session.rs",
-        line: 123,
+        line: 124,
         character: 11,
         symbol: "RacliSession",
     },
@@ -46,7 +46,7 @@ const QUERIES: &[ReferenceQuery] = &[
     },
     ReferenceQuery {
         file: "src/lib.rs",
-        line: 64,
+        line: 66,
         character: 15,
         symbol: "effective_unix_socket_path",
     },
