@@ -117,7 +117,10 @@ async fn tee_proxies_stdio_lsp_through_grpc() {
                 break reply.value;
             }
             assert!(
-                !matches!(reply.backend, BackendStatus::Error(_) | BackendStatus::Unknown),
+                !matches!(
+                    reply.backend,
+                    BackendStatus::Error(_) | BackendStatus::Unknown
+                ),
                 "backend can't become ready: {:?}",
                 reply.backend
             );
