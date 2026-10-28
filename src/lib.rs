@@ -54,6 +54,7 @@ pub mod text_position;
 pub mod transport;
 /// Shared small helpers (e.g. Unix socket path resolution).
 pub mod utils;
+#[cfg(feature = "notify")]
 mod workspace_file_watcher;
 
 pub use cli::RunError;

@@ -10,8 +10,8 @@ sequenceDiagram
     participant Server as racli server
     participant RA as rust-analyzer
 
-    Client->>Server: request via gRPC (per-project Unix socket /tmp/racli-<hash>.sock)
-    Server->>RA: request via LSP over stdio (initialize; workspace = server cwd)
+    Client->>Server: request via gRPC (per-project Unix socket /tmp/racli-#lt;hash#gt;.sock)
+    Server->>RA: request via LSP over stdio (initialize, workspace = server cwd)
     RA-->>Server: response
     Server-->>Client: response
 ```
@@ -94,10 +94,11 @@ flowchart TD
     Root[RootActor] --> Backend[BackendSupervisor]
     Root --> Frontend["GrpcFrontend | McpFrontend"]
     Backend --> RA["RustAnalyzerActor<br/>(owns the rust-analyzer child)"]
-    Backend --> Watcher["FileWatcherActor<br/>(notify → didChangeWatchedFiles)"]
+    Backend -.-> Watcher["FileWatcherActor<br/>(notify → didChangeWatchedFiles)<br/>notify feature only"]
 ```
 
-- **Startup:** rust-analyzer is spawned and LSP-initialized, then the file watcher starts, then the front end binds the Unix socket (gRPC) or completes the MCP handshake. A failure at any step tears down what already started.
+- **File watching:** by default rust-analyzer watches the workspace itself (`files.watcher: "server"`), and there is no `FileWatcherActor`. Built with the `notify` feature, racli starts its own watcher instead and sends rust-analyzer `workspace/didChangeWatchedFiles`. See [ADR 005](adrs/005-file-watching-by-rust-analyzer.md).
+- **Startup:** rust-analyzer is spawned and LSP-initialized, then the file watcher starts (with the `notify` feature), then the front end binds the Unix socket (gRPC) or completes the MCP handshake. A failure at any step tears down what already started.
 - **Requests:** gRPC/MCP handlers call `RacliSession`, which sends messages to `RustAnalyzerActor`; its mailbox serializes LSP traffic.
-- **Shutdown** (SIGINT/SIGTERM, gRPC serve error, or MCP stdin EOF) runs in reverse: front end → file watcher (queued events drained) → rust-analyzer (`shutdown`/`exit`, then wait for the child).
+- **Shutdown** (SIGINT/SIGTERM, gRPC serve error, or MCP stdin EOF) runs in reverse: front end → file watcher, if any (queued events drained) → rust-analyzer (`shutdown`/`exit`, then wait for the child).
 - **Failures:** a crashed backend actor is logged, not restarted; later requests fail with an `Internal` error.

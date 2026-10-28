@@ -18,7 +18,9 @@ use lsp_types::CodeActionLiteralSupport;
 use lsp_types::CompletionClientCapabilities;
 use lsp_types::CompletionItemCapability;
 use lsp_types::CompletionItemCapabilityResolveSupport;
+#[cfg(feature = "notify")]
 use lsp_types::DidChangeWatchedFilesClientCapabilities;
+#[cfg(feature = "notify")]
 use lsp_types::DidChangeWatchedFilesParams;
 use lsp_types::DocumentSymbolClientCapabilities;
 use lsp_types::DocumentSymbolParams;
@@ -47,10 +49,13 @@ use lsp_types::TextDocumentSyncClientCapabilities;
 use lsp_types::TokenFormat;
 use lsp_types::Uri;
 use lsp_types::WorkDoneProgressParams;
+#[cfg(feature = "notify")]
 use lsp_types::WorkspaceClientCapabilities;
 use lsp_types::WorkspaceFolder;
 use lsp_types::WorkspaceSymbolResponse;
+#[cfg(feature = "notify")]
 use lsp_types::notification::DidChangeWatchedFiles;
+#[cfg(feature = "notify")]
 use lsp_types::notification::Notification;
 use lsp_types::request::CallHierarchyIncomingCalls;
 use lsp_types::request::CallHierarchyOutgoingCalls;
@@ -176,7 +181,7 @@ impl Request for RaWorkspaceSymbolRequest {
 }
 
 /// Client capabilities advertised to rust-analyzer during LSP `initialize`: watched-files dynamic
-/// registration, hierarchical `textDocument/documentSymbol` (otherwise servers return a flat
+/// registration (with the `notify` feature), hierarchical `textDocument/documentSymbol` (otherwise servers return a flat
 /// `SymbolInformation[]`), and editor-level text document features for `racli tee`. Capabilities
 /// that make the server send requests to the client (configuration, applyEdit, refresh, progress)
 /// are deliberately omitted because racli cannot forward those to an editor; `experimental/serverStatus`
@@ -184,6 +189,8 @@ impl Request for RaWorkspaceSymbolRequest {
 fn racli_lsp_client_capabilities() -> ClientCapabilities {
     let markup = || Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]);
     ClientCapabilities {
+        // Only racli's own watcher (the `notify` feature) reports changes; otherwise rust-analyzer watches.
+        #[cfg(feature = "notify")]
         workspace: Some(WorkspaceClientCapabilities {
             did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
                 dynamic_registration: Some(true),
@@ -272,6 +279,21 @@ fn racli_lsp_client_capabilities() -> ClientCapabilities {
         experimental: Some(serde_json::json!({ "serverStatusNotification": true })),
         ..Default::default()
     }
+}
+
+/// rust-analyzer's `initializationOptions`: one more than racli's symbol search limit, so
+/// `workspace_symbol` can tell a cut-off from an exact fit, and without the `notify` feature, its own file watcher.
+fn racli_initialization_options(symbol_search_limit: u32) -> Value {
+    let options = serde_json::json!({
+        "workspace": { "symbol": { "search": { "limit": symbol_search_limit.saturating_add(1) } } }
+    });
+    #[cfg(not(feature = "notify"))]
+    let options = {
+        let mut options = options;
+        options["files"] = serde_json::json!({ "watcher": "server" });
+        options
+    };
+    options
 }
 
 /// Puts the child in its own process group so a terminal Ctrl+C (`SIGINT`) does not also kill rust-analyzer before LSP shutdown.
@@ -398,10 +420,7 @@ impl RustAnalyzerSession {
             process_id: None,
             root_uri: Some(root_uri.clone()),
             capabilities: racli_lsp_client_capabilities(),
-            // One more than the limit, so `workspace_symbol` can tell a cut-off from an exact fit.
-            initialization_options: Some(serde_json::json!({
-                "workspace": { "symbol": { "search": { "limit": symbol_search_limit.saturating_add(1) } } }
-            })),
+            initialization_options: Some(racli_initialization_options(symbol_search_limit)),
             client_info: Some(ClientInfo {
                 name: "racli".into(),
                 version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -784,6 +803,7 @@ impl RustAnalyzerSession {
     }
 
     /// Sends LSP `workspace/didChangeWatchedFiles` so the server can refresh state for filesystem changes.
+    #[cfg(feature = "notify")]
     pub async fn notify_did_change_watched_files(
         &mut self,
         params: DidChangeWatchedFilesParams,
