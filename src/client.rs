@@ -18,6 +18,8 @@ use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
 use crate::proto::racli::IncomingCallsResponse;
 use crate::proto::racli::LspCallHierarchyItem;
+use crate::proto::racli::LspRequestRequest;
+use crate::proto::racli::LspRequestResponse;
 use crate::proto::racli::OutgoingCallsResponse;
 use crate::proto::racli::PrepareCallHierarchyRequest;
 use crate::proto::racli::PrepareCallHierarchyResponse;
@@ -363,6 +365,42 @@ pub async fn outgoing_calls(
     let mut client = RacliClient::new(channel);
     let resp = client
         .outgoing_calls(CallHierarchyCallsRequest { item: Some(item) })
+        .await?;
+
+    Ok(resp.into_inner())
+}
+
+/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `LspRequest`.
+#[derive(Debug, thiserror::Error)]
+pub enum ClientLspRequestError {
+    /// Failed to build the channel endpoint or connect over the Unix URI.
+    #[error(transparent)]
+    Transport(#[from] tonic::transport::Error),
+    /// gRPC call completed with a non-OK status from the server.
+    #[error(transparent)]
+    Status(#[from] tonic::Status),
+}
+
+/// Calls `LspRequest` on the server at `socket_path`, passing an LSP request through to rust-analyzer, with 10s connect and 60s per-request timeout.
+pub async fn lsp_request(
+    socket_path: &Path,
+    method: impl Into<String>,
+    params_json: impl Into<String>,
+) -> Result<LspRequestResponse, ClientLspRequestError> {
+    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
+
+    let channel = ep
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
+        .connect()
+        .await?;
+
+    let mut client = RacliClient::new(channel);
+    let resp = client
+        .lsp_request(LspRequestRequest {
+            method: method.into(),
+            params_json: params_json.into(),
+        })
         .await?;
 
     Ok(resp.into_inner())

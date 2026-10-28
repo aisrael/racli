@@ -34,8 +34,8 @@ Feature: racli search
     And the output should be
       """
       flat: 2 symbol(s)
-      name [FUNCTION] fixtures/queue/src/sys.rs:37:8
-      name [FUNCTION] fixtures/queue/src/sys.rs:31:8
+      name [FUNCTION] fixtures/queue/src/sys.rs:38:8
+      name [FUNCTION] fixtures/queue/src/sys.rs:32:8
       """
 
   Scenario: --exact applies to each alternative pattern

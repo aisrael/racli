@@ -27,6 +27,7 @@ mod raw {
     }
 }
 
+/// Names a queue.
 pub trait Named {
     fn name(&self) -> &str;
 }

@@ -145,6 +145,23 @@ async fn json_output_should_match(world: &mut RacliWorld, path: String) {
     );
 }
 
+#[then(expr = "the JSON output should not match JSONPath {string}")]
+async fn json_output_should_not_match(world: &mut RacliWorld, path: String) {
+    let output = world
+        .command_output
+        .as_ref()
+        .expect("no command has been run");
+    let value = stdout_as_json(output);
+    let matches = value
+        .query(&path)
+        .unwrap_or_else(|e| panic!("invalid JSONPath {path:?}: {e:?}"));
+    assert!(
+        matches.is_empty(),
+        "expected JSONPath {path:?} to match nothing, got {matches:?}.\nstdout: {}",
+        output.stdout
+    );
+}
+
 #[then(expr = "the JSON output should be an array of {int} item(s)")]
 async fn json_output_should_be_an_array_of(world: &mut RacliWorld, expected: usize) {
     let output = world

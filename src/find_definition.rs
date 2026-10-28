@@ -8,6 +8,11 @@ use clap::Parser;
 use serde::Serialize;
 
 use crate::client;
+use crate::definition_details::DefinitionDetails;
+use crate::definition_details::DefinitionSource;
+use crate::definition_details::definition_details;
+use crate::definition_details::hover_text;
+use crate::definition_details::numbered_source;
 use crate::proto::racli::FindDefinitionResponse;
 use crate::symbol;
 use crate::symbol::SymbolArgs;
@@ -35,6 +40,12 @@ pub struct FindDefinitionArgs {
     pub character: Option<u32>,
     #[command(flatten)]
     pub symbol: SymbolArgs,
+    /// Also print each definition's signature and doc comment (LSP hover).
+    #[arg(long)]
+    pub hover: bool,
+    /// Also print each definition's whole source, including its doc comment.
+    #[arg(long)]
+    pub source: bool,
     /// Print one human-readable line per location instead of JSON.
     #[arg(long)]
     pub text: bool,
@@ -75,6 +86,7 @@ pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
     }
     let grouped = targets.grouped;
 
+    let mut sources = SourceLines::default();
     let mut results = Vec::with_capacity(targets.targets.len());
     for target in targets.targets {
         match tokio::time::timeout(
@@ -83,7 +95,21 @@ pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
         )
         .await
         {
-            Ok(Ok(resp)) => results.push((target.symbol, resp)),
+            Ok(Ok(resp)) => {
+                let mut details = Vec::new();
+                if args.hover || args.source {
+                    for loc in &resp.locations {
+                        let (found, errors) =
+                            definition_details(&sock, loc, args.hover, args.source, &mut sources)
+                                .await;
+                        for err in errors {
+                            eprintln!("racli find-definition ({sock_display}): {err}");
+                        }
+                        details.push(found);
+                    }
+                }
+                results.push((target.symbol, resp, details));
+            }
             Ok(Err(err)) => {
                 eprintln!("racli find-definition ({sock_display}): {err}");
                 return;
@@ -98,35 +124,34 @@ pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
     }
 
     if args.text {
-        let mut sources = SourceLines::default();
-        for (symbol, resp) in &results {
+        for (symbol, resp, details) in &results {
             match symbol {
                 Some(symbol) => {
                     println!("{}", symbol.header());
-                    print_find_definition_text(resp, "  ", &mut sources);
+                    print_find_definition_text(resp, details, "  ", &mut sources);
                 }
-                None => print_find_definition_text(resp, "", &mut sources),
+                None => print_find_definition_text(resp, details, "", &mut sources),
             }
         }
     } else if grouped {
         let grouped: Vec<_> = results
             .iter()
-            .filter_map(|(symbol, resp)| {
+            .filter_map(|(symbol, resp, details)| {
                 Some(SymbolResultJson {
                     symbol: symbol.as_ref()?,
-                    result: find_definition_json_rows(resp),
+                    result: find_definition_json_rows(resp, details),
                 })
             })
             .collect();
         print_symbol_results_json("find-definition", &grouped);
-    } else if let Some((_, resp)) = results.first() {
-        print_find_definition_json(resp);
+    } else if let Some((_, resp, details)) = results.first() {
+        print_find_definition_json(resp, details);
     }
 }
 
-/// Prints a [`FindDefinitionResponse`] as JSON (array of `uri` + `range`).
-fn print_find_definition_json(resp: &FindDefinitionResponse) {
-    let rows = find_definition_json_rows(resp);
+/// Prints a [`FindDefinitionResponse`] as JSON (array of `uri` + `range`, plus any details).
+fn print_find_definition_json(resp: &FindDefinitionResponse, details: &[DefinitionDetails]) {
+    let rows = find_definition_json_rows(resp, details);
     let mut stdout = std::io::stdout().lock();
     if let Err(e) = serde_json::to_writer(&mut stdout, &rows) {
         eprintln!("racli find-definition: failed to serialize JSON: {e}");
@@ -135,13 +160,25 @@ fn print_find_definition_json(resp: &FindDefinitionResponse) {
     let _ = writeln!(stdout);
 }
 
-/// The JSON rows for a [`FindDefinitionResponse`]: one `uri` + `range` per location.
-fn find_definition_json_rows(resp: &FindDefinitionResponse) -> Vec<DefinitionLocationJson> {
+/// The JSON rows for a [`FindDefinitionResponse`]: one `uri` + `range` per location, with its
+/// `hover` and `source` when `--hover` or `--source` fetched them.
+fn find_definition_json_rows<'a>(
+    resp: &FindDefinitionResponse,
+    details: &'a [DefinitionDetails],
+) -> Vec<DefinitionLocationJson<'a>> {
     resp.locations
         .iter()
-        .map(|loc| DefinitionLocationJson {
-            uri: loc.uri.clone(),
-            range: proto_lsp_range_to_json(loc.range.as_ref().unwrap_or(&default_empty_range())),
+        .enumerate()
+        .map(|(i, loc)| {
+            let detail = details.get(i);
+            DefinitionLocationJson {
+                uri: loc.uri.clone(),
+                range: proto_lsp_range_to_json(
+                    loc.range.as_ref().unwrap_or(&default_empty_range()),
+                ),
+                hover: detail.and_then(|d| d.hover.as_deref()),
+                source: detail.and_then(|d| d.source.as_ref()),
+            }
         })
         .collect()
 }
@@ -155,9 +192,15 @@ fn default_empty_range() -> crate::proto::racli::LspRange {
 
 /// Single definition row in JSON output.
 #[derive(Serialize)]
-struct DefinitionLocationJson {
+struct DefinitionLocationJson<'a> {
     uri: String,
     range: DefinitionRangeJson,
+    /// rust-analyzer's hover as Markdown, with `--hover`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hover: Option<&'a str>,
+    /// The definition's whole source, with `--source`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<&'a DefinitionSource>,
 }
 
 /// LSP range as JSON with `start` and `end` positions.
@@ -198,9 +241,11 @@ fn proto_lsp_range_to_json(r: &crate::proto::racli::LspRange) -> DefinitionRange
 }
 
 /// Prints locations as one line each, after `indent`: `path:line:col: source line`, with the path
-/// relative to the current directory and 1-based line and column.
+/// relative to the current directory and 1-based line and column. A location's hover and source
+/// follow it, indented two more spaces.
 fn print_find_definition_text(
     resp: &FindDefinitionResponse,
+    details: &[DefinitionDetails],
     indent: &str,
     sources: &mut SourceLines,
 ) {
@@ -208,7 +253,7 @@ fn print_find_definition_text(
         println!("{indent}(no definition)");
         return;
     }
-    for loc in &resp.locations {
+    for (i, loc) in resp.locations.iter().enumerate() {
         let (line, character) = loc
             .range
             .as_ref()
@@ -216,5 +261,22 @@ fn print_find_definition_text(
             .map(|p| (p.line, p.character))
             .unwrap_or((0, 0));
         println!("{indent}{}", sources.location(&loc.uri, line, character));
+        let Some(detail) = details.get(i) else {
+            continue;
+        };
+        if let Some(hover) = &detail.hover {
+            for line in hover_text(hover).lines() {
+                if line.is_empty() {
+                    println!();
+                } else {
+                    println!("{indent}  {line}");
+                }
+            }
+        }
+        if let Some(source) = &detail.source {
+            for line in numbered_source(&source.text, source.range.start.line) {
+                println!("{indent}  {line}");
+            }
+        }
     }
 }
