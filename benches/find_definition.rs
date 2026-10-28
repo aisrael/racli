@@ -54,7 +54,7 @@ const QUERIES: &[DefinitionQuery] = &[
     },
     DefinitionQuery {
         file: "src/rust_analyzer.rs",
-        line: 334,
+        line: 338,
         character: 35,
         symbol: "LspError",
     },
