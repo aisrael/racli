@@ -28,31 +28,31 @@ struct DefinitionQuery {
 const QUERIES: &[DefinitionQuery] = &[
     DefinitionQuery {
         file: "src/server.rs",
-        line: 34,
+        line: 36,
         character: 17,
         symbol: "RustAnalyzerSession",
     },
     DefinitionQuery {
         file: "src/grpc_server.rs",
-        line: 116,
+        line: 118,
         character: 17,
         symbol: "RacliSession",
     },
     DefinitionQuery {
         file: "src/racli_session.rs",
-        line: 123,
+        line: 124,
         character: 10,
         symbol: "Core",
     },
     DefinitionQuery {
         file: "src/cli.rs",
-        line: 114,
+        line: 105,
         character: 23,
         symbol: "client_unix_socket_path",
     },
     DefinitionQuery {
         file: "src/rust_analyzer.rs",
-        line: 310,
+        line: 312,
         character: 35,
         symbol: "LspError",
     },
@@ -164,7 +164,9 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::search(sock, "RustAnalyzerSession")
+                        racli::client::Client::new(sock)
+                            .unwrap()
+                            .search("RustAnalyzerSession")
                     )
                     .await,
                     Ok(Ok(_))
@@ -186,10 +188,10 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::find_definition(sock, &server_rs, 34, 17),
+                        racli::client::Client::new(sock).unwrap().find_definition(&server_rs, 36, 17),
                     )
                     .await,
-                    Ok(Ok(resp)) if !resp.locations.is_empty()
+                    Ok(Ok(resp)) if !resp.value.locations.is_empty()
                 )
             },
             "racli server did not resolve the `RustAnalyzerSession` definition in time",

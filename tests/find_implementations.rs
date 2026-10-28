@@ -1,8 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use racli::client::find_implementations;
-use racli::client::search;
+use racli::client::Client;
 use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
 use racli::proto::racli::lsp_workspace_symbol_response::Payload;
 use racli::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
@@ -24,9 +23,12 @@ async fn wait_until_socket_path_exists(sock: &Path) {
 async fn search_until_non_empty(sock: &Path) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
-        let resp = search(sock, "")
+        let resp = Client::new(sock)
+            .unwrap()
+            .search("")
             .await
-            .expect("search should succeed when rust-analyzer is available");
+            .expect("search should succeed when rust-analyzer is available")
+            .value;
         let non_empty = match resp.workspace_symbol_response.as_ref() {
             Some(ws) => match ws.payload.as_ref() {
                 Some(Payload::Flat(list)) => !list.items.is_empty(),
@@ -85,9 +87,12 @@ async fn grpc_find_implementations_call_hierarchy_backend() {
         .expect("canonicalize call_hierarchy.rs");
 
     // 0-based LSP position on `CallHierarchyBackend` in `pub trait CallHierarchyBackend: Send + Sync {`.
-    let resp = find_implementations(sock.as_path(), file_path.to_string_lossy().as_ref(), 83, 10)
+    let resp = Client::new(sock.as_path())
+        .unwrap()
+        .find_implementations(file_path.to_string_lossy().as_ref(), 83, 10)
         .await
-        .expect("find_implementations");
+        .expect("find_implementations")
+        .value;
 
     let mut saw_call_hierarchy = false;
     for loc in &resp.locations {

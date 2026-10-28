@@ -1,4 +1,4 @@
-//! Maps `lsp_types` workspace symbol responses into racli protobuf messages.
+//! Maps `lsp_types` responses (workspace symbols, locations, outlines, call hierarchy, hover) into racli protobuf messages.
 
 use lsp_types::CallHierarchyIncomingCall;
 use lsp_types::CallHierarchyItem;
@@ -17,6 +17,7 @@ use lsp_types::Uri;
 use lsp_types::WorkspaceLocation;
 use lsp_types::WorkspaceSymbol;
 use lsp_types::WorkspaceSymbolResponse;
+use serde_json::Value;
 
 use crate::proto::racli::LspCallHierarchyIncomingCall;
 use crate::proto::racli::LspCallHierarchyItem;
@@ -299,5 +300,39 @@ pub(crate) fn call_hierarchy_outgoing_call_to_proto(
     LspCallHierarchyOutgoingCall {
         to: Some(call_hierarchy_item_to_proto(call.to)),
         from_ranges: call.from_ranges.into_iter().map(range_to_proto).collect(),
+    }
+}
+
+/// The Markdown in an LSP hover's `contents`, which LSP allows as markup, a string or a list of them.
+pub(crate) fn hover_contents(contents: &Value) -> Option<String> {
+    match contents {
+        Value::String(s) => Some(s.clone()),
+        Value::Object(o) => o.get("value").and_then(Value::as_str).map(String::from),
+        Value::Array(items) => {
+            let parts: Vec<String> = items.iter().filter_map(hover_contents).collect();
+            (!parts.is_empty()).then(|| parts.join("\n\n"))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn hover_contents_accepts_markup_strings_and_lists() {
+        assert_eq!(
+            hover_contents(&json!({ "kind": "markdown", "value": "a" })),
+            Some("a".into())
+        );
+        assert_eq!(hover_contents(&json!("b")), Some("b".into()));
+        assert_eq!(
+            hover_contents(&json!(["c", { "language": "rust", "value": "d" }])),
+            Some("c\n\nd".into())
+        );
+        assert_eq!(hover_contents(&Value::Null), None);
     }
 }

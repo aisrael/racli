@@ -33,19 +33,19 @@ const QUERIES: &[ImplementationQuery] = &[
     },
     ImplementationQuery {
         file: "src/rust_analyzer.rs",
-        line: 327,
+        line: 329,
         character: 11,
         symbol: "RustAnalyzerSession",
     },
     ImplementationQuery {
         file: "src/racli_session.rs",
-        line: 122,
+        line: 123,
         character: 11,
         symbol: "RacliSession",
     },
     ImplementationQuery {
         file: "src/server.rs",
-        line: 19,
+        line: 20,
         character: 11,
         symbol: "Core",
     },
@@ -159,7 +159,9 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::search(sock, "RustAnalyzerSession")
+                        racli::client::Client::new(sock)
+                            .unwrap()
+                            .search("RustAnalyzerSession")
                     )
                     .await,
                     Ok(Ok(_))
@@ -181,10 +183,10 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::find_implementations(sock, &call_hierarchy_rs, 83, 10),
+                        racli::client::Client::new(sock).unwrap().find_implementations(&call_hierarchy_rs, 83, 10),
                     )
                     .await,
-                    Ok(Ok(resp)) if !resp.locations.is_empty()
+                    Ok(Ok(resp)) if !resp.value.locations.is_empty()
                 )
             },
             "racli server did not resolve the `CallHierarchyBackend` implementations in time",

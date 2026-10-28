@@ -56,7 +56,7 @@ pub fn derive_socket_path_enabled() -> bool {
 }
 
 /// Returns whether `RACLI_UNIX_SOCKET` is set to a non-empty path.
-fn explicit_socket_path_set() -> bool {
+pub(crate) fn explicit_socket_path_set() -> bool {
     std::env::var_os("RACLI_UNIX_SOCKET").is_some_and(|s| !s.is_empty())
 }
 
@@ -85,42 +85,16 @@ pub fn unix_socket_path_for_dir(dir: &Path) -> PathBuf {
 }
 
 /// Returns whether a server accepts connections on `path` (a stale socket file left by a crash does not count).
-fn socket_is_live(path: &Path) -> bool {
+pub(crate) fn socket_is_live(path: &Path) -> bool {
     std::os::unix::net::UnixStream::connect(path).is_ok()
 }
 
 /// Returns the derived socket of `start` or its nearest ancestor for which `is_live` holds.
-fn find_live_socket(start: &Path, is_live: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+pub(crate) fn find_live_socket(start: &Path, is_live: impl Fn(&Path) -> bool) -> Option<PathBuf> {
     start
         .ancestors()
         .map(derived_unix_socket_path)
         .find(|path| is_live(path))
-}
-
-/// Socket for client commands: `RACLI_UNIX_SOCKET` if set, [`DEFAULT_UNIX_SOCKET_PATH`] if deriving is
-/// off, else the live derived socket of the cwd or its nearest ancestor (so clients work from any
-/// subdirectory of a served project). With no live server, warns and returns the cwd's derived path.
-pub fn client_unix_socket_path() -> PathBuf {
-    if explicit_socket_path_set() || !derive_socket_path_enabled() {
-        return effective_unix_socket_path();
-    }
-    let cwd = match std::env::current_dir() {
-        Ok(cwd) => std::fs::canonicalize(&cwd).unwrap_or(cwd),
-        Err(e) => {
-            tracing::warn!(error = %e, "cannot read current directory; using the default socket");
-            return effective_unix_socket_path();
-        }
-    };
-    find_live_socket(&cwd, socket_is_live).unwrap_or_else(|| {
-        let socket = derived_unix_socket_path(&cwd);
-        tracing::warn!(
-            cwd = %cwd.display(),
-            socket = %socket.display(),
-            "no running racli server found for this directory or its parents; start `racli server` \
-             or `racli tee` in the project root, or set RACLI_UNIX_SOCKET"
-        );
-        socket
-    })
 }
 
 #[cfg(test)]

@@ -120,6 +120,17 @@ impl Core {
     ) -> Result<Value, RustAnalyzerError> {
         ra.text_document_document_symbol(document_uri).await
     }
+
+    /// Runs LSP `textDocument/hover` on the live rust-analyzer session and returns the raw JSON `result`.
+    pub async fn hover(
+        &self,
+        ra: &mut RustAnalyzerSession,
+        document_uri: String,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, RustAnalyzerError> {
+        ra.text_document_hover(document_uri, line, character).await
+    }
 }
 
 /// Splits `query` on unescaped ASCII `|` into trimmed segments; `\|` produces a literal `|` in the segment.

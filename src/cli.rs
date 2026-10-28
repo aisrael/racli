@@ -7,7 +7,9 @@ use clap::Subcommand;
 
 use crate::VERSION;
 use crate::call_hierarchy;
-use crate::client;
+use crate::client::Client;
+use crate::client::Reply;
+use crate::client::client_unix_socket_path;
 use crate::document_symbols;
 use crate::find_definition;
 use crate::find_implementations;
@@ -19,7 +21,6 @@ use crate::mcp;
 use crate::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use crate::search;
 use crate::tee;
-use crate::utils::client_unix_socket_path;
 use crate::utils::unix_socket_path_for_dir;
 
 /// Top-level error returned by [`run`] for any server, listener, or MCP failure.
@@ -105,8 +106,9 @@ pub async fn run() -> Result<(), RunError> {
             logging::init_client_tracing();
             let sock = client_unix_socket_path();
             let sock_display = sock.display().to_string();
-            match tokio::time::timeout(Duration::from_secs(10), client::get_version(&sock)).await {
-                Ok(Ok(resp)) => {
+            let version = async { Client::new(&sock)?.get_version().await };
+            match tokio::time::timeout(Duration::from_secs(10), version).await {
+                Ok(Ok(Reply { value: resp, .. })) => {
                     println!("client: {VERSION}");
                     println!("server: {}", resp.version);
                     let lsp = resp.lsp_server_info.as_ref();

@@ -21,6 +21,8 @@ service Racli {
   rpc OutgoingCalls (CallHierarchyCallsRequest) returns (OutgoingCallsResponse);
   // Runs LSP `textDocument/documentSymbol` for a single file (no line/character).
   rpc DocumentSymbols (DocumentSymbolsRequest) returns (DocumentSymbolsResponse);
+  // Runs LSP `textDocument/hover` at a path and LSP position (0-based line/character) and returns its contents as Markdown.
+  rpc Hover (HoverRequest) returns (HoverResponse);
   // Returns the cached LSP `InitializeResult` racli received from rust-analyzer (as JSON).
   rpc LspInitialize (LspInitializeRequest) returns (LspInitializeResponse);
   // Forwards an arbitrary LSP request to rust-analyzer (`initialize` and `shutdown` are rejected).
@@ -242,6 +244,18 @@ message DocumentSymbolsRequest {
 // Result of `Racli.DocumentSymbols`: top-level symbols in the file, each possibly with nested children.
 message DocumentSymbolsResponse {
   repeated LspDocumentSymbol symbols = 1;
+}
+
+// Parameters for `Racli.Hover` (absolute `file_path` resolved on the server).
+message HoverRequest {
+  string file_path = 1;
+  uint32 line = 2;
+  uint32 character = 3;
+}
+
+// Result of `Racli.Hover`: the hover's contents as Markdown, unset when rust-analyzer has nothing to show.
+message HoverResponse {
+  optional string markdown = 1;
 }
 
 // Empty request for `Racli.LspInitialize`.

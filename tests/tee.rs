@@ -1,7 +1,8 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use racli::client::get_version;
+use racli::backend_status::BackendStatus;
+use racli::client::Client;
 use serde_json::Value;
 use serde_json::json;
 use tempfile::tempdir;
@@ -107,8 +108,24 @@ async fn tee_proxies_stdio_lsp_through_grpc() {
         )
         .await;
 
-        // The gRPC socket is shared with other clients while the editor session is live.
-        let version = get_version(&sock).await.expect("get_version");
+        // The gRPC socket is shared with other clients while the editor session is live. Wait until
+        // rust-analyzer has loaded the workspace, or it answers `null` for files it hasn't loaded.
+        let client = Client::new(&sock).unwrap();
+        let version = loop {
+            let reply = client.get_version().await.expect("get_version");
+            if reply.backend == BackendStatus::Ready {
+                break reply.value;
+            }
+            assert!(
+                !matches!(
+                    reply.backend,
+                    BackendStatus::Error(_) | BackendStatus::Unknown
+                ),
+                "backend can't become ready: {:?}",
+                reply.backend
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
         assert_eq!(version.version, env!("CARGO_PKG_VERSION"));
 
         // Like an editor, open the document first (forwarded via `LspNotify`).
@@ -270,9 +287,12 @@ async fn tee_derives_socket_path_from_cwd() {
         .await;
         recv_response(&mut stdout, 1).await;
 
-        let version = get_version(&sock)
+        let version = Client::new(&sock)
+            .unwrap()
+            .get_version()
             .await
-            .expect("get_version on derived socket");
+            .expect("get_version on derived socket")
+            .value;
         assert_eq!(version.version, env!("CARGO_PKG_VERSION"));
 
         // A client run from a subdirectory walks up and finds the project's socket on its own.
@@ -508,7 +528,7 @@ async fn second_instance_refused_from_terminal_but_not_from_editor() {
         }
     });
     let serving = async {
-        while get_version(&sock).await.is_err() {
+        while Client::new(&sock).unwrap().get_version().await.is_err() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     };

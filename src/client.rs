@@ -1,10 +1,13 @@
-//! gRPC client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`, `FindReferences`, `FindImplementations`, `PrepareCallHierarchy`, `IncomingCalls`, `OutgoingCalls`, `DocumentSymbols`).
+//! gRPC client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`, `FindReferences`, `FindImplementations`, `PrepareCallHierarchy`, `IncomingCalls`, `OutgoingCalls`, `DocumentSymbols`, `Hover`). It wraps only racli's typed RPCs, not the LSP passthrough used by `racli tee` (see ADR 003).
 
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
+use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 
+use crate::backend_status::BackendStatus;
 use crate::proto::racli::CallHierarchyCallsRequest;
 use crate::proto::racli::DocumentSymbolsRequest;
 use crate::proto::racli::DocumentSymbolsResponse;
@@ -16,10 +19,10 @@ use crate::proto::racli::FindReferencesRequest;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionRequest;
 use crate::proto::racli::GetVersionResponse;
+use crate::proto::racli::HoverRequest;
+use crate::proto::racli::HoverResponse;
 use crate::proto::racli::IncomingCallsResponse;
 use crate::proto::racli::LspCallHierarchyItem;
-use crate::proto::racli::LspRequestRequest;
-use crate::proto::racli::LspRequestResponse;
 use crate::proto::racli::OutgoingCallsResponse;
 use crate::proto::racli::PrepareCallHierarchyRequest;
 use crate::proto::racli::PrepareCallHierarchyResponse;
@@ -31,10 +34,51 @@ use crate::proto::racli::racli_client::RacliClient;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
+use crate::utils::derive_socket_path_enabled;
+use crate::utils::derived_unix_socket_path;
+use crate::utils::effective_unix_socket_path;
+use crate::utils::explicit_socket_path_set;
+use crate::utils::find_live_socket;
+use crate::utils::socket_is_live;
 
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `GetVersion`.
+/// Timeout for connecting to the server's socket.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for each request (LSP requests such as `workspace/symbol` can be slow).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Timeout for `GetVersion`, which the server answers without asking rust-analyzer.
+const GET_VERSION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Socket for client commands: `RACLI_UNIX_SOCKET` if set, [`DEFAULT_UNIX_SOCKET_PATH`](crate::utils::DEFAULT_UNIX_SOCKET_PATH) if
+/// deriving is off, else the live derived socket of the cwd or its nearest ancestor (so clients work
+/// from any subdirectory of a served project). With no live server, warns and returns the cwd's derived path.
+pub fn client_unix_socket_path() -> PathBuf {
+    if explicit_socket_path_set() || !derive_socket_path_enabled() {
+        return effective_unix_socket_path();
+    }
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => std::fs::canonicalize(&cwd).unwrap_or(cwd),
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot read current directory; using the default socket");
+            return effective_unix_socket_path();
+        }
+    };
+    find_live_socket(&cwd, socket_is_live).unwrap_or_else(|| {
+        let socket = derived_unix_socket_path(&cwd);
+        tracing::warn!(
+            cwd = %cwd.display(),
+            socket = %socket.display(),
+            "no running racli server found for this directory or its parents; start `racli server` \
+             or `racli tee` in the project root, or set RACLI_UNIX_SOCKET"
+        );
+        socket
+    })
+}
+
+/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status.
 #[derive(Debug, thiserror::Error)]
-pub enum ClientVersionError {
+pub enum ClientError {
     /// Failed to build the channel endpoint or connect over the Unix URI.
     #[error(transparent)]
     Transport(#[from] tonic::transport::Error),
@@ -43,365 +87,219 @@ pub enum ClientVersionError {
     Status(#[from] tonic::Status),
 }
 
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `Search`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientSearchError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
+/// A response's value with the backend's status when the server produced it (ADR 004).
+#[derive(Clone, Debug)]
+pub struct Reply<T> {
+    /// The RPC's response message.
+    pub value: T,
+    /// Whether rust-analyzer had finished loading and indexing when the server answered.
+    pub backend: BackendStatus,
 }
 
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `FindDefinition`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientFindDefinitionError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
+impl<T> Reply<T> {
+    /// Takes the value and the backend's status from a gRPC response.
+    fn from_response(response: tonic::Response<T>) -> Self {
+        let backend = BackendStatus::from_metadata(response.metadata());
+        Self {
+            value: response.into_inner(),
+            backend,
+        }
+    }
 }
 
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `FindImplementations`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientFindImplementationsError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
+/// A client for the `racli server` on a Unix socket; its calls share one connection, opened on the first call.
+#[derive(Clone, Debug)]
+pub struct Client {
+    inner: RacliClient<Channel>,
 }
 
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `FindReferences`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientFindReferencesError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
-}
-
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `PrepareCallHierarchy`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientPrepareCallHierarchyError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
-}
-
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `IncomingCalls`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientIncomingCallsError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
-}
-
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `OutgoingCalls`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientOutgoingCallsError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
-}
-
-/// Calls `GetVersion` on the server at `socket_path` with 10s connect and request timeouts.
-pub async fn get_version(socket_path: &Path) -> Result<GetVersionResponse, ClientVersionError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(10))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client.get_version(GetVersionRequest {}).await?;
-
-    Ok(resp.into_inner())
-}
-
-/// Calls `Search` on the server at `socket_path` with the server's default symbol kind and scope (see [`search_with_options`]).
-pub async fn search(
-    socket_path: &Path,
-    query: impl AsRef<str>,
-) -> Result<SearchResponse, ClientSearchError> {
-    search_with_options(socket_path, query, SymbolSearchOptions::default()).await
-}
-
-/// Calls `Search` on the server at `socket_path` with kind/scope overrides, 10s connect and 60s per-request timeout (LSP `workspace/symbol` can be slow).
-pub async fn search_with_options(
-    socket_path: &Path,
-    query: impl AsRef<str>,
-    options: SymbolSearchOptions,
-) -> Result<SearchResponse, ClientSearchError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .search(SearchRequest {
-            query: query.as_ref().to_string(),
-            kind: options
-                .kind
-                .map_or(ProtoSymbolSearchKind::Unspecified, |k| match k {
-                    SymbolSearchKind::OnlyTypes => ProtoSymbolSearchKind::OnlyTypes,
-                    SymbolSearchKind::AllSymbols => ProtoSymbolSearchKind::AllSymbols,
-                }) as i32,
-            scope: options
-                .scope
-                .map_or(ProtoSymbolSearchScope::Unspecified, |s| match s {
-                    SymbolSearchScope::Workspace => ProtoSymbolSearchScope::Workspace,
-                    SymbolSearchScope::WorkspaceAndDependencies => {
-                        ProtoSymbolSearchScope::WorkspaceAndDependencies
-                    }
-                }) as i32,
+impl Client {
+    /// A client for the server at `socket_path`, with a 10s connect and 60s per-request timeout; nothing connects until the first call.
+    pub fn new(socket_path: &Path) -> Result<Self, ClientError> {
+        let channel = Endpoint::try_from(format!("unix://{}", socket_path.display()))?
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .connect_lazy();
+        Ok(Self {
+            inner: RacliClient::new(channel),
         })
-        .await?;
+    }
 
-    Ok(resp.into_inner())
-}
+    /// Calls `GetVersion`, with a 10s timeout.
+    pub async fn get_version(&self) -> Result<Reply<GetVersionResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = tokio::time::timeout(
+            GET_VERSION_TIMEOUT,
+            client.get_version(GetVersionRequest {}),
+        )
+        .await
+        .map_err(|_| tonic::Status::deadline_exceeded("GetVersion timed out after 10 seconds"))??;
+        Ok(Reply::from_response(resp))
+    }
 
-/// Calls `FindDefinition` on the server at `socket_path` with 10s connect and 60s per-request timeout.
-pub async fn find_definition(
-    socket_path: &Path,
-    file_path: impl AsRef<str>,
-    line: u32,
-    character: u32,
-) -> Result<FindDefinitionResponse, ClientFindDefinitionError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
+    /// Calls `Search` with the server's default symbol kind and scope (see [`Client::search_with_options`]).
+    pub async fn search(
+        &self,
+        query: impl AsRef<str>,
+    ) -> Result<Reply<SearchResponse>, ClientError> {
+        self.search_with_options(query, SymbolSearchOptions::default())
+            .await
+    }
 
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
+    /// Calls `Search` with kind/scope overrides.
+    pub async fn search_with_options(
+        &self,
+        query: impl AsRef<str>,
+        options: SymbolSearchOptions,
+    ) -> Result<Reply<SearchResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = client
+            .search(SearchRequest {
+                query: query.as_ref().to_string(),
+                kind: options
+                    .kind
+                    .map_or(ProtoSymbolSearchKind::Unspecified, |k| match k {
+                        SymbolSearchKind::OnlyTypes => ProtoSymbolSearchKind::OnlyTypes,
+                        SymbolSearchKind::AllSymbols => ProtoSymbolSearchKind::AllSymbols,
+                    }) as i32,
+                scope: options
+                    .scope
+                    .map_or(ProtoSymbolSearchScope::Unspecified, |s| match s {
+                        SymbolSearchScope::Workspace => ProtoSymbolSearchScope::Workspace,
+                        SymbolSearchScope::WorkspaceAndDependencies => {
+                            ProtoSymbolSearchScope::WorkspaceAndDependencies
+                        }
+                    }) as i32,
+            })
+            .await?;
+        Ok(Reply::from_response(resp))
+    }
 
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .find_definition(FindDefinitionRequest {
-            file_path: file_path.as_ref().to_string(),
-            line,
-            character,
-        })
-        .await?;
+    /// Calls `FindDefinition` at a 0-based position in `file_path`.
+    pub async fn find_definition(
+        &self,
+        file_path: impl AsRef<str>,
+        line: u32,
+        character: u32,
+    ) -> Result<Reply<FindDefinitionResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = client
+            .find_definition(FindDefinitionRequest {
+                file_path: file_path.as_ref().to_string(),
+                line,
+                character,
+            })
+            .await?;
+        Ok(Reply::from_response(resp))
+    }
 
-    Ok(resp.into_inner())
-}
+    /// Calls `FindImplementations` at a 0-based position in `file_path`.
+    pub async fn find_implementations(
+        &self,
+        file_path: impl AsRef<str>,
+        line: u32,
+        character: u32,
+    ) -> Result<Reply<FindImplementationsResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = client
+            .find_implementations(FindImplementationsRequest {
+                file_path: file_path.as_ref().to_string(),
+                line,
+                character,
+            })
+            .await?;
+        Ok(Reply::from_response(resp))
+    }
 
-/// Calls `FindImplementations` on the server at `socket_path` with 10s connect and 60s per-request timeout.
-pub async fn find_implementations(
-    socket_path: &Path,
-    file_path: impl AsRef<str>,
-    line: u32,
-    character: u32,
-) -> Result<FindImplementationsResponse, ClientFindImplementationsError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
+    /// Calls `FindReferences` at a 0-based position in `file_path`.
+    pub async fn find_references(
+        &self,
+        file_path: impl AsRef<str>,
+        line: u32,
+        character: u32,
+    ) -> Result<Reply<FindReferencesResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = client
+            .find_references(FindReferencesRequest {
+                file_path: file_path.as_ref().to_string(),
+                line,
+                character,
+            })
+            .await?;
+        Ok(Reply::from_response(resp))
+    }
 
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
+    /// Calls `PrepareCallHierarchy` at a 0-based position in `file_path`.
+    pub async fn prepare_call_hierarchy(
+        &self,
+        file_path: impl AsRef<str>,
+        line: u32,
+        character: u32,
+    ) -> Result<Reply<PrepareCallHierarchyResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = client
+            .prepare_call_hierarchy(PrepareCallHierarchyRequest {
+                file_path: file_path.as_ref().to_string(),
+                line,
+                character,
+            })
+            .await?;
+        Ok(Reply::from_response(resp))
+    }
 
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .find_implementations(FindImplementationsRequest {
-            file_path: file_path.as_ref().to_string(),
-            line,
-            character,
-        })
-        .await?;
+    /// Calls `DocumentSymbols` for `file_path`.
+    pub async fn document_symbols(
+        &self,
+        file_path: impl AsRef<str>,
+    ) -> Result<Reply<DocumentSymbolsResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = client
+            .document_symbols(DocumentSymbolsRequest {
+                file_path: file_path.as_ref().to_string(),
+            })
+            .await?;
+        Ok(Reply::from_response(resp))
+    }
 
-    Ok(resp.into_inner())
-}
+    /// Calls `IncomingCalls` for `item`, which must be the exact item returned by [`Client::prepare_call_hierarchy`] (or a prior `IncomingCalls`/`OutgoingCalls` call).
+    pub async fn incoming_calls(
+        &self,
+        item: LspCallHierarchyItem,
+    ) -> Result<Reply<IncomingCallsResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = client
+            .incoming_calls(CallHierarchyCallsRequest { item: Some(item) })
+            .await?;
+        Ok(Reply::from_response(resp))
+    }
 
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `DocumentSymbols`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientDocumentSymbolsError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
-}
+    /// Calls `OutgoingCalls` for `item`, which must be the exact item returned by [`Client::prepare_call_hierarchy`] (or a prior `IncomingCalls`/`OutgoingCalls` call).
+    pub async fn outgoing_calls(
+        &self,
+        item: LspCallHierarchyItem,
+    ) -> Result<Reply<OutgoingCallsResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = client
+            .outgoing_calls(CallHierarchyCallsRequest { item: Some(item) })
+            .await?;
+        Ok(Reply::from_response(resp))
+    }
 
-/// Calls `FindReferences` on the server at `socket_path` with 10s connect and 60s per-request timeout.
-pub async fn find_references(
-    socket_path: &Path,
-    file_path: impl AsRef<str>,
-    line: u32,
-    character: u32,
-) -> Result<FindReferencesResponse, ClientFindReferencesError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .find_references(FindReferencesRequest {
-            file_path: file_path.as_ref().to_string(),
-            line,
-            character,
-        })
-        .await?;
-
-    Ok(resp.into_inner())
-}
-
-/// Calls `PrepareCallHierarchy` on the server at `socket_path` with 10s connect and 60s per-request timeout.
-pub async fn prepare_call_hierarchy(
-    socket_path: &Path,
-    file_path: impl AsRef<str>,
-    line: u32,
-    character: u32,
-) -> Result<PrepareCallHierarchyResponse, ClientPrepareCallHierarchyError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .prepare_call_hierarchy(PrepareCallHierarchyRequest {
-            file_path: file_path.as_ref().to_string(),
-            line,
-            character,
-        })
-        .await?;
-
-    Ok(resp.into_inner())
-}
-
-/// Calls `DocumentSymbols` on the server at `socket_path` with 10s connect and 60s per-request timeout.
-pub async fn document_symbols(
-    socket_path: &Path,
-    file_path: impl AsRef<str>,
-) -> Result<DocumentSymbolsResponse, ClientDocumentSymbolsError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .document_symbols(DocumentSymbolsRequest {
-            file_path: file_path.as_ref().to_string(),
-        })
-        .await?;
-
-    Ok(resp.into_inner())
-}
-
-/// Calls `IncomingCalls` on the server at `socket_path` with 10s connect and 60s per-request timeout.
-///
-/// `item` must be the exact item returned by [`prepare_call_hierarchy`] (or a prior `IncomingCalls`/`OutgoingCalls` call).
-pub async fn incoming_calls(
-    socket_path: &Path,
-    item: LspCallHierarchyItem,
-) -> Result<IncomingCallsResponse, ClientIncomingCallsError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .incoming_calls(CallHierarchyCallsRequest { item: Some(item) })
-        .await?;
-
-    Ok(resp.into_inner())
-}
-
-/// Calls `OutgoingCalls` on the server at `socket_path` with 10s connect and 60s per-request timeout.
-///
-/// `item` must be the exact item returned by [`prepare_call_hierarchy`] (or a prior `IncomingCalls`/`OutgoingCalls` call).
-pub async fn outgoing_calls(
-    socket_path: &Path,
-    item: LspCallHierarchyItem,
-) -> Result<OutgoingCallsResponse, ClientOutgoingCallsError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .outgoing_calls(CallHierarchyCallsRequest { item: Some(item) })
-        .await?;
-
-    Ok(resp.into_inner())
-}
-
-/// Failures building the endpoint, connecting, or interpreting a non-OK gRPC status for `LspRequest`.
-#[derive(Debug, thiserror::Error)]
-pub enum ClientLspRequestError {
-    /// Failed to build the channel endpoint or connect over the Unix URI.
-    #[error(transparent)]
-    Transport(#[from] tonic::transport::Error),
-    /// gRPC call completed with a non-OK status from the server.
-    #[error(transparent)]
-    Status(#[from] tonic::Status),
-}
-
-/// Calls `LspRequest` on the server at `socket_path`, passing an LSP request through to rust-analyzer, with 10s connect and 60s per-request timeout.
-pub async fn lsp_request(
-    socket_path: &Path,
-    method: impl Into<String>,
-    params_json: impl Into<String>,
-) -> Result<LspRequestResponse, ClientLspRequestError> {
-    let ep = Endpoint::try_from(format!("unix://{}", socket_path.display()))?;
-
-    let channel = ep
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await?;
-
-    let mut client = RacliClient::new(channel);
-    let resp = client
-        .lsp_request(LspRequestRequest {
-            method: method.into(),
-            params_json: params_json.into(),
-        })
-        .await?;
-
-    Ok(resp.into_inner())
+    /// Calls `Hover` at a 0-based position in `file_path`.
+    pub async fn hover(
+        &self,
+        file_path: impl AsRef<str>,
+        line: u32,
+        character: u32,
+    ) -> Result<Reply<HoverResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = client
+            .hover(HoverRequest {
+                file_path: file_path.as_ref().to_string(),
+                line,
+                character,
+            })
+            .await?;
+        Ok(Reply::from_response(resp))
+    }
 }

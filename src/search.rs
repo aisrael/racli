@@ -7,7 +7,9 @@ use clap::Parser;
 use clap::ValueEnum;
 use serde::Serialize;
 
-use crate::client;
+use crate::client::Client;
+use crate::client::Reply;
+use crate::client::client_unix_socket_path;
 use crate::proto::racli::lsp_workspace_symbol_response::Payload;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
@@ -15,7 +17,6 @@ use crate::rust_analyzer::SymbolSearchScope;
 use crate::server::split_search_query_into_segments;
 use crate::text_position::display_path;
 use crate::text_position::position_text;
-use crate::utils::client_unix_socket_path;
 
 /// How `racli search` prints results (default is JSON).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -90,17 +91,26 @@ impl SearchArgs {
 pub async fn run_cli_search(args: SearchArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
+    let client = match Client::new(&sock) {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("racli search ({sock_display}): {err}");
+            return;
+        }
+    };
     let options = SymbolSearchOptions {
         kind: args.kind,
         scope: args.scope,
     };
     match tokio::time::timeout(
         Duration::from_secs(60),
-        client::search_with_options(&sock, &args.query, options),
+        client.search_with_options(&args.query, options),
     )
     .await
     {
-        Ok(Ok(mut resp)) => {
+        Ok(Ok(Reply {
+            value: mut resp, ..
+        })) => {
             if args.exact {
                 keep_exact_names(&mut resp, &args.query);
             }

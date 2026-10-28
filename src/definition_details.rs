@@ -1,15 +1,10 @@
 //! `find-definition --hover` and `--source`: a definition's signature and doc comment (LSP
 //! hover), or its whole source, from its location.
 
-use std::path::Path;
-
 use serde::Serialize;
-use serde_json::Value;
-use serde_json::json;
 
-use crate::client;
+use crate::client::Client;
 use crate::proto::racli::LspLocation;
-use crate::proto::racli::lsp_request_response::Outcome;
 use crate::symbol::RangeJson;
 use crate::symbol::outline_symbol_at;
 use crate::symbol::range_json;
@@ -36,7 +31,7 @@ pub struct DefinitionSource {
 /// Fetches the hover and/or the source of the definition at `loc`. Errors are returned as text, to
 /// print alongside the location rather than stop the command.
 pub async fn definition_details(
-    socket_path: &Path,
+    client: &Client,
     loc: &LspLocation,
     hover: bool,
     source: bool,
@@ -48,13 +43,13 @@ pub async fn definition_details(
         return (details, errors);
     };
     if hover {
-        match hover_markdown(socket_path, &loc.uri, range).await {
+        match hover_markdown(client, &loc.uri, range).await {
             Ok(markdown) => details.hover = markdown,
             Err(e) => errors.push(format!("hover: {e}")),
         }
     }
     if source {
-        match definition_source(socket_path, &loc.uri, range, sources).await {
+        match definition_source(client, &loc.uri, range, sources).await {
             Ok(text) => details.source = text,
             Err(e) => errors.push(format!("source: {e}")),
         }
@@ -65,45 +60,29 @@ pub async fn definition_details(
 /// rust-analyzer's `textDocument/hover` at the start of `range`, as Markdown, or `None` if it has
 /// nothing to show.
 async fn hover_markdown(
-    socket_path: &Path,
+    client: &Client,
     uri: &str,
     range: &crate::proto::racli::LspRange,
 ) -> Result<Option<String>, String> {
     let start = range.start.as_ref().ok_or("definition has no range")?;
-    let params = json!({
-        "textDocument": { "uri": uri },
-        "position": { "line": start.line, "character": start.character },
-    });
-    let resp = client::lsp_request(socket_path, "textDocument/hover", params.to_string())
+    let Some(path) = url::Url::parse(uri)
+        .ok()
+        .and_then(|u| u.to_file_path().ok())
+    else {
+        return Ok(None);
+    };
+    let resp = client
+        .hover(path.display().to_string(), start.line, start.character)
         .await
+        .map(|reply| reply.value)
         .map_err(|e| e.to_string())?;
-    match resp.outcome {
-        Some(Outcome::ResultJson(result)) => {
-            let value: Value = serde_json::from_str(&result).map_err(|e| e.to_string())?;
-            Ok(hover_contents(&value["contents"]))
-        }
-        Some(Outcome::Error(e)) => Err(e.message),
-        None => Ok(None),
-    }
-}
-
-/// The Markdown in a hover's `contents`, which LSP allows as markup, a string or a list of them.
-fn hover_contents(contents: &Value) -> Option<String> {
-    match contents {
-        Value::String(s) => Some(s.clone()),
-        Value::Object(o) => o.get("value").and_then(Value::as_str).map(String::from),
-        Value::Array(items) => {
-            let parts: Vec<String> = items.iter().filter_map(hover_contents).collect();
-            (!parts.is_empty()).then(|| parts.join("\n\n"))
-        }
-        _ => None,
-    }
+    Ok(resp.markdown)
 }
 
 /// The definition's whole source: the range of the outline symbol whose name is at `range`, or
 /// `None` if no outline symbol is there.
 async fn definition_source(
-    socket_path: &Path,
+    client: &Client,
     uri: &str,
     range: &crate::proto::racli::LspRange,
     sources: &mut SourceLines,
@@ -114,8 +93,10 @@ async fn definition_source(
     else {
         return Ok(None);
     };
-    let outline = client::document_symbols(socket_path, path.display().to_string())
+    let outline = client
+        .document_symbols(path.display().to_string())
         .await
+        .map(|reply| reply.value)
         .map_err(|e| e.to_string())?;
     let Some(full) = outline_symbol_at(&outline.symbols, range)
         .and_then(|symbol| symbol.range)
@@ -175,20 +156,6 @@ mod tests {
             hover_text(markdown),
             "queue::sys\n\npub fn mkfifo(path: &str) -> i32\n\nMakes a FIFO."
         );
-    }
-
-    #[test]
-    fn hover_contents_accepts_markup_strings_and_lists() {
-        assert_eq!(
-            hover_contents(&json!({ "kind": "markdown", "value": "a" })),
-            Some("a".into())
-        );
-        assert_eq!(hover_contents(&json!("b")), Some("b".into()));
-        assert_eq!(
-            hover_contents(&json!(["c", { "language": "rust", "value": "d" }])),
-            Some("c\n\nd".into())
-        );
-        assert_eq!(hover_contents(&Value::Null), None);
     }
 
     #[test]

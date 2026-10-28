@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use racli::client::get_version;
+use racli::client::Client;
 use racli::grpc_server::run_grpc_unix_socket_until_shutdown;
 use racli::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use tempfile::tempdir;
@@ -34,7 +34,12 @@ async fn grpc_get_version_round_trip() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let resp = get_version(&sock).await.expect("get_version");
+    let resp = Client::new(&sock)
+        .unwrap()
+        .get_version()
+        .await
+        .expect("get_version")
+        .value;
     assert_eq!(resp.version, env!("CARGO_PKG_VERSION"));
     let lsp = resp.lsp_server_info.expect("lsp_server_info");
     assert_eq!(lsp.name, "rust-analyzer");
@@ -77,7 +82,7 @@ async fn stopping_old_server_keeps_successors_socket() {
     };
     let wait_for_server = async |what: &str| {
         for _ in 0..100 {
-            if get_version(&sock).await.is_ok() {
+            if Client::new(&sock).unwrap().get_version().await.is_ok() {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -119,7 +124,9 @@ async fn stopping_old_server_keeps_successors_socket() {
         .expect("old server join");
 
     assert!(sock.exists(), "old server deleted its successor's socket");
-    get_version(&sock)
+    Client::new(&sock)
+        .unwrap()
+        .get_version()
         .await
         .expect("successor should still answer after the old server stopped");
 

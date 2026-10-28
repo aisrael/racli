@@ -24,6 +24,7 @@ use lsp_types::DocumentSymbolClientCapabilities;
 use lsp_types::DocumentSymbolParams;
 use lsp_types::GotoDefinitionParams;
 use lsp_types::HoverClientCapabilities;
+use lsp_types::HoverParams;
 use lsp_types::InitializeParams;
 use lsp_types::InlayHintClientCapabilities;
 use lsp_types::MarkupKind;
@@ -58,6 +59,7 @@ use lsp_types::request::DocumentSymbolRequest;
 use lsp_types::request::GotoDefinition;
 use lsp_types::request::GotoImplementation;
 use lsp_types::request::GotoImplementationParams;
+use lsp_types::request::HoverRequest;
 use lsp_types::request::References;
 use lsp_types::request::Request;
 use lsp_types::request::WorkspaceSymbolRequest;
@@ -726,6 +728,32 @@ impl RustAnalyzerSession {
             partial_result_params: PartialResultParams::default(),
         };
         let result = lsp.send_request::<DocumentSymbolRequest>(params).await?;
+        serde_json::to_value(result).map_err(RustAnalyzerError::from)
+    }
+
+    /// Sends LSP `textDocument/hover` for `document_uri` at `line` / `character` (0-based LSP position) and returns the JSON-RPC `result` (`null` or a hover).
+    pub async fn text_document_hover(
+        &mut self,
+        document_uri: impl Into<String>,
+        line: u32,
+        character: u32,
+    ) -> Result<Value, RustAnalyzerError> {
+        let uri_str = document_uri.into();
+        let uri: Uri = uri_str
+            .parse()
+            .map_err(|_| RustAnalyzerError::InvalidDocumentUrl)?;
+        let lsp = self
+            .lsp
+            .as_ref()
+            .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
+        let params = HoverParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+        let result = lsp.send_request::<HoverRequest>(params).await?;
         serde_json::to_value(result).map_err(RustAnalyzerError::from)
     }
 

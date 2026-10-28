@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::client;
-use crate::client::ClientSearchError;
+use crate::client::Client;
+use crate::client::ClientError;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspRange;
 use crate::proto::racli::SearchResponse;
@@ -115,7 +115,7 @@ pub struct SymbolResultJson<'a, T: Serialize> {
 pub enum ResolveSymbolError {
     /// The symbol search RPC failed.
     #[error(transparent)]
-    Search(#[from] ClientSearchError),
+    Search(#[from] ClientError),
     /// No symbol has that name, or none passes `--kind` and `--glob`.
     #[error("{}", not_found_message(.name, .filtered, .truncated, .suggestions))]
     NotFound {
@@ -238,7 +238,7 @@ pub struct Targets {
 /// Finds where a position command runs from: each definition the names find, and the position.
 /// A definition found twice, by two names or by a name and the position, is run once.
 pub async fn targets(
-    socket_path: &Path,
+    client: &Client,
     args: &SymbolArgs,
     specs: Vec<TargetSpec>,
 ) -> Result<Targets, String> {
@@ -259,7 +259,7 @@ pub async fn targets(
     let mut seen = HashSet::new();
     for spec in specs {
         match spec {
-            TargetSpec::Name(name) => match resolve_symbol(socket_path, &name, &filter).await {
+            TargetSpec::Name(name) => match resolve_symbol(client, &name, &filter).await {
                 Ok((matches, truncated)) => {
                     if truncated {
                         result.errors.push(format!("{name}: {TRUNCATED_NOTE}"));
@@ -294,7 +294,7 @@ pub async fn targets(
                     .display()
                     .to_string();
                 let symbol = if grouped {
-                    match symbol_at(socket_path, &file_path, line, character).await? {
+                    match symbol_at(client, &file_path, line, character).await? {
                         Some(m) if !seen.insert((m.uri.clone(), m.range)) => continue,
                         Some(m) => Some(m),
                         None => {
@@ -324,13 +324,15 @@ pub async fn targets(
 
 /// The symbol whose definition the position refers to, to label a position given with names.
 async fn symbol_at(
-    socket_path: &Path,
+    client: &Client,
     file_path: &str,
     line: u32,
     character: u32,
 ) -> Result<Option<SymbolMatch>, String> {
-    let definition = client::find_definition(socket_path, file_path, line, character)
+    let definition = client
+        .find_definition(file_path, line, character)
         .await
+        .map(|reply| reply.value)
         .map_err(|e| e.to_string())?;
     let Some((uri, lsp_range)) = definition
         .locations
@@ -348,8 +350,10 @@ async fn symbol_at(
     else {
         return Ok(None);
     };
-    let outline = client::document_symbols(socket_path, path.display().to_string())
+    let outline = client
+        .document_symbols(path.display().to_string())
         .await
+        .map(|reply| reply.value)
         .map_err(|e| e.to_string())?;
     let Some(symbol) = outline_symbol_at(&outline.symbols, &lsp_range) else {
         return Ok(None);
@@ -360,7 +364,7 @@ async fn symbol_at(
         SymbolSearchScope::WorkspaceAndDependencies,
     ] {
         let found = exact_matches(
-            search(socket_path, &symbol.name, scope)
+            search(client, &symbol.name, scope)
                 .await
                 .map_err(|e| e.to_string())?,
             &symbol.name,
@@ -424,7 +428,7 @@ impl SymbolFilter<'_> {
 /// Finds the definitions named `name`, searching the workspace first and then its dependencies.
 /// Also says whether the search that found them was cut to the server's limit.
 async fn resolve_symbol(
-    socket_path: &Path,
+    client: &Client,
     name: &str,
     filter: &SymbolFilter<'_>,
 ) -> Result<(Vec<SymbolMatch>, bool), ResolveSymbolError> {
@@ -437,7 +441,7 @@ async fn resolve_symbol(
         SymbolSearchScope::WorkspaceAndDependencies,
     ] {
         // rust-analyzer resolves a module path such as `raw::mkfifo` itself.
-        let results = search(socket_path, name, scope).await?;
+        let results = search(client, name, scope).await?;
         let mut truncated = results.truncated;
         if suggestions.is_empty() {
             suggestions = all_symbols(results.clone());
@@ -447,7 +451,7 @@ async fn resolve_symbol(
             && let Some(container) = container
         {
             // It doesn't resolve `Type::member`, so match the container's name instead.
-            let leaf_results = search(socket_path, leaf, scope).await?;
+            let leaf_results = search(client, leaf, scope).await?;
             truncated |= leaf_results.truncated;
             if scope == SymbolSearchScope::Workspace {
                 suggestions = all_symbols(leaf_results.clone());
@@ -485,15 +489,18 @@ async fn resolve_symbol(
 
 /// Runs `workspace/symbol` for `query` over all symbol kinds in `scope`.
 async fn search(
-    socket_path: &Path,
+    client: &Client,
     query: &str,
     scope: SymbolSearchScope,
-) -> Result<SearchResponse, ClientSearchError> {
+) -> Result<SearchResponse, ClientError> {
     let options = SymbolSearchOptions {
         kind: Some(SymbolSearchKind::AllSymbols),
         scope: Some(scope),
     };
-    client::search_with_options(socket_path, query, options).await
+    client
+        .search_with_options(query, options)
+        .await
+        .map(|reply| reply.value)
 }
 
 /// Splits `a::b::c` into its qualifier `a::b` and its name `c`.

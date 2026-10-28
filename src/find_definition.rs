@@ -7,7 +7,9 @@ use std::time::Duration;
 use clap::Parser;
 use serde::Serialize;
 
-use crate::client;
+use crate::client::Client;
+use crate::client::Reply;
+use crate::client::client_unix_socket_path;
 use crate::definition_details::DefinitionDetails;
 use crate::definition_details::DefinitionSource;
 use crate::definition_details::definition_details;
@@ -20,7 +22,6 @@ use crate::symbol::SymbolResultJson;
 use crate::symbol::print_symbol_results_json;
 use crate::text_position::SourceLines;
 use crate::text_position::parse_one_based;
-use crate::utils::client_unix_socket_path;
 
 /// Arguments for `racli find-definition` (LSP `textDocument/definition`).
 #[derive(Parser)]
@@ -56,6 +57,13 @@ pub struct FindDefinitionArgs {
 pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
+    let client = match Client::new(&sock) {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("racli find-definition ({sock_display}): {err}");
+            return;
+        }
+    };
 
     let specs = symbol::classify(
         &args.names,
@@ -67,7 +75,7 @@ pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
     .unwrap_or_else(|e| symbol::exit_with_usage_error(&e));
     let targets = match tokio::time::timeout(
         Duration::from_secs(60),
-        symbol::targets(&sock, &args.symbol, specs),
+        symbol::targets(&client, &args.symbol, specs),
     )
     .await
     {
@@ -91,16 +99,16 @@ pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
     for target in targets.targets {
         match tokio::time::timeout(
             Duration::from_secs(60),
-            client::find_definition(&sock, &target.file_path, target.line, target.character),
+            client.find_definition(&target.file_path, target.line, target.character),
         )
         .await
         {
-            Ok(Ok(resp)) => {
+            Ok(Ok(Reply { value: resp, .. })) => {
                 let mut details = Vec::new();
                 if args.hover || args.source {
                     for loc in &resp.locations {
                         let (found, errors) =
-                            definition_details(&sock, loc, args.hover, args.source, &mut sources)
+                            definition_details(&client, loc, args.hover, args.source, &mut sources)
                                 .await;
                         for err in errors {
                             eprintln!("racli find-definition ({sock_display}): {err}");

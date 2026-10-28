@@ -74,6 +74,13 @@ pub(crate) enum RustAnalyzerMsg {
     },
     /// LSP `textDocument/documentSymbol`.
     DocumentSymbols { uri: String, reply: LspReply },
+    /// LSP `textDocument/hover`.
+    Hover {
+        uri: String,
+        line: u32,
+        character: u32,
+        reply: LspReply,
+    },
     /// The cached LSP `InitializeResult` JSON (`null` once shut down).
     InitializeResult(RpcReplyPort<Value>),
     /// The notification hub fed by rust-analyzer's server-to-client notifications.
@@ -236,6 +243,12 @@ impl Actor for RustAnalyzerActor {
             RustAnalyzerMsg::DocumentSymbols { uri, reply } => {
                 reply_with_session!(state, reply, |ra| core.document_symbols(ra, uri))
             }
+            RustAnalyzerMsg::Hover {
+                uri,
+                line,
+                character,
+                reply,
+            } => reply_with_session!(state, reply, |ra| core.hover(ra, uri, line, character)),
             RustAnalyzerMsg::DidChangeWatchedFiles(params) => {
                 let Some(ra) = state.session.as_mut() else {
                     tracing::debug!(

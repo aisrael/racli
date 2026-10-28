@@ -7,7 +7,9 @@ use std::time::Duration;
 use clap::Parser;
 use serde::Serialize;
 
-use crate::client;
+use crate::client::Client;
+use crate::client::Reply;
+use crate::client::client_unix_socket_path;
 use crate::proto::racli::FindReferencesResponse;
 use crate::symbol;
 use crate::symbol::SymbolArgs;
@@ -15,7 +17,6 @@ use crate::symbol::SymbolResultJson;
 use crate::symbol::print_symbol_results_json;
 use crate::text_position::SourceLines;
 use crate::text_position::parse_one_based;
-use crate::utils::client_unix_socket_path;
 
 /// Arguments for `racli find-references` (LSP `textDocument/references`, declaration included).
 #[derive(Parser)]
@@ -45,6 +46,13 @@ pub struct FindReferencesArgs {
 pub async fn run_cli_find_references(args: FindReferencesArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
+    let client = match Client::new(&sock) {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("racli find-references ({sock_display}): {err}");
+            return;
+        }
+    };
 
     let specs = symbol::classify(
         &args.names,
@@ -56,7 +64,7 @@ pub async fn run_cli_find_references(args: FindReferencesArgs) {
     .unwrap_or_else(|e| symbol::exit_with_usage_error(&e));
     let targets = match tokio::time::timeout(
         Duration::from_secs(60),
-        symbol::targets(&sock, &args.symbol, specs),
+        symbol::targets(&client, &args.symbol, specs),
     )
     .await
     {
@@ -79,11 +87,11 @@ pub async fn run_cli_find_references(args: FindReferencesArgs) {
     for target in targets.targets {
         match tokio::time::timeout(
             Duration::from_secs(60),
-            client::find_references(&sock, &target.file_path, target.line, target.character),
+            client.find_references(&target.file_path, target.line, target.character),
         )
         .await
         {
-            Ok(Ok(resp)) => results.push((target.symbol, resp)),
+            Ok(Ok(Reply { value: resp, .. })) => results.push((target.symbol, resp)),
             Ok(Err(err)) => {
                 eprintln!("racli find-references ({sock_display}): {err}");
                 return;

@@ -9,6 +9,7 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::actors::rust_analyzer::RustAnalyzerMsg;
+use crate::backend_status::BackendStatus;
 use crate::lsp_client::LspError;
 use crate::lsp_events::LspEvents;
 use crate::proto::racli::DocumentSymbolsResponse;
@@ -16,6 +17,7 @@ use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::FindImplementationsResponse;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::GetVersionResponse;
+use crate::proto::racli::HoverResponse;
 use crate::proto::racli::IncomingCallsResponse;
 use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::LspEvent;
@@ -190,6 +192,11 @@ impl RacliSession {
             reply,
         })??;
         Ok(())
+    }
+
+    /// Whether rust-analyzer has finished loading and indexing, from its latest `experimental/serverStatus`.
+    pub fn backend_status(&self) -> BackendStatus {
+        BackendStatus::from_server_status(self.events.server_status().as_ref())
     }
 
     /// Subscribes to rust-analyzer notifications (`Racli.LspEvents`): cached diagnostics, then a live receiver.
@@ -479,6 +486,39 @@ impl RacliSession {
         };
 
         Ok(DocumentSymbolsResponse { symbols })
+    }
+
+    /// Runs LSP `textDocument/hover` at `file_path` + LSP position (`Racli.Hover`) and returns its contents as Markdown.
+    pub async fn hover(
+        &self,
+        file_path: String,
+        line: u32,
+        character: u32,
+    ) -> Result<HoverResponse, RacliRpcError> {
+        let path = PathBuf::from(file_path.trim());
+        if path.as_os_str().is_empty() {
+            return Err(RacliRpcError::InvalidArgument(
+                "file_path must not be empty".into(),
+            ));
+        }
+        let abs = std::fs::canonicalize(&path).map_err(|e| {
+            RacliRpcError::InvalidArgument(format!("cannot resolve file path: {e}"))
+        })?;
+        let uri = crate::rust_analyzer::document_uri_from_path(&abs)
+            .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
+
+        let value = ractor::call!(self.rust_analyzer, |reply| {
+            RustAnalyzerMsg::Hover {
+                uri,
+                line,
+                character,
+                reply,
+            }
+        })??;
+
+        Ok(HoverResponse {
+            markdown: crate::lsp_map::hover_contents(&value["contents"]),
+        })
     }
 }
 
