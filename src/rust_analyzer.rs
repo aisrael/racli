@@ -72,7 +72,11 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
 use tokio::process::Child;
+use tokio::process::ChildStderr;
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 use url::Url;
@@ -384,7 +388,7 @@ impl RustAnalyzerSession {
         cmd.current_dir(workspace_root)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
         configure_command_isolated_process_group(&mut cmd);
         let mut child = cmd.spawn().map_err(RustAnalyzerError::Spawn)?;
@@ -405,6 +409,9 @@ impl RustAnalyzerSession {
             .stdout
             .take()
             .ok_or_else(|| RustAnalyzerError::Io(io_other("missing child stdout")))?;
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(forward_stderr(stderr));
+        }
 
         let (sender, receiver) = io_transport(stdin, stdout);
         let lsp = LspClient::new(sender, receiver);
@@ -880,6 +887,33 @@ fn lsp_server_info_from_server_info(server: Option<lsp_types::ServerInfo>) -> Ls
     }
 }
 
+/// Copies rust-analyzer's stderr to racli's line by line, except for
+/// [`is_missing_config_watch_error`] lines, which are logged at debug level instead.
+async fn forward_stderr(stderr: ChildStderr) {
+    let mut reader = BufReader::new(stderr);
+    let mut out = tokio::io::stderr();
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        let text = String::from_utf8_lossy(&line);
+        if is_missing_config_watch_error(&text) {
+            tracing::debug!(line = %text.trim_end(), "rust-analyzer can't watch a missing config file");
+        } else if out.write_all(&line).await.is_err() {
+            return;
+        }
+    }
+}
+
+/// Whether `line` is rust-analyzer's file watcher failing on a `rust-analyzer.toml` that doesn't
+/// exist, which it warns about on every start when it watches files itself (ADR 005).
+fn is_missing_config_watch_error(line: &str) -> bool {
+    line.contains("notify error: No path was found.") && line.contains("rust-analyzer.toml")
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -898,5 +932,18 @@ mod tests {
 
         let mut null = Value::Null;
         assert!(!cut_to_limit(&mut null, 3));
+    }
+
+    #[test]
+    fn only_missing_config_watch_errors_are_quieted() {
+        assert!(is_missing_config_watch_error(
+            r#"2026-10-28T08:54:38.036737-04:00  WARN notify error: No path was found. about ["/Users/me/Library/Application Support/rust-analyzer/rust-analyzer.toml"]"#
+        ));
+        assert!(!is_missing_config_watch_error(
+            r#"2026-10-28T08:54:38.036737-04:00  WARN notify error: No path was found. about ["/work/src/lib.rs"]"#
+        ));
+        assert!(!is_missing_config_watch_error(
+            "2026-10-28T08:54:38.036737-04:00 ERROR failed to load rust-analyzer.toml"
+        ));
     }
 }

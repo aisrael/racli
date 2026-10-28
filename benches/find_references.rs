@@ -28,7 +28,7 @@ struct ReferenceQuery {
 const QUERIES: &[ReferenceQuery] = &[
     ReferenceQuery {
         file: "src/rust_analyzer.rs",
-        line: 351,
+        line: 355,
         character: 11,
         symbol: "RustAnalyzerSession",
     },
@@ -183,7 +183,7 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::Client::new(sock).unwrap().find_references(&rust_analyzer_rs, 351, 11),
+                        racli::client::Client::new(sock).unwrap().find_references(&rust_analyzer_rs, 355, 11),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.value.locations.is_empty()
