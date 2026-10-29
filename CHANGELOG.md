@@ -4,7 +4,7 @@ All notable changes to racli are documented in this file. The format is based on
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-10-28
+## [0.3.0] - 2026-10-29
 
 ### Added
 
