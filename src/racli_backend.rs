@@ -7,6 +7,9 @@ use crate::proto::racli::FindDefinitionResponse;
 use crate::proto::racli::FindImplementationsResponse;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::HoverResponse;
+use crate::proto::racli::LspCallHierarchyIncomingCall;
+use crate::proto::racli::LspCallHierarchyItem;
+use crate::proto::racli::LspCallHierarchyOutgoingCall;
 use crate::proto::racli::SearchResponse;
 use crate::racli_core::RacliCore;
 use crate::rust_analyzer::SymbolSearchOptions;
@@ -53,6 +56,23 @@ pub trait RacliBackend: Send + Sync {
         line: u32,
         character: u32,
     ) -> Result<HoverResponse, String>;
+    /// Runs `textDocument/prepareCallHierarchy` at a position in `file_path`.
+    async fn prepare_call_hierarchy(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<Vec<LspCallHierarchyItem>, String>;
+    /// Runs `callHierarchy/incomingCalls` for `item` (must be the exact item from `prepare_call_hierarchy`).
+    async fn incoming_calls(
+        &self,
+        item: LspCallHierarchyItem,
+    ) -> Result<Vec<LspCallHierarchyIncomingCall>, String>;
+    /// Runs `callHierarchy/outgoingCalls` for `item` (must be the exact item from `prepare_call_hierarchy`).
+    async fn outgoing_calls(
+        &self,
+        item: LspCallHierarchyItem,
+    ) -> Result<Vec<LspCallHierarchyOutgoingCall>, String>;
 }
 
 /// [`RacliBackend`] over a `racli server` or `racli tee` socket, used by the CLI.
@@ -123,6 +143,38 @@ impl RacliBackend for Client {
             .map(|reply| reply.value)
             .map_err(|e| e.to_string())
     }
+
+    async fn prepare_call_hierarchy(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<Vec<LspCallHierarchyItem>, String> {
+        Client::prepare_call_hierarchy(self, file_path.to_string(), line, character)
+            .await
+            .map(|reply| reply.value.items)
+            .map_err(|e| e.to_string())
+    }
+
+    async fn incoming_calls(
+        &self,
+        item: LspCallHierarchyItem,
+    ) -> Result<Vec<LspCallHierarchyIncomingCall>, String> {
+        Client::incoming_calls(self, item)
+            .await
+            .map(|reply| reply.value.calls)
+            .map_err(|e| e.to_string())
+    }
+
+    async fn outgoing_calls(
+        &self,
+        item: LspCallHierarchyItem,
+    ) -> Result<Vec<LspCallHierarchyOutgoingCall>, String> {
+        Client::outgoing_calls(self, item)
+            .await
+            .map(|reply| reply.value.calls)
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// [`RacliBackend`] over an in-process [`RacliCore`], used by the MCP tools.
@@ -185,6 +237,38 @@ impl RacliBackend for RacliCore {
     ) -> Result<HoverResponse, String> {
         RacliCore::hover(self, file_path.to_string(), line, character)
             .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn prepare_call_hierarchy(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<Vec<LspCallHierarchyItem>, String> {
+        RacliCore::prepare_call_hierarchy(self, file_path.to_string(), line, character)
+            .await
+            .map(|reply| reply.items)
+            .map_err(|e| e.to_string())
+    }
+
+    async fn incoming_calls(
+        &self,
+        item: LspCallHierarchyItem,
+    ) -> Result<Vec<LspCallHierarchyIncomingCall>, String> {
+        RacliCore::incoming_calls(self, item)
+            .await
+            .map(|reply| reply.calls)
+            .map_err(|e| e.to_string())
+    }
+
+    async fn outgoing_calls(
+        &self,
+        item: LspCallHierarchyItem,
+    ) -> Result<Vec<LspCallHierarchyOutgoingCall>, String> {
+        RacliCore::outgoing_calls(self, item)
+            .await
+            .map(|reply| reply.calls)
             .map_err(|e| e.to_string())
     }
 }

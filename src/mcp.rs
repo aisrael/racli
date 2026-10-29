@@ -292,7 +292,7 @@ impl RacliMcpHandler {
         };
         let mut out = CommandOutput::default();
         let session = self.session.as_ref();
-        let result = run_call_hierarchy_command(session, session, &args, &mut out).await;
+        let result = run_call_hierarchy_command(session, &args, &mut out).await;
         self.tool_result(&out, result)
     }
 
