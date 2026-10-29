@@ -1,4 +1,4 @@
-//! Server-side building blocks: `Core` and future service glue.
+//! Server-side building blocks: the LSP operations that run on a live rust-analyzer session.
 
 use std::collections::HashSet;
 use std::hash::Hash;
@@ -16,121 +16,106 @@ use crate::rust_analyzer::RustAnalyzerSession;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchResult;
 
-/// Holds stateless helpers shared by gRPC handlers (e.g. `Core::version`).
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Core {}
+/// Returns [`crate::VERSION`] as an owned string for protobuf responses.
+pub fn version() -> String {
+    crate::VERSION.to_string()
+}
 
-impl Core {
-    /// Returns [`crate::VERSION`] as an owned string for protobuf responses.
-    pub fn version(&self) -> String {
-        crate::VERSION.to_string()
+/// Runs LSP `workspace/symbol` on the live rust-analyzer session and returns the raw JSON `result`,
+/// noting whether any pattern's results were cut to the limit.
+///
+/// Unescaped `|` splits the query into multiple patterns (each non-empty segment is searched; results are merged and deduped).
+/// Use `\|` for a literal pipe. This is substring alternation, not full regular-expression syntax.
+/// `options` (symbol kind / crate scope) applies to every segment.
+pub async fn search(
+    ra: &mut RustAnalyzerSession,
+    query: String,
+    options: SymbolSearchOptions,
+) -> Result<SymbolSearchResult, RustAnalyzerError> {
+    let segments = split_search_query_into_segments(&query);
+    if segments.len() == 1 {
+        return ra.workspace_symbol(segments[0].clone(), options).await;
     }
 
-    /// Runs LSP `workspace/symbol` on the live rust-analyzer session and returns the raw JSON `result`,
-    /// noting whether any pattern's results were cut to the limit.
-    ///
-    /// Unescaped `|` splits the query into multiple patterns (each non-empty segment is searched; results are merged and deduped).
-    /// Use `\|` for a literal pipe. This is substring alternation, not full regular-expression syntax.
-    /// `options` (symbol kind / crate scope) applies to every segment.
-    pub async fn search(
-        &self,
-        ra: &mut RustAnalyzerSession,
-        query: String,
-        options: SymbolSearchOptions,
-    ) -> Result<SymbolSearchResult, RustAnalyzerError> {
-        let segments = split_search_query_into_segments(&query);
-        if segments.len() == 1 {
-            return ra.workspace_symbol(segments[0].clone(), options).await;
-        }
+    search_merge_multiple_patterns(ra, segments, options).await
+}
 
-        search_merge_multiple_patterns(ra, segments, options).await
-    }
+/// Runs LSP `textDocument/definition` on the live rust-analyzer session and returns the raw JSON `result`.
+pub async fn find_definition(
+    ra: &mut RustAnalyzerSession,
+    document_uri: String,
+    line: u32,
+    character: u32,
+) -> Result<Value, RustAnalyzerError> {
+    ra.text_document_definition(document_uri, line, character)
+        .await
+}
 
-    /// Runs LSP `textDocument/definition` on the live rust-analyzer session and returns the raw JSON `result`.
-    pub async fn find_definition(
-        &self,
-        ra: &mut RustAnalyzerSession,
-        document_uri: String,
-        line: u32,
-        character: u32,
-    ) -> Result<Value, RustAnalyzerError> {
-        ra.text_document_definition(document_uri, line, character)
-            .await
-    }
+/// Runs LSP `textDocument/implementation` on the live rust-analyzer session and returns the raw JSON `result`.
+pub async fn find_implementations(
+    ra: &mut RustAnalyzerSession,
+    document_uri: String,
+    line: u32,
+    character: u32,
+) -> Result<Value, RustAnalyzerError> {
+    ra.text_document_implementation(document_uri, line, character)
+        .await
+}
 
-    /// Runs LSP `textDocument/implementation` on the live rust-analyzer session and returns the raw JSON `result`.
-    pub async fn find_implementations(
-        &self,
-        ra: &mut RustAnalyzerSession,
-        document_uri: String,
-        line: u32,
-        character: u32,
-    ) -> Result<Value, RustAnalyzerError> {
-        ra.text_document_implementation(document_uri, line, character)
-            .await
-    }
+/// Runs LSP `textDocument/references` on the live rust-analyzer session and returns the raw JSON `result`.
+pub async fn find_references(
+    ra: &mut RustAnalyzerSession,
+    document_uri: String,
+    line: u32,
+    character: u32,
+) -> Result<Value, RustAnalyzerError> {
+    ra.text_document_references(document_uri, line, character)
+        .await
+}
 
-    /// Runs LSP `textDocument/references` on the live rust-analyzer session and returns the raw JSON `result`.
-    pub async fn find_references(
-        &self,
-        ra: &mut RustAnalyzerSession,
-        document_uri: String,
-        line: u32,
-        character: u32,
-    ) -> Result<Value, RustAnalyzerError> {
-        ra.text_document_references(document_uri, line, character)
-            .await
-    }
+/// Runs LSP `textDocument/prepareCallHierarchy` on the live rust-analyzer session and returns the raw JSON `result`.
+pub async fn prepare_call_hierarchy(
+    ra: &mut RustAnalyzerSession,
+    document_uri: String,
+    line: u32,
+    character: u32,
+) -> Result<Value, RustAnalyzerError> {
+    ra.prepare_call_hierarchy(document_uri, line, character)
+        .await
+}
 
-    /// Runs LSP `textDocument/prepareCallHierarchy` on the live rust-analyzer session and returns the raw JSON `result`.
-    pub async fn prepare_call_hierarchy(
-        &self,
-        ra: &mut RustAnalyzerSession,
-        document_uri: String,
-        line: u32,
-        character: u32,
-    ) -> Result<Value, RustAnalyzerError> {
-        ra.prepare_call_hierarchy(document_uri, line, character)
-            .await
-    }
+/// Runs LSP `callHierarchy/incomingCalls` on the live rust-analyzer session and returns the raw JSON `result`.
+pub async fn call_hierarchy_incoming_calls(
+    ra: &mut RustAnalyzerSession,
+    item: CallHierarchyItem,
+) -> Result<Value, RustAnalyzerError> {
+    ra.call_hierarchy_incoming_calls(item).await
+}
 
-    /// Runs LSP `callHierarchy/incomingCalls` on the live rust-analyzer session and returns the raw JSON `result`.
-    pub async fn call_hierarchy_incoming_calls(
-        &self,
-        ra: &mut RustAnalyzerSession,
-        item: CallHierarchyItem,
-    ) -> Result<Value, RustAnalyzerError> {
-        ra.call_hierarchy_incoming_calls(item).await
-    }
+/// Runs LSP `callHierarchy/outgoingCalls` on the live rust-analyzer session and returns the raw JSON `result`.
+pub async fn call_hierarchy_outgoing_calls(
+    ra: &mut RustAnalyzerSession,
+    item: CallHierarchyItem,
+) -> Result<Value, RustAnalyzerError> {
+    ra.call_hierarchy_outgoing_calls(item).await
+}
 
-    /// Runs LSP `callHierarchy/outgoingCalls` on the live rust-analyzer session and returns the raw JSON `result`.
-    pub async fn call_hierarchy_outgoing_calls(
-        &self,
-        ra: &mut RustAnalyzerSession,
-        item: CallHierarchyItem,
-    ) -> Result<Value, RustAnalyzerError> {
-        ra.call_hierarchy_outgoing_calls(item).await
-    }
+/// Runs LSP `textDocument/documentSymbol` on the live rust-analyzer session and returns the raw JSON `result`.
+pub async fn document_symbols(
+    ra: &mut RustAnalyzerSession,
+    document_uri: String,
+) -> Result<Value, RustAnalyzerError> {
+    ra.text_document_document_symbol(document_uri).await
+}
 
-    /// Runs LSP `textDocument/documentSymbol` on the live rust-analyzer session and returns the raw JSON `result`.
-    pub async fn document_symbols(
-        &self,
-        ra: &mut RustAnalyzerSession,
-        document_uri: String,
-    ) -> Result<Value, RustAnalyzerError> {
-        ra.text_document_document_symbol(document_uri).await
-    }
-
-    /// Runs LSP `textDocument/hover` on the live rust-analyzer session and returns the raw JSON `result`.
-    pub async fn hover(
-        &self,
-        ra: &mut RustAnalyzerSession,
-        document_uri: String,
-        line: u32,
-        character: u32,
-    ) -> Result<Value, RustAnalyzerError> {
-        ra.text_document_hover(document_uri, line, character).await
-    }
+/// Runs LSP `textDocument/hover` on the live rust-analyzer session and returns the raw JSON `result`.
+pub async fn hover(
+    ra: &mut RustAnalyzerSession,
+    document_uri: String,
+    line: u32,
+    character: u32,
+) -> Result<Value, RustAnalyzerError> {
+    ra.text_document_hover(document_uri, line, character).await
 }
 
 /// Splits `query` on unescaped ASCII `|` into trimmed segments; `\|` produces a literal `|` in the segment.

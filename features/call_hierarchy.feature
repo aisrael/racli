@@ -12,7 +12,7 @@ Feature: racli call-hierarchy
   Scenario: JSON call-hierarchy incoming includes the caller
     When the following command is run:
       """
-      racli call-hierarchy --path fixtures/queue/src/sys.rs --line 3 --character 8 --direction incoming
+      racli call-hierarchy --path fixtures/queue/src/sys.rs --line 3 --character 8 --direction incoming --json
       """
     Then it should exit with status code 0
     And the JSON output should match JSONPath "$.incoming[*].uri" with a value ending with "main.rs"
@@ -20,7 +20,7 @@ Feature: racli call-hierarchy
   Scenario: JSON call-hierarchy outgoing includes the callee
     When the following command is run:
       """
-      racli call-hierarchy --path fixtures/queue/src/sys.rs --line 3 --character 8 --direction outgoing
+      racli call-hierarchy --path fixtures/queue/src/sys.rs --line 3 --character 8 --direction outgoing --json
       """
     Then it should exit with status code 0
     And the JSON output should match JSONPath "$.outgoing[*].uri" with a value ending with "sys.rs"

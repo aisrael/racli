@@ -11,7 +11,7 @@
 - To navigate the Rust codebase, use the `racli` skill (`.agents/skills/racli/SKILL.md`). It covers every `racli` command, including `document-symbols`, `call-hierarchy` and the `search --kind` / `--scope` options, and how to read their output. The rules below are a summary.
 - The skill exists twice: `.agents/skills/racli/SKILL.md` for other agents and `.claude/skills/racli/SKILL.md` for Claude Code. Keep them identical: after changing one, copy it over the other.
 - When searching for symbols DO NOT USE `grep`. Try `racli search` first. Only fall back to `grep` when `racli search` doesn't return anything meaningful.
-- When searching for the definition, DO NOT USE `grep`. First try `racli find-definition` with the symbol's name, e.g. `racli find-definition RacliSession`.
+- When searching for the definition, DO NOT USE `grep`. First try `racli find-definition` with the symbol's name, e.g. `racli find-definition RacliCore`.
 - When searching for usages of a symbol, DO NOT USE `grep`. First try `racli find-references` with the symbol's name, e.g. `racli find-references run_cli_search`. The results include the declaration.
 - When searching for the implementations of a trait or type, or the overrides of a trait method, DO NOT USE `grep`. First try `racli find-implementations` with the symbol's name, e.g. `racli find-implementations CallHierarchyBackend`.
 - A name can be qualified by a module path from the crate root (`search::run_cli_search`) or by the type or trait that contains it (`CallHierarchyBackend::prepare`), and several names can be given at once. Use `--path <FILE> --line <N> --character <N>` instead only when you already have a position, such as one from a compiler error.

@@ -1,5 +1,6 @@
-//! Compares a naive `grep`-based approximation of go-to-definition against `racli find-definition`,
-//! and `racli find-definition` with and without `--hover`.
+//! Compares a naive `grep`-based approximation of go-to-definition against `racli find-definition`
+//! (the CLI calling a `racli server`) and the `racli mcp` `find_definition` tool, each from a
+//! position and by symbol name, with and without `--hover`.
 
 mod support;
 
@@ -12,6 +13,7 @@ use std::time::Duration;
 use criterion::BenchmarkId;
 use criterion::Criterion;
 use racli::backend_status::BackendStatus;
+use serde_json::json;
 
 /// A `(file, 0-based line, 0-based UTF-16 character, bare symbol name)` case exercised by both baselines.
 struct DefinitionQuery {
@@ -38,13 +40,13 @@ const QUERIES: &[DefinitionQuery] = &[
         file: "src/grpc_server.rs",
         line: 118,
         character: 17,
-        symbol: "RacliSession",
+        symbol: "RacliCore",
     },
     DefinitionQuery {
-        file: "src/racli_session.rs",
-        line: 125,
-        character: 10,
-        symbol: "Core",
+        file: "src/racli_backend.rs",
+        line: 59,
+        character: 22,
+        symbol: "Client",
     },
     DefinitionQuery {
         file: "src/cli.rs",
@@ -127,11 +129,54 @@ fn racli_find_definition_cli(
     );
 }
 
-/// Registers Criterion benches comparing the grep approximation and real `racli find-definition`.
+/// Runs `racli find-definition <name>` against `socket`, with `--hover` if `hover` (discards
+/// output).
+fn racli_find_definition_by_name_cli(racli: &Path, socket: &Path, name: &str, hover: bool) {
+    let mut command = Command::new(racli);
+    command.arg("find-definition").arg(name).arg("--text");
+    if hover {
+        command.arg("--hover");
+    }
+    let status = command
+        .env("RACLI_UNIX_SOCKET", socket)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("spawn racli find-definition");
+    assert!(
+        status.success(),
+        "racli find-definition {name} failed with {status:?}"
+    );
+}
+
+/// Calls the MCP `find_definition` tool for `(path, line, character)`, with `hover` (discards
+/// output).
+fn mcp_find_definition(
+    mcp: &support::RacliMcp,
+    path: &Path,
+    line: u32,
+    character: u32,
+    hover: bool,
+) {
+    // The tool takes 1-based positions; `line` and `character` are LSP's 0-based ones.
+    mcp.call(
+        "find_definition",
+        json!({"path": path, "line": line + 1, "character": character + 1, "hover": hover}),
+    );
+}
+
+/// Calls the MCP `find_definition` tool for the symbol `name`, with `hover` (discards output).
+fn mcp_find_definition_by_name(mcp: &support::RacliMcp, name: &str, hover: bool) {
+    mcp.call("find_definition", json!({"names": [name], "hover": hover}));
+}
+
+/// Registers Criterion benches comparing the grep approximation with `racli find-definition` and
+/// the MCP `find_definition` tool, from a position and by name, with and without hover.
 fn bench_grep_vs_racli_find_definition(
     c: &mut Criterion,
     racli: &Path,
     socket: &Path,
+    mcp: &support::RacliMcp,
     workspace: &Path,
 ) {
     let mut group = c.benchmark_group("grep_vs_racli_find_definition");
@@ -175,6 +220,47 @@ fn bench_grep_vs_racli_find_definition(
                 });
             },
         );
+        for hover in [false, true] {
+            let suffix = if hover { "_hover" } else { "" };
+            group.bench_function(
+                BenchmarkId::new(
+                    format!("racli_find_definition_by_name{suffix}"),
+                    query.symbol,
+                ),
+                |b| {
+                    b.iter(|| {
+                        racli_find_definition_by_name_cli(
+                            black_box(racli),
+                            black_box(socket),
+                            black_box(query.symbol),
+                            hover,
+                        );
+                    });
+                },
+            );
+            group.bench_function(
+                BenchmarkId::new(format!("mcp_find_definition{suffix}"), query.symbol),
+                |b| {
+                    b.iter(|| {
+                        mcp_find_definition(
+                            black_box(mcp),
+                            black_box(&abs_path),
+                            black_box(query.line),
+                            black_box(query.character),
+                            hover,
+                        );
+                    });
+                },
+            );
+            group.bench_function(
+                BenchmarkId::new(format!("mcp_find_definition_by_name{suffix}"), query.symbol),
+                |b| {
+                    b.iter(|| {
+                        mcp_find_definition_by_name(black_box(mcp), black_box(query.symbol), hover);
+                    });
+                },
+            );
+        }
     }
     group.finish();
 }
@@ -206,11 +292,11 @@ fn main() {
             "racli server did not accept search RPCs in time",
         );
 
-        let server_rs = workspace
-            .join("src")
-            .join("server.rs")
+        let first = &QUERIES[0];
+        let first_file = workspace
+            .join(first.file)
             .canonicalize()
-            .expect("canonicalize src/server.rs")
+            .expect("canonicalize the first query's file")
             .display()
             .to_string();
         support::poll_until(
@@ -219,13 +305,13 @@ fn main() {
                 matches!(
                     tokio::time::timeout(
                         Duration::from_secs(10),
-                        racli::client::Client::new(sock).unwrap().find_definition(&server_rs, 36, 17),
+                        racli::client::Client::new(sock).unwrap().find_definition(&first_file, first.line, first.character),
                     )
                     .await,
                     Ok(Ok(resp)) if !resp.value.locations.is_empty()
                 )
             },
-            "racli server did not resolve the `RustAnalyzerSession` definition in time",
+            "racli server did not resolve the first query's definition in time",
         );
         // Hovers taken while rust-analyzer is still indexing can come back empty, and faster.
         support::poll_until(
@@ -240,10 +326,18 @@ fn main() {
         );
     });
     let socket = server.socket().to_path_buf();
+    // `RacliMcp::start` waits for rust-analyzer to be ready, so hovers aren't taken while indexing.
+    let mcp = support::RacliMcp::start(&workspace);
+    mcp.wait_for(
+        "find_definition",
+        json!({"names": [QUERIES[0].symbol], "hover": true}),
+        |text| text.lines().count() > 2,
+        "racli mcp did not resolve the first query's definition in time",
+    );
 
     let mut criterion = Criterion::default()
         .measurement_time(Duration::from_secs(60))
         .configure_from_args();
-    bench_grep_vs_racli_find_definition(&mut criterion, &racli, &socket, &workspace);
+    bench_grep_vs_racli_find_definition(&mut criterion, &racli, &socket, &mcp, &workspace);
     criterion.final_summary();
 }

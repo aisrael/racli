@@ -3,8 +3,8 @@
 
 use serde::Serialize;
 
-use crate::client::Client;
 use crate::proto::racli::LspLocation;
+use crate::racli_backend::RacliBackend;
 use crate::symbol::RangeJson;
 use crate::symbol::outline_symbol_at;
 use crate::symbol::range_json;
@@ -31,7 +31,7 @@ pub struct DefinitionSource {
 /// Fetches the hover and/or the source of the definition at `loc`. Errors are returned as text, to
 /// print alongside the location rather than stop the command.
 pub async fn definition_details(
-    client: &Client,
+    backend: &dyn RacliBackend,
     loc: &LspLocation,
     hover: bool,
     source: bool,
@@ -43,13 +43,13 @@ pub async fn definition_details(
         return (details, errors);
     };
     if hover {
-        match hover_markdown(client, &loc.uri, range).await {
+        match hover_markdown(backend, &loc.uri, range).await {
             Ok(markdown) => details.hover = markdown,
             Err(e) => errors.push(format!("hover: {e}")),
         }
     }
     if source {
-        match definition_source(client, &loc.uri, range, sources).await {
+        match definition_source(backend, &loc.uri, range, sources).await {
             Ok(text) => details.source = text,
             Err(e) => errors.push(format!("source: {e}")),
         }
@@ -60,7 +60,7 @@ pub async fn definition_details(
 /// rust-analyzer's `textDocument/hover` at the start of `range`, as Markdown, or `None` if it has
 /// nothing to show.
 async fn hover_markdown(
-    client: &Client,
+    backend: &dyn RacliBackend,
     uri: &str,
     range: &crate::proto::racli::LspRange,
 ) -> Result<Option<String>, String> {
@@ -71,18 +71,16 @@ async fn hover_markdown(
     else {
         return Ok(None);
     };
-    let resp = client
-        .hover(path.display().to_string(), start.line, start.character)
-        .await
-        .map(|reply| reply.value)
-        .map_err(|e| e.to_string())?;
+    let resp = backend
+        .hover(&path.display().to_string(), start.line, start.character)
+        .await?;
     Ok(resp.markdown)
 }
 
 /// The definition's whole source: the range of the outline symbol whose name is at `range`, or
 /// `None` if no outline symbol is there.
 async fn definition_source(
-    client: &Client,
+    backend: &dyn RacliBackend,
     uri: &str,
     range: &crate::proto::racli::LspRange,
     sources: &mut SourceLines,
@@ -93,11 +91,9 @@ async fn definition_source(
     else {
         return Ok(None);
     };
-    let outline = client
-        .document_symbols(path.display().to_string())
-        .await
-        .map(|reply| reply.value)
-        .map_err(|e| e.to_string())?;
+    let outline = backend
+        .document_symbols(&path.display().to_string())
+        .await?;
     let Some(full) = outline_symbol_at(&outline.symbols, range)
         .and_then(|symbol| symbol.range)
         .and_then(range_json)

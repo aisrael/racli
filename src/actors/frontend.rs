@@ -1,4 +1,4 @@
-//! Front-end actors: the gRPC Unix-socket server and the MCP stdio server, both backed by the shared [`RacliSession`].
+//! Front-end actors: the gRPC Unix-socket server and the MCP stdio server, both backed by the shared [`RacliCore`].
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -20,7 +20,7 @@ use crate::actors::root::RootMsg;
 use crate::grpc_server::RacliGrpc;
 use crate::mcp::RacliMcpHandler;
 use crate::proto::racli::racli_server::RacliServer;
-use crate::racli_session::RacliSession;
+use crate::racli_core::RacliCore;
 
 /// Failures binding, serving, or stopping a front end.
 #[derive(Debug, thiserror::Error)]
@@ -54,7 +54,7 @@ pub(crate) struct GrpcFrontendArgs {
     /// Unix socket path to bind (removed again when the actor stops).
     pub socket_path: PathBuf,
     /// Session that serves the RPCs.
-    pub session: Arc<RacliSession>,
+    pub session: Arc<RacliCore>,
     /// Notified with [`RootMsg::FrontendExited`] if the server stops on its own.
     pub root: ActorRef<RootMsg>,
 }
@@ -172,7 +172,7 @@ impl Actor for GrpcFrontend {
 /// Startup arguments for [`McpFrontend`].
 pub(crate) struct McpFrontendArgs {
     /// Session that serves the MCP tools.
-    pub session: Arc<RacliSession>,
+    pub session: Arc<RacliCore>,
     /// Notified with [`RootMsg::FrontendExited`] when the MCP peer disconnects (stdin EOF).
     pub root: ActorRef<RootMsg>,
 }

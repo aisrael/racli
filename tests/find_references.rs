@@ -102,7 +102,7 @@ async fn grpc_find_references_rust_analyzer_session() {
         assert!(loc.range.is_some(), "expected range on reference location");
         if loc.uri.ends_with("rust_analyzer.rs") {
             saw_declaration = true;
-        } else if loc.uri.ends_with("racli_session.rs") || loc.uri.ends_with("server.rs") {
+        } else if loc.uri.ends_with("racli_core.rs") || loc.uri.ends_with("server.rs") {
             saw_other_usage = true;
         }
     }

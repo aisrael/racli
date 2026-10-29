@@ -35,6 +35,24 @@ async fn mcp_stdio_get_version_and_search_round_trip() {
 
     let peer = client.peer();
 
+    // `get_version` declares the shape of its structured JSON (ADR 006 decision 2).
+    let tools = tokio::time::timeout(Duration::from_secs(10), peer.list_all_tools())
+        .await
+        .expect("tools/list should finish within timeout")
+        .expect("tools/list");
+    let get_version = tools
+        .iter()
+        .find(|tool| tool.name == "get_version")
+        .expect("get_version tool");
+    let output_schema = get_version
+        .output_schema
+        .as_ref()
+        .expect("get_version should declare an outputSchema");
+    assert!(
+        output_schema["properties"]["version"].is_object(),
+        "unexpected outputSchema: {output_schema:?}"
+    );
+
     let version_result = tokio::time::timeout(
         Duration::from_secs(10),
         peer.call_tool(CallToolRequestParams::new("get_version")),
@@ -58,38 +76,43 @@ async fn mcp_stdio_get_version_and_search_round_trip() {
             .is_empty()
     );
 
-    // Poll `search` (workspace/symbol via the in-process rust-analyzer session) until
-    // indexing has caught up and results appear.
+    // Poll `get_version` until its `_meta` says rust-analyzer has finished indexing (ADR 006).
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
-        let mut arguments = serde_json::Map::new();
-        arguments.insert("query".to_string(), json!(""));
-
-        let search_result = peer
-            .call_tool(CallToolRequestParams::new("search").with_arguments(arguments))
+        let result = peer
+            .call_tool(CallToolRequestParams::new("get_version"))
             .await
-            .expect("search tool call");
-
-        let structured = search_result
-            .structured_content
-            .expect("search should return structured content");
-        let payload = &structured["workspaceSymbolResponse"];
-        let non_empty = payload["flat"]["items"]
-            .as_array()
-            .is_some_and(|items| !items.is_empty())
-            || payload["nested"]["items"]
-                .as_array()
-                .is_some_and(|items| !items.is_empty());
-        if non_empty {
+            .expect("get_version tool call");
+        let backend = result
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.0.get("racli/backend"))
+            .cloned();
+        if backend == Some(json!("ready")) {
             break;
         }
-
         assert!(
             tokio::time::Instant::now() < deadline,
-            "timed out waiting for MCP search to return results"
+            "timed out waiting for `racli/backend: ready`, last {backend:?}"
         );
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
+
+    // `search` returns what `racli search --text` prints, with paths relative to the workspace root.
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("query".to_string(), json!("RacliCore"));
+    arguments.insert("exact".to_string(), json!(true));
+    let search_result = peer
+        .call_tool(CallToolRequestParams::new("search").with_arguments(arguments))
+        .await
+        .expect("search tool call");
+    assert_ne!(search_result.is_error, Some(true));
+    let content = serde_json::to_value(&search_result.content).expect("serialize content");
+    let text = content[0]["text"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("RacliCore [STRUCT] src/racli_core.rs:"),
+        "unexpected search output: {text}"
+    );
 
     tokio::time::timeout(Duration::from_secs(10), client.cancel())
         .await

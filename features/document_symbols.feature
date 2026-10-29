@@ -13,7 +13,7 @@ Feature: racli document-symbols
   Scenario: JSON document-symbols includes symbol names
     When the following command is run:
       """
-      racli document-symbols fixtures/queue/src/sys.rs
+      racli document-symbols fixtures/queue/src/sys.rs --json
       """
     Then it should exit with status code 0
     And the JSON output should match JSONPath "$[*].name" with a value ending with "mkfifo"
