@@ -1,6 +1,7 @@
-//! Compares `racli search` against a grep approximation, both by default (types only, via plain
-//! substring `grep`) and with `--kind all-symbols` (via a declaration-keyword `grep -E`), for
-//! substring queries (workspace: racli's own source tree).
+//! Compares `racli search` (the CLI calling a `racli server`) and the `racli mcp` `search` tool
+//! against a grep approximation, both by default (types only, via plain substring `grep`) and with
+//! `--kind all-symbols` (via a declaration-keyword `grep -E`), for substring queries (workspace:
+//! racli's own source tree).
 
 mod support;
 
@@ -12,6 +13,7 @@ use std::time::Duration;
 
 use criterion::BenchmarkId;
 use criterion::Criterion;
+use serde_json::json;
 
 /// The most frequent real symbols in racli's own `src/` tree (`.rs` tree for `grep`, LSP symbols for `racli`).
 const QUERIES: &[&str] = &[
@@ -95,10 +97,27 @@ fn racli_search_all_symbols_cli(racli: &Path, socket: &Path, query: &str) {
     );
 }
 
-/// Registers Criterion benches comparing `grep` against `racli search`, both by default
-/// (types only) and with `--kind all-symbols` (using [`grep_rs_all_symbols_declaration`] as the
-/// `grep` approximation for the latter), per query string.
-fn bench_grep_vs_racli(c: &mut Criterion, racli: &Path, socket: &Path, workspace: &Path) {
+/// Calls the MCP `search` tool for `query`, with `kind: "all_symbols"` if `all_symbols`, as JSON
+/// like `racli search` prints by default (discards output).
+fn mcp_search(mcp: &support::RacliMcp, query: &str, all_symbols: bool) {
+    let mut arguments = json!({"query": query, "format": "json"});
+    if all_symbols {
+        arguments["kind"] = json!("all_symbols");
+    }
+    mcp.call("search", arguments);
+}
+
+/// Registers Criterion benches comparing `grep` against `racli search` and the MCP `search` tool,
+/// both by default (types only) and with `--kind all-symbols` (using
+/// [`grep_rs_all_symbols_declaration`] as the `grep` approximation for the latter), per query
+/// string.
+fn bench_grep_vs_racli(
+    c: &mut Criterion,
+    racli: &Path,
+    socket: &Path,
+    mcp: &support::RacliMcp,
+    workspace: &Path,
+) {
     let mut group = c.benchmark_group("grep_vs_racli_search");
     for query in QUERIES {
         group.bench_function(BenchmarkId::new("grep", *query), |b| {
@@ -119,6 +138,16 @@ fn bench_grep_vs_racli(c: &mut Criterion, racli: &Path, socket: &Path, workspace
         group.bench_function(BenchmarkId::new("racli_search_all_symbols", *query), |b| {
             b.iter(|| {
                 racli_search_all_symbols_cli(black_box(racli), black_box(socket), black_box(query));
+            });
+        });
+        group.bench_function(BenchmarkId::new("mcp_search", *query), |b| {
+            b.iter(|| {
+                mcp_search(black_box(mcp), black_box(query), false);
+            });
+        });
+        group.bench_function(BenchmarkId::new("mcp_search_all_symbols", *query), |b| {
+            b.iter(|| {
+                mcp_search(black_box(mcp), black_box(query), true);
             });
         });
     }
@@ -153,10 +182,17 @@ fn main() {
         );
     });
     let socket = server.socket().to_path_buf();
+    let mcp = support::RacliMcp::start(&workspace);
+    mcp.wait_for(
+        "search",
+        json!({"query": QUERIES[0]}),
+        |text| text.lines().count() > 1,
+        "racli mcp did not find the first query's symbols in time",
+    );
 
     let mut criterion = Criterion::default()
         .measurement_time(Duration::from_secs(60))
         .configure_from_args();
-    bench_grep_vs_racli(&mut criterion, &racli, &socket, &workspace);
+    bench_grep_vs_racli(&mut criterion, &racli, &socket, &mcp, &workspace);
     criterion.final_summary();
 }
