@@ -34,6 +34,8 @@ pub mod lsp_map;
 pub mod mcp;
 /// Protobuf and tonic-generated types for the Racli gRPC API.
 pub mod proto;
+/// The racli backend's operations over a gRPC `Client` or an in-process `RacliSession`.
+pub mod racli_backend;
 /// Shared gRPC/MCP backend (rust-analyzer + [`crate::server::Core`]).
 pub mod racli_session;
 /// `rust-analyzer` LSP child process used by `racli server`.
