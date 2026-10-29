@@ -18,7 +18,7 @@ use serde_json::json;
 /// The most frequent real symbols in racli's own `src/` tree (`.rs` tree for `grep`, LSP symbols for `racli`).
 const QUERIES: &[&str] = &[
     "RustAnalyzerSession",
-    "RacliSession",
+    "RacliCore",
     "Client",
     "effective_unix_socket_path",
     "LspError",

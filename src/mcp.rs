@@ -1,4 +1,4 @@
-//! The `racli mcp` server: MCP tools on stdio via `rmcp`, served by an in-process `RacliSession`
+//! The `racli mcp` server: MCP tools on stdio via `rmcp`, served by an in-process `RacliCore`
 //! (rust-analyzer). Each tool runs its CLI command and returns what the command prints (ADR 006).
 
 mod mcp_proto_json;
@@ -44,7 +44,7 @@ use crate::find_implementations::run_find_implementations;
 use crate::find_references::run_find_references;
 use crate::grpc_server::install_unix_shutdown_signals;
 use crate::logging::init_server_tracing;
-use crate::racli_session::RacliSession;
+use crate::racli_core::RacliCore;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::search::run_search;
 
@@ -89,16 +89,16 @@ impl From<rmcp::service::ServerInitializeError> for ServerError {
     }
 }
 
-/// MCP server state: shared `RacliSession`, plus a generated `ToolRouter`.
+/// MCP server state: shared `RacliCore`, plus a generated `ToolRouter`.
 #[derive(Clone)]
 pub(crate) struct RacliMcpHandler {
-    session: Arc<RacliSession>,
+    session: Arc<RacliCore>,
     tool_router: ToolRouter<Self>,
 }
 
 impl RacliMcpHandler {
     /// Creates a handler that serves tools from `session` (rust-analyzer-backed).
-    pub fn new(session: Arc<RacliSession>) -> Self {
+    pub fn new(session: Arc<RacliCore>) -> Self {
         Self {
             session,
             tool_router: Self::tool_router(),

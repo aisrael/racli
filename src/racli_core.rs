@@ -122,14 +122,14 @@ fn passthrough_params(
 }
 
 /// A handle to the rust-analyzer actor that owns the live LSP session, plus the session's `serverInfo`.
-pub struct RacliSession {
+pub struct RacliCore {
     lsp_server_info: LspServerInfo,
     initialize_result: Value,
     events: Arc<LspEvents>,
     rust_analyzer: ActorRef<RustAnalyzerMsg>,
 }
 
-impl RacliSession {
+impl RacliCore {
     /// Builds a session from an initialized rust-analyzer actor and its LSP `serverInfo`.
     pub(crate) fn new(
         lsp_server_info: LspServerInfo,

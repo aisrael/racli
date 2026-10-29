@@ -40,7 +40,7 @@ const QUERIES: &[DefinitionQuery] = &[
         file: "src/grpc_server.rs",
         line: 118,
         character: 17,
-        symbol: "RacliSession",
+        symbol: "RacliCore",
     },
     DefinitionQuery {
         file: "src/racli_backend.rs",

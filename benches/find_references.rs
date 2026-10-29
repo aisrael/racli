@@ -36,10 +36,10 @@ const QUERIES: &[ReferenceQuery] = &[
         symbol: "RustAnalyzerSession",
     },
     ReferenceQuery {
-        file: "src/racli_session.rs",
+        file: "src/racli_core.rs",
         line: 124,
         character: 11,
-        symbol: "RacliSession",
+        symbol: "RacliCore",
     },
     ReferenceQuery {
         file: "src/client.rs",

@@ -100,7 +100,7 @@ async fn mcp_stdio_get_version_and_search_round_trip() {
 
     // `search` returns what `racli search --text` prints, with paths relative to the workspace root.
     let mut arguments = serde_json::Map::new();
-    arguments.insert("query".to_string(), json!("RacliSession"));
+    arguments.insert("query".to_string(), json!("RacliCore"));
     arguments.insert("exact".to_string(), json!(true));
     let search_result = peer
         .call_tool(CallToolRequestParams::new("search").with_arguments(arguments))
@@ -110,7 +110,7 @@ async fn mcp_stdio_get_version_and_search_round_trip() {
     let content = serde_json::to_value(&search_result.content).expect("serialize content");
     let text = content[0]["text"].as_str().unwrap_or_default();
     assert!(
-        text.contains("RacliSession [STRUCT] src/racli_session.rs:"),
+        text.contains("RacliCore [STRUCT] src/racli_core.rs:"),
         "unexpected search output: {text}"
     );
 

@@ -41,10 +41,10 @@ const QUERIES: &[ImplementationQuery] = &[
         symbol: "RustAnalyzerSession",
     },
     ImplementationQuery {
-        file: "src/racli_session.rs",
+        file: "src/racli_core.rs",
         line: 124,
         character: 11,
-        symbol: "RacliSession",
+        symbol: "RacliCore",
     },
     ImplementationQuery {
         file: "src/client.rs",

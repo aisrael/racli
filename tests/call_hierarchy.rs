@@ -49,7 +49,7 @@ async fn search_until_non_empty(sock: &Path) {
 }
 
 /// Integration test: gRPC `PrepareCallHierarchy` + `IncomingCalls` resolves
-/// `document_uri_from_path` in `src/rust_analyzer.rs` to its callers in `src/racli_session.rs`.
+/// `document_uri_from_path` in `src/rust_analyzer.rs` to its callers in `src/racli_core.rs`.
 #[tokio::test]
 async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
     if std::process::Command::new("rust-analyzer")
@@ -114,18 +114,18 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
         "expected multiple callers of document_uri_from_path, got {:?}",
         calls.calls
     );
-    let racli_session_callers = calls
+    let racli_core_callers = calls
         .calls
         .iter()
         .filter(|c| {
             c.from
                 .as_ref()
-                .is_some_and(|f| f.uri.ends_with("racli_session.rs"))
+                .is_some_and(|f| f.uri.ends_with("racli_core.rs"))
         })
         .count();
     assert!(
-        racli_session_callers >= 2,
-        "expected multiple callers in racli_session.rs, got {:?}",
+        racli_core_callers >= 2,
+        "expected multiple callers in racli_core.rs, got {:?}",
         calls.calls
     );
 

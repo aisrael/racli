@@ -3,7 +3,7 @@
 //!
 //! LSP only exposes one level of callers/callees per request; `CallHierarchyBackend`
 //! abstracts over how that single level is fetched (gRPC over a Unix socket for the CLI, or an
-//! in-process `RacliSession` for MCP), and `run_call_hierarchy` drives the depth-bounded,
+//! in-process `RacliCore` for MCP), and `run_call_hierarchy` drives the depth-bounded,
 //! cycle-guarded recursion on top of it so both callers see the same tree shape.
 
 use std::collections::HashSet;
@@ -28,7 +28,7 @@ use crate::proto::racli::LspCallHierarchyOutgoingCall;
 use crate::proto::racli::LspPosition;
 use crate::proto::racli::LspRange;
 use crate::racli_backend::RacliBackend;
-use crate::racli_session::RacliSession;
+use crate::racli_core::RacliCore;
 use crate::symbol;
 use crate::symbol::SymbolArgs;
 use crate::symbol::SymbolResultJson;
@@ -79,7 +79,7 @@ pub struct CallHierarchyArgs {
 }
 
 /// One RPC round trip's worth of backend access, abstracting over a gRPC socket (CLI) vs. an
-/// in-process [`RacliSession`] (MCP) so [`run_call_hierarchy`] can drive both the same way.
+/// in-process [`RacliCore`] (MCP) so [`run_call_hierarchy`] can drive both the same way.
 // `#[async_trait]`'s expansion trips `double_must_use` (Rust 1.99+).
 #[allow(clippy::double_must_use)]
 #[tonic::async_trait]
@@ -146,9 +146,9 @@ impl CallHierarchyBackend for SocketBackend {
     }
 }
 
-/// [`CallHierarchyBackend`] over an in-process [`RacliSession`], used by the MCP `call_hierarchy` tool.
+/// [`CallHierarchyBackend`] over an in-process [`RacliCore`], used by the MCP `call_hierarchy` tool.
 #[tonic::async_trait]
-impl CallHierarchyBackend for RacliSession {
+impl CallHierarchyBackend for RacliCore {
     async fn prepare(
         &self,
         file_path: String,

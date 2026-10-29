@@ -20,7 +20,7 @@ use crate::actors::rust_analyzer::RustAnalyzerActor;
 use crate::actors::rust_analyzer::RustAnalyzerArgs;
 use crate::actors::rust_analyzer::RustAnalyzerMsg;
 use crate::actors::startup_error;
-use crate::racli_session::RacliSession;
+use crate::racli_core::RacliCore;
 use crate::rust_analyzer::RustAnalyzerError;
 
 /// Failures starting the backend: rust-analyzer, or (with the `notify` feature) the file watcher,
@@ -48,7 +48,7 @@ impl BackendStartError {
 /// Messages handled by [`BackendSupervisor`].
 pub(crate) enum BackendMsg {
     /// Returns the shared session used by gRPC/MCP handlers.
-    GetSession(RpcReplyPort<Arc<RacliSession>>),
+    GetSession(RpcReplyPort<Arc<RacliCore>>),
     /// Stops the watcher (if any), then shuts rust-analyzer down gracefully, then stops the supervisor.
     Shutdown(RpcReplyPort<Result<(), RustAnalyzerError>>),
 }
@@ -63,7 +63,7 @@ pub(crate) struct BackendArgs {
 
 /// State of [`BackendSupervisor`]: child handles plus the session built from them.
 pub(crate) struct BackendState {
-    session: Arc<RacliSession>,
+    session: Arc<RacliCore>,
     rust_analyzer: ActorRef<RustAnalyzerMsg>,
     #[cfg(feature = "notify")]
     watcher: ActorRef<FileWatcherMsg>,
@@ -119,7 +119,7 @@ impl Actor for BackendSupervisor {
         let lsp_server_info = ractor::call!(rust_analyzer, RustAnalyzerMsg::ServerInfo)?;
         let initialize_result = ractor::call!(rust_analyzer, RustAnalyzerMsg::InitializeResult)?;
         let events = ractor::call!(rust_analyzer, RustAnalyzerMsg::Events)?;
-        let session = Arc::new(RacliSession::new(
+        let session = Arc::new(RacliCore::new(
             lsp_server_info,
             initialize_result,
             events,
@@ -200,7 +200,7 @@ mod tests {
     use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::racli_session::RacliRpcError;
+    use crate::racli_core::RacliRpcError;
     use crate::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
     use crate::rust_analyzer::SymbolSearchOptions;
 
@@ -219,7 +219,7 @@ mod tests {
     /// Starts a [`BackendSupervisor`] on `workspace_root` and returns it with its session.
     async fn start(
         workspace_root: PathBuf,
-    ) -> (ActorRef<BackendMsg>, JoinHandle<()>, Arc<RacliSession>) {
+    ) -> (ActorRef<BackendMsg>, JoinHandle<()>, Arc<RacliCore>) {
         let args = BackendArgs {
             workspace_root,
             symbol_search_limit: DEFAULT_SYMBOL_SEARCH_LIMIT,

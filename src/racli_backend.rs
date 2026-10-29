@@ -1,4 +1,4 @@
-//! The racli backend's operations, over a gRPC [`Client`] (CLI) or an in-process [`RacliSession`]
+//! The racli backend's operations, over a gRPC [`Client`] (CLI) or an in-process [`RacliCore`]
 //! (MCP), so the client-side lookups run the same way over both (ADR 006).
 
 use crate::client::Client;
@@ -8,7 +8,7 @@ use crate::proto::racli::FindImplementationsResponse;
 use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::HoverResponse;
 use crate::proto::racli::SearchResponse;
-use crate::racli_session::RacliSession;
+use crate::racli_core::RacliCore;
 use crate::rust_analyzer::SymbolSearchOptions;
 
 /// The racli operations the client commands use. Positions are LSP's, 0-based.
@@ -125,15 +125,15 @@ impl RacliBackend for Client {
     }
 }
 
-/// [`RacliBackend`] over an in-process [`RacliSession`], used by the MCP tools.
+/// [`RacliBackend`] over an in-process [`RacliCore`], used by the MCP tools.
 #[tonic::async_trait]
-impl RacliBackend for RacliSession {
+impl RacliBackend for RacliCore {
     async fn search(
         &self,
         query: &str,
         options: SymbolSearchOptions,
     ) -> Result<SearchResponse, String> {
-        RacliSession::search(self, query.to_string(), options)
+        RacliCore::search(self, query.to_string(), options)
             .await
             .map_err(|e| e.to_string())
     }
@@ -144,7 +144,7 @@ impl RacliBackend for RacliSession {
         line: u32,
         character: u32,
     ) -> Result<FindDefinitionResponse, String> {
-        RacliSession::find_definition(self, file_path.to_string(), line, character)
+        RacliCore::find_definition(self, file_path.to_string(), line, character)
             .await
             .map_err(|e| e.to_string())
     }
@@ -155,7 +155,7 @@ impl RacliBackend for RacliSession {
         line: u32,
         character: u32,
     ) -> Result<FindReferencesResponse, String> {
-        RacliSession::find_references(self, file_path.to_string(), line, character)
+        RacliCore::find_references(self, file_path.to_string(), line, character)
             .await
             .map_err(|e| e.to_string())
     }
@@ -166,13 +166,13 @@ impl RacliBackend for RacliSession {
         line: u32,
         character: u32,
     ) -> Result<FindImplementationsResponse, String> {
-        RacliSession::find_implementations(self, file_path.to_string(), line, character)
+        RacliCore::find_implementations(self, file_path.to_string(), line, character)
             .await
             .map_err(|e| e.to_string())
     }
 
     async fn document_symbols(&self, file_path: &str) -> Result<DocumentSymbolsResponse, String> {
-        RacliSession::document_symbols(self, file_path.to_string())
+        RacliCore::document_symbols(self, file_path.to_string())
             .await
             .map_err(|e| e.to_string())
     }
@@ -183,7 +183,7 @@ impl RacliBackend for RacliSession {
         line: u32,
         character: u32,
     ) -> Result<HoverResponse, String> {
-        RacliSession::hover(self, file_path.to_string(), line, character)
+        RacliCore::hover(self, file_path.to_string(), line, character)
             .await
             .map_err(|e| e.to_string())
     }
