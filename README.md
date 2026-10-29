@@ -47,7 +47,7 @@ Client commands find it automatically. Starting from their own working directory
 - `RACLI_UNIX_SOCKET=<path>` sets an explicit socket path. It overrides discovery on both the server and the client side.
 - `RACLI_DERIVE_SOCKET_PATH=0` (or `false`) turns per-project sockets off, so servers and clients both use the single `/tmp/racli.sock`. Clients with this setting don't find per-project servers, and vice versa.
 - **racli tee** — `racli server` plus an LSP server on stdio for editors: the editor launches `racli tee` in place of `rust-analyzer`, and CLI/MCP clients share the same rust-analyzer through the socket.
-- **racli mcp** — MCP over stdio only: spawns rust-analyzer (and, with the `notify` feature, racli's file watcher) inside the MCP child process (no Unix socket). Use **`racli server`** for `racli search`, `racli find-definition`, `racli find-references`, `racli document-symbols`, and `racli version`.
+- **racli mcp** — MCP over stdio only: spawns rust-analyzer (and, with the `notify` feature, racli's file watcher) inside the MCP child process (no Unix socket), and serves the client commands as MCP tools (see [`racli mcp`](#racli-mcp)). Use **`racli server`** for `racli search`, `racli find-definition`, `racli find-references`, `racli document-symbols`, and `racli version`.
 
 Stop the server with Ctrl+C or SIGTERM to trigger LSP `shutdown`/`exit` and clean termination of the child.
 
@@ -58,6 +58,7 @@ A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-
 - [ADR 003: A High-Level Client](docs/adrs/003-high-level-client.md)
 - [ADR 004: Backend Status in Response Metadata](docs/adrs/004-backend-status-in-response-metadata.md)
 - [ADR 005: File Watching by rust-analyzer](docs/adrs/005-file-watching-by-rust-analyzer.md)
+- [ADR 006: MCP Tools Mirror the CLI](docs/adrs/006-mcp-tools-mirror-the-cli.md)
 
 ### `racli server`
 
@@ -88,6 +89,28 @@ Limitations:
 - Requests are handled one at a time, and `$/cancelRequest` is ignored.
 - Only `textDocument/publishDiagnostics`, `experimental/serverStatus`, `window/showMessage` and `window/logMessage` reach the editor. Server-to-client requests are not forwarded.
 
+### `racli mcp`
+
+`racli mcp` serves the [client commands](#client-commands) as [MCP](https://modelcontextprotocol.io) tools on stdin/stdout, for agents and other MCP hosts that start it as a child process. It starts its own rust-analyzer, with its working directory as the workspace root, and neither needs nor uses a socket, so configure the host to start it in the project root. It takes `--symbol-search-limit`, as `racli server` does.
+
+Each tool is its command, with the same options as parameters (see [ADR 006](docs/adrs/006-mcp-tools-mirror-the-cli.md)):
+
+| Tool                   | Command                     | Parameters                                                                            |
+| ---------------------- | --------------------------- | ------------------------------------------------------------------------------------- |
+| `search`               | `racli search`              | `query`, `kind`, `scope`, `exact`, `format`                                           |
+| `find_definition`      | `racli find-definition`     | `names`, `path`, `line`, `character`, `kind`, `glob`, `hover`, `source`, `format`     |
+| `find_references`      | `racli find-references`     | `names`, `path`, `line`, `character`, `kind`, `glob`, `format`                        |
+| `find_implementations` | `racli find-implementations` | `names`, `path`, `line`, `character`, `kind`, `glob`, `format`                        |
+| `call_hierarchy`       | `racli call-hierarchy`      | `names`, `path`, `line`, `character`, `kind`, `glob`, `direction`, `depth`, `format`  |
+| `document_symbols`     | `racli document-symbols`    | `path`, `format`                                                                      |
+| `get_version`          | `racli version`             | none                                                                                  |
+
+For example, the arguments `{"names": ["mkfifo"]}`, `{"names": ["Fifo::name"], "format": "json"}` or `{"path": "src/sys.rs", "line": 3, "character": 8}`. As on the command line, `line` and `character` are 1-based, and `path` is relative to the working directory, here the workspace root.
+
+- **Output:** a tool returns what its command prints with `--text`, as a text content block, so a `path:line:col` it prints can be passed back as `path`, `line` and `character`. With `format: "json"` it returns the command's JSON instead, with LSP's URIs and 0-based ranges, as a string in a text block. `get_version` returns structured JSON.
+- **Errors and warnings:** what the command would print on stderr, such as the closest symbols for a name that finds nothing, `call-hierarchy`'s "did you mean" candidates, or a search cut off at `--symbol-search-limit`, comes as a second text block. If nothing was found at all, the result is an error (`isError`). Arguments the command would reject, such as `line: 0` or `glob` without `names`, are an `invalid_params` error.
+- **Backend status:** every result's `_meta` has `racli/backend`: `ready`, `indexing` or `error`, with `racli/backendMessage` for `error`. A result produced while rust-analyzer wasn't ready also has a text block saying its results may be incomplete.
+
 ## Client commands
 
 These subcommands expect a running `racli server` or `racli tee` for the project they're run in (found as described in [Sockets](#sockets)), unless noted otherwise.
@@ -100,7 +123,7 @@ Separate alternative patterns with a single unescaped `|` (similar to `grep -E`)
 
 rust-analyzer matches each pattern fuzzily, so `racli search name` also returns `Named`. Pass `--exact` to keep only symbols named exactly as a pattern: `racli search 'name|unlink' --kind all-symbols --exact`. A qualified pattern such as `sys::mkfifo` is compared by its last segment, after rust-analyzer resolves the module path.
 
-By default rust-analyzer returns only types (modules, structs, enums, traits, type aliases) from workspace crates. `--kind all-symbols` adds functions, methods, constants, statics, and fields, and `--scope workspace-and-dependencies` adds dependency crates and the standard library. An empty query (`racli search ''`) lists every matching symbol up to the server's `--symbol-search-limit`. The MCP `search` tool takes the same options as `kind` (`only_types` / `all_symbols`) and `scope` (`workspace` / `workspace_and_dependencies`).
+By default rust-analyzer returns only types (modules, structs, enums, traits, type aliases) from workspace crates. `--kind all-symbols` adds functions, methods, constants, statics, and fields, and `--scope workspace-and-dependencies` adds dependency crates and the standard library. An empty query (`racli search ''`) lists every matching symbol up to the server's `--symbol-search-limit`. The MCP `search` tool takes the same options as `kind` (`only_types` / `all_symbols`), `scope` (`workspace` / `workspace_and_dependencies`) and `exact`.
 
 ### `racli find-definition --path <PATH> --line <N> --character <N>`
 

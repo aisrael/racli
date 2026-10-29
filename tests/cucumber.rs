@@ -1,5 +1,6 @@
 //! Cucumber end-to-end tests: spawns a `racli server` against `fixtures/queue` once,
 //! runs every scenario under `features/` against the compiled `racli` binary, then stops it.
+//! MCP scenarios share one `racli mcp`, also in `fixtures/queue`, started by the first of them.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ use std::process::Child;
 use std::process::Command;
 use std::process::ExitCode;
 use std::process::Stdio;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
@@ -17,8 +19,19 @@ use cucumber::then;
 use cucumber::when;
 use cucumber::writer::Stats;
 use jsonpath_rust::JsonPath;
+use rmcp::RoleClient;
+use rmcp::ServiceExt;
+use rmcp::model::CallToolRequestParams;
+use rmcp::model::CallToolResult;
+use rmcp::service::Peer;
+use rmcp::service::RunningService;
+use rmcp::service::ServiceError;
+use rmcp::transport::ConfigureCommandExt;
+use rmcp::transport::TokioChildProcess;
 use serde_json::Value;
+use serde_json::json;
 use tempfile::TempDir;
+use tokio::sync::OnceCell;
 
 /// Unix socket of the shared `racli server`, set once in `main` before any scenario runs.
 static SOCKET_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -37,9 +50,19 @@ struct CommandOutput {
     stderr: String,
 }
 
+/// How an MCP tool call ended, populated by the MCP `When` steps.
+#[derive(Debug)]
+enum McpCall {
+    /// The tool ran: whether it reported `isError`, and the result's `_meta`.
+    Ran { is_error: bool, meta: Value },
+    /// The call was rejected with a JSON-RPC error.
+    Rejected { code: i64, message: String },
+}
+
 #[derive(Debug, Default, cucumber::World)]
 pub struct RacliWorld {
     command_output: Option<CommandOutput>,
+    mcp_call: Option<McpCall>,
 }
 
 #[when(regex = "^the following command is run:$")]
@@ -202,6 +225,210 @@ async fn json_output_should_match_ending_with(
         "expected JSONPath {path:?} to yield a value ending with {suffix:?}, got {matches:?}.\nstdout: {}",
         output.stdout
     );
+}
+
+/// The shared `racli mcp` session's peer, or why it didn't start, set by the first MCP step.
+static MCP_PEER: OnceCell<Result<Peer<RoleClient>, String>> = OnceCell::const_new();
+
+/// The shared `racli mcp` session itself, kept so `main` can shut it down after the run.
+static MCP_SERVICE: Mutex<Option<RunningService<RoleClient, ()>>> = Mutex::new(None);
+
+/// The shared `racli mcp` session's peer, starting it on first use. A session that failed to
+/// start fails every MCP step with the same message, without trying again.
+async fn mcp_peer() -> Peer<RoleClient> {
+    MCP_PEER
+        .get_or_init(start_mcp)
+        .await
+        .clone()
+        .unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// Spawns `racli mcp` with `fixtures/queue` as its working directory, then waits until it's ready.
+async fn start_mcp() -> Result<Peer<RoleClient>, String> {
+    let command = tokio::process::Command::new(env!("CARGO_BIN_EXE_racli")).configure(|cmd| {
+        cmd.arg("mcp").current_dir(queue_workspace_dir());
+    });
+    let (transport, _stderr) = TokioChildProcess::builder(command)
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("failed to spawn `racli mcp`: {e}"))?;
+    let service = tokio::time::timeout(Duration::from_secs(30), ().serve(transport))
+        .await
+        .map_err(|_| "`racli mcp` didn't finish the MCP handshake in time".to_string())?
+        .map_err(|e| format!("`racli mcp` MCP handshake failed: {e}"))?;
+    let peer = service.peer().clone();
+    *MCP_SERVICE.lock().expect("MCP_SERVICE lock") = Some(service);
+    wait_for_mcp_ready(&peer, Duration::from_secs(120)).await?;
+    Ok(peer)
+}
+
+/// Polls `get_version` until its `_meta` says rust-analyzer is `ready` (ADR 006), then
+/// `find_definition` at the `mkfifo` call site until it resolves, as `RacliServer` does.
+async fn wait_for_mcp_ready(peer: &Peer<RoleClient>, timeout: Duration) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let result = peer
+            .call_tool(CallToolRequestParams::new("get_version"))
+            .await
+            .map_err(|e| format!("`racli mcp` get_version failed: {e}"))?;
+        let backend = result
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.0.get("racli/backend"))
+            .and_then(Value::as_str);
+        if backend == Some("ready") {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "`racli mcp` never reported `racli/backend: ready` in get_version's `_meta` (last: {backend:?})"
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let arguments = json!({"path": "src/main.rs", "line": 81, "character": 22});
+    let arguments = arguments.as_object().cloned().unwrap_or_default();
+    loop {
+        let params =
+            CallToolRequestParams::new("find_definition").with_arguments(arguments.clone());
+        if let Ok(result) = peer.call_tool(params).await
+            && result.is_error != Some(true)
+            && tool_texts(&result)
+                .first()
+                .is_some_and(|t| t.contains("sys.rs"))
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("`racli mcp` did not resolve the `mkfifo` definition in time".into());
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// The text of each text content block in `result`, in order.
+fn tool_texts(result: &CallToolResult) -> Vec<String> {
+    let value = serde_json::to_value(result).expect("serialize CallToolResult");
+    value["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|block| block["text"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Calls the MCP tool `name` with `arguments`. The first text block becomes the output, as a
+/// command's stdout, and the rest the error output, as its stderr (ADR 006 decision 1).
+async fn call_mcp_tool(
+    world: &mut RacliWorld,
+    name: String,
+    arguments: Option<serde_json::Map<String, Value>>,
+) {
+    let peer = mcp_peer().await;
+    let mut params = CallToolRequestParams::new(name.clone());
+    if let Some(arguments) = arguments {
+        params = params.with_arguments(arguments);
+    }
+    let outcome = tokio::time::timeout(Duration::from_secs(60), peer.call_tool(params))
+        .await
+        .unwrap_or_else(|_| panic!("MCP tool {name} timed out after 60 seconds"));
+    match outcome {
+        Ok(result) => {
+            let texts = tool_texts(&result);
+            let (stdout, stderr) = match texts.split_first() {
+                Some((first, rest)) => (first.clone(), rest.join("\n")),
+                None => (String::new(), String::new()),
+            };
+            world.command_output = Some(CommandOutput {
+                exit_code: 0,
+                stdout,
+                stderr,
+            });
+            world.mcp_call = Some(McpCall::Ran {
+                is_error: result.is_error == Some(true),
+                meta: result
+                    .meta
+                    .map(|meta| Value::Object(meta.0))
+                    .unwrap_or(Value::Null),
+            });
+        }
+        Err(ServiceError::McpError(error)) => {
+            world.command_output = None;
+            world.mcp_call = Some(McpCall::Rejected {
+                code: i64::from(error.code.0),
+                message: error.message.to_string(),
+            });
+        }
+        Err(e) => panic!("MCP tool {name} failed: {e}"),
+    }
+}
+
+#[when(regex = r#"^the MCP tool "([^"]+)" is called$"#)]
+async fn the_mcp_tool_is_called(world: &mut RacliWorld, name: String) {
+    call_mcp_tool(world, name, None).await;
+}
+
+#[when(regex = r#"^the MCP tool "([^"]+)" is called with:$"#)]
+async fn the_mcp_tool_is_called_with(world: &mut RacliWorld, name: String, step: &Step) {
+    let docstring = step.docstring.as_ref().expect("expected a docstring");
+    let arguments = match serde_json::from_str(docstring.trim()) {
+        Ok(Value::Object(arguments)) => arguments,
+        other => panic!("expected a JSON object of arguments, got {other:?}"),
+    };
+    call_mcp_tool(world, name, Some(arguments)).await;
+}
+
+/// The outcome of the last MCP tool call.
+fn mcp_call(world: &RacliWorld) -> &McpCall {
+    world
+        .mcp_call
+        .as_ref()
+        .expect("no MCP tool has been called")
+}
+
+#[then(expr = "the tool result should not be an error")]
+async fn the_tool_result_should_not_be_an_error(world: &mut RacliWorld) {
+    match mcp_call(world) {
+        McpCall::Ran {
+            is_error: false, ..
+        } => {}
+        other => panic!(
+            "expected a successful tool result, got {other:?}\n{:?}",
+            world.command_output
+        ),
+    }
+}
+
+#[then(expr = "the tool result should be an error")]
+async fn the_tool_result_should_be_an_error(world: &mut RacliWorld) {
+    match mcp_call(world) {
+        McpCall::Ran { is_error: true, .. } => {}
+        other => panic!(
+            "expected a tool result with isError, got {other:?}\n{:?}",
+            world.command_output
+        ),
+    }
+}
+
+#[then(expr = "the tool call should be rejected as invalid params mentioning {string}")]
+async fn the_tool_call_should_be_rejected(world: &mut RacliWorld, expected: String) {
+    const INVALID_PARAMS: i64 = -32602;
+    match mcp_call(world) {
+        McpCall::Rejected { code, message }
+            if *code == INVALID_PARAMS && message.contains(&expected) => {}
+        other => panic!(
+            "expected an invalid_params error mentioning {expected:?}, got {other:?}\n{:?}",
+            world.command_output
+        ),
+    }
+}
+
+#[then(expr = "the tool result's _meta should have {string} set to {string}")]
+async fn the_tool_result_meta_should_have(world: &mut RacliWorld, key: String, expected: String) {
+    match mcp_call(world) {
+        McpCall::Ran { meta, .. } if meta[&key] == Value::String(expected.clone()) => {}
+        other => panic!("expected _meta {key:?} to be {expected:?}, got {other:?}"),
+    }
 }
 
 /// `true` if `rust-analyzer --version` runs successfully (same skip guard as `tests/mcp_stdio.rs`).
@@ -379,6 +606,11 @@ async fn main() -> ExitCode {
         .expect("SOCKET_PATH set exactly once");
 
     let writer = RacliWorld::cucumber().run("features").await;
+
+    let mcp = MCP_SERVICE.lock().expect("MCP_SERVICE lock").take();
+    if let Some(mcp) = mcp {
+        let _ = tokio::time::timeout(Duration::from_secs(30), mcp.cancel()).await;
+    }
 
     if writer.execution_has_failed() {
         ExitCode::FAILURE

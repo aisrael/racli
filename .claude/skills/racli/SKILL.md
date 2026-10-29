@@ -54,3 +54,7 @@ racli find-references --path src/search.rs --line <LINE> --character <COL> --tex
 - **`document-symbols <PATH>`**: a file's outline, instead of reading the whole file. `--text` prints an indented tree with 1-based ranges.
 
 `find-definition`, `find-references` and `find-implementations` print `path:line:col: source line` with `--text`. JSON keeps LSP's absolute URIs and 0-based ranges; with names, it's an array of `{"symbol": …, "result": …}`.
+
+## MCP
+
+`racli mcp` serves the same commands as MCP tools (`search`, `find_definition`, `find_references`, `find_implementations`, `call_hierarchy`, `document_symbols`), with the options as parameters: `names` (an array), `path`, `line` and `character` (1-based), `kind`, `glob`, `hover`, `source`, `exact`, `direction`, `depth`. Results are what `--text` prints, with paths relative to the workspace root; pass `format: "json"` only when you need JSON. Unknown names and their closest symbols come as a second text block. A result that says rust-analyzer is still indexing may be incomplete.

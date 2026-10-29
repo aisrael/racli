@@ -17,13 +17,14 @@ All notable changes to racli are documented in this file. The format is based on
 - **`racli tee --check`** (and `racli-tee --check`): exits 0 if racli is serving the current directory's socket and 1 otherwise, without starting a server, so scripts can check before starting one.
 - **No accidental second server**: `racli server`, `racli tee` and `racli-tee` started from a terminal in a directory racli already serves print that it's already serving and exit 1 instead of starting another rust-analyzer. Editors, which pipe stdin, still take over the socket on restart.
 - **`notify` feature**: builds racli with its own workspace file watcher, which sends rust-analyzer `workspace/didChangeWatchedFiles`, as racli did before. Off by default. See [ADR 005](docs/adrs/005-file-watching-by-rust-analyzer.md).
+- **The MCP tools mirror the CLI commands.** `find_definition`, `find_references`, `find_implementations` and `call_hierarchy` take symbol names (`names`), with `kind` and `glob`, as well as, or instead of, a position; `find_definition` takes `hover` and `source`, and `search` takes `exact`. Each tool returns what its command prints with `--text`, or its JSON with `format: "json"`; what the command would print on stderr, such as the closest symbols for an unknown name, comes as a second text block. Every result's `_meta` has `racli/backend` (`ready`, `indexing` or `error`), and a result produced while rust-analyzer wasn't ready says so. See [ADR 006](docs/adrs/006-mcp-tools-mirror-the-cli.md).
 
 ### Changed
 
 - **rust-analyzer watches the workspace itself.** By default racli no longer runs a file watcher; it starts rust-analyzer with `files.watcher: "server"`. That drops the `notify` dependency, so on macOS `racli` no longer loads CoreFoundation and CoreServices at startup, and every CLI command starts about 0.7 ms (roughly 30%) faster. This applies to `racli server`, `racli tee` and `racli mcp`. Build with `--features notify` for the old behaviour. See [ADR 005](docs/adrs/005-file-watching-by-rust-analyzer.md).
 - **`--text` output reads like grep's.** Every command prints paths relative to the current directory instead of `file://` URIs, and 1-based lines and columns instead of LSP's 0-based ones. `find-definition`, `find-references` and `find-implementations` print each location's source line, e.g. `fixtures/queue/src/sys.rs:3:8: pub fn mkfifo(path: &str, mode: u16) -> i32 {`. `search` prints `name [KIND] path:line:col`, `call-hierarchy` prints `path:line:col` for each item, and `document-symbols` prints 1-based ranges. JSON and CSV output don't change. See [ADR 002](docs/adrs/002-one-based-positions-and-text-output.md).
 - **`racli::client` is a `Client` struct.** Its free functions taking a `socket_path` are now methods on `Client::new(socket_path)`, whose calls share one connection, opened on the first call. The per-RPC `Client*Error` enums are now one `ClientError`. `client_unix_socket_path` moved from `racli::utils` to `racli::client`. It wraps only racli's typed RPCs, not the LSP passthrough that `racli tee` uses (see [ADR 003](docs/adrs/003-high-level-client.md)). A command that looks up a name now connects once instead of once per RPC.
-- **`--line` and `--character` are 1-based**, so a position from `--text` output can be passed back as is. They used to be 0-based, as in LSP, and `0` is now rejected. The MCP tools still take 0-based positions.
+- **`--line` and `--character` are 1-based**, so a position from `--text` output can be passed back as is. They used to be 0-based, as in LSP, and `0` is now rejected. So do the MCP tools' `line` and `character`.
 
 ### Removed
 
@@ -39,6 +40,8 @@ All notable changes to racli are documented in this file. The format is based on
 - Scripts that parse `--text` output need updating: paths are relative, positions are 1-based, and locations end with the source line.
 - Scripts that pass `--line` or `--character` need to add 1 to each.
 - **The position commands take the file with `--path`.** `racli find-references src/sys.rs --line 2 --character 7` is now `racli find-references --path src/sys.rs --line 3 --character 8` (with the 1-based position above), and the same goes for `find-definition`, `find-implementations` and `call-hierarchy`. A positional argument is always a symbol name, so the old form is a usage error that points to `--path`.
+- **The MCP tools take 1-based positions, given with `path`.** `{"filePath": "src/sys.rs", "line": 2, "character": 7}` is now `{"path": "src/sys.rs", "line": 3, "character": 8}`. A call that still sends `filePath` is rejected rather than answered one line off.
+- **The MCP tools return text by default.** They used to return JSON shaped like racli's protobuf messages, such as `workspaceSymbolResponse.flat.items`. Pass `format: "json"` for the CLI's JSON, which arrives as a string in a text content block, and no longer as `structuredContent`.
 
 ## [0.2.0] - 2026-09-30
 
