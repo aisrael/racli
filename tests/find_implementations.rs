@@ -89,7 +89,7 @@ async fn grpc_find_implementations_call_hierarchy_backend() {
     // 0-based LSP position on `CallHierarchyBackend` in `pub trait CallHierarchyBackend: Send + Sync {`.
     let resp = Client::new(sock.as_path())
         .unwrap()
-        .find_implementations(file_path.to_string_lossy().as_ref(), 85, 10)
+        .find_implementations(file_path.to_string_lossy().as_ref(), 88, 10)
         .await
         .expect("find_implementations")
         .value;

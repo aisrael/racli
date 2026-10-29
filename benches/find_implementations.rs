@@ -30,7 +30,7 @@ struct ImplementationQuery {
 const QUERIES: &[ImplementationQuery] = &[
     ImplementationQuery {
         file: "src/call_hierarchy.rs",
-        line: 85,
+        line: 88,
         character: 10,
         symbol: "CallHierarchyBackend",
     },

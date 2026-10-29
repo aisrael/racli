@@ -258,6 +258,7 @@ impl PositionParams {
             character: t.character,
             symbol: t.symbol,
             text,
+            json: !text,
         })
     }
 
@@ -279,6 +280,7 @@ impl PositionParams {
             character: t.character,
             symbol: t.symbol,
             text,
+            json: !text,
         })
     }
 }
@@ -303,6 +305,7 @@ impl FindDefinitionParams {
             hover: self.hover,
             source: self.source,
             text: self.format == Format::Text,
+            json: self.format == Format::Json,
         })
     }
 }
@@ -327,6 +330,7 @@ impl CallHierarchyParams {
             direction: self.direction.unwrap_or(Direction::Both),
             depth: self.depth.unwrap_or(1),
             text: self.format == Format::Text,
+            json: self.format == Format::Json,
         })
     }
 }

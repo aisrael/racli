@@ -11,7 +11,7 @@ Feature: racli find-definition
   Scenario: JSON find-definition resolves the mkfifo call to its declaration
     When the following command is run:
       """
-      racli find-definition --path fixtures/queue/src/main.rs --line 81 --character 22
+      racli find-definition --path fixtures/queue/src/main.rs --line 81 --character 22 --json
       """
     Then it should exit with status code 0
     And the JSON output should match JSONPath "$[*].uri" with a value ending with "sys.rs"
@@ -56,7 +56,7 @@ Feature: racli find-definition
   Scenario: JSON with --hover and --source has hover and source fields
     When the following command is run:
       """
-      racli find-definition Named --hover --source
+      racli find-definition Named --hover --source --json
       """
     Then it should exit with status code 0
     And the JSON output should match JSONPath "$[0].result[0].hover"
@@ -65,7 +65,7 @@ Feature: racli find-definition
   Scenario: JSON without --hover or --source has neither field
     When the following command is run:
       """
-      racli find-definition Named
+      racli find-definition Named --json
       """
     Then it should exit with status code 0
     And the JSON output should match JSONPath "$[0].result[0].uri" with a value ending with "sys.rs"

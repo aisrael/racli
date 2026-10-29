@@ -18,7 +18,7 @@ Feature: racli position commands by symbol name
   Scenario: a module path picks one of two definitions with the same name
     When the following command is run:
       """
-      racli find-references sys::mkfifo
+      racli find-references sys::mkfifo --json
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 1 item
@@ -27,7 +27,7 @@ Feature: racli position commands by symbol name
   Scenario: an ambiguous name gives a result for each definition
     When the following command is run:
       """
-      racli find-references mkfifo
+      racli find-references mkfifo --json
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 2 items
@@ -35,7 +35,7 @@ Feature: racli position commands by symbol name
   Scenario Outline: a type or trait qualifies a method
     When the following command is run:
       """
-      racli find-references <name>
+      racli find-references <name> --json
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 1 item
@@ -49,7 +49,7 @@ Feature: racli position commands by symbol name
   Scenario: several names give a result for each
     When the following command is run:
       """
-      racli find-definition Fifo Named
+      racli find-definition Fifo Named --json
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 2 items
@@ -58,7 +58,7 @@ Feature: racli position commands by symbol name
   Scenario: a definition two names find is run once
     When the following command is run:
       """
-      racli find-references mkfifo sys::mkfifo
+      racli find-references mkfifo sys::mkfifo --json
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 2 items
@@ -66,7 +66,7 @@ Feature: racli position commands by symbol name
   Scenario: a position given with a name is labelled with its symbol
     When the following command is run:
       """
-      racli find-references Fifo --path fixtures/queue/src/main.rs --line 86 --character 32
+      racli find-references Fifo --path fixtures/queue/src/main.rs --line 86 --character 32 --json
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 2 items
@@ -75,7 +75,7 @@ Feature: racli position commands by symbol name
   Scenario: a position whose symbol a name already found is run once
     When the following command is run:
       """
-      racli find-references mkfifo --path fixtures/queue/src/sys.rs --line 3 --character 8
+      racli find-references mkfifo --path fixtures/queue/src/sys.rs --line 3 --character 8 --json
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 2 items
@@ -92,7 +92,7 @@ Feature: racli position commands by symbol name
   Scenario: an unknown name doesn't stop the others
     When the following command is run:
       """
-      racli find-definition Fifo mkfif
+      racli find-definition Fifo mkfif --json
       """
     Then it should exit with status code 0
     And the error output should contain "no symbol named mkfif"
@@ -101,7 +101,7 @@ Feature: racli position commands by symbol name
   Scenario: a position in a file that doesn't exist doesn't stop the names
     When the following command is run:
       """
-      racli find-definition Fifo --path fixtures/queue/src/nope.rs --line 3 --character 8
+      racli find-definition Fifo --path fixtures/queue/src/nope.rs --line 3 --character 8 --json
       """
     Then it should exit with status code 0
     And the error output should contain "cannot canonicalize fixtures/queue/src/nope.rs"
@@ -110,7 +110,7 @@ Feature: racli position commands by symbol name
   Scenario: --kind keeps only definitions of that kind
     When the following command is run:
       """
-      racli find-definition Fifo --kind struct
+      racli find-definition Fifo --kind struct --json
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 1 item
@@ -119,7 +119,7 @@ Feature: racli position commands by symbol name
   Scenario: --glob keeps only definitions in files it matches
     When the following command is run:
       """
-      racli find-references unlink --glob fixtures/queue/src/*.rs
+      racli find-references unlink --glob fixtures/queue/src/*.rs --json
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 2 items
@@ -144,7 +144,7 @@ Feature: racli position commands by symbol name
   Scenario: call-hierarchy by name shows the caller
     When the following command is run:
       """
-      racli call-hierarchy sys::mkfifo --direction incoming
+      racli call-hierarchy sys::mkfifo --direction incoming --json
       """
     Then it should exit with status code 0
     And the JSON output should be an array of 1 item

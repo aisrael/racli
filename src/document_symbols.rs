@@ -31,13 +31,13 @@ pub enum DocumentSymbolsOutputFormat {
 pub struct DocumentSymbolsArgs {
     /// Rust source file (absolute or relative to the current directory).
     pub path: PathBuf,
-    /// Print an indented tree instead of JSON (equivalent to `--output-format text`).
+    /// Print an indented tree (equivalent to `--output-format text`; the default).
     #[arg(long, conflicts_with = "json")]
     pub text: bool,
-    /// Print results as JSON (equivalent to `--output-format json`; same as the default).
+    /// Print results as JSON (equivalent to `--output-format json`).
     #[arg(long, conflicts_with = "text")]
     pub json: bool,
-    /// Select how the outline is printed (default: json).
+    /// Select how the outline is printed (default: text).
     #[arg(long, value_enum)]
     pub output_format: Option<DocumentSymbolsOutputFormat>,
 }
@@ -59,10 +59,8 @@ impl DocumentSymbolsArgs {
             }
         } else if self.json {
             DocumentSymbolsPrintKind::Json
-        } else if self.text {
-            DocumentSymbolsPrintKind::Text
         } else {
-            DocumentSymbolsPrintKind::Json
+            DocumentSymbolsPrintKind::Text
         }
     }
 }
@@ -235,9 +233,9 @@ mod document_symbols_output_tests {
     use super::DocumentSymbolsPrintKind;
 
     #[test]
-    fn document_symbols_args_default_print_kind_is_json() {
+    fn document_symbols_args_default_print_kind_is_text() {
         let args = DocumentSymbolsArgs::try_parse_from(["racli", "src/main.rs"]).expect("parse");
-        assert_eq!(args.print_kind(), DocumentSymbolsPrintKind::Json);
+        assert_eq!(args.print_kind(), DocumentSymbolsPrintKind::Text);
     }
 
     #[test]

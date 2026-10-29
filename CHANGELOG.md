@@ -42,6 +42,7 @@ All notable changes to racli are documented in this file. The format is based on
 - Scripts that pass `--line` or `--character` need to add 1 to each.
 - **The position commands take the file with `--path`.** `racli find-references src/sys.rs --line 2 --character 7` is now `racli find-references --path src/sys.rs --line 3 --character 8` (with the 1-based position above), and the same goes for `find-definition`, `find-implementations` and `call-hierarchy`. A positional argument is always a symbol name, so the old form is a usage error that points to `--path`.
 - **The MCP tools take 1-based positions, given with `path`.** `{"filePath": "src/sys.rs", "line": 2, "character": 7}` is now `{"path": "src/sys.rs", "line": 3, "character": 8}`. A call that still sends `filePath` is rejected rather than answered one line off.
+- **The CLI prints text by default.** `search`, `find-definition`, `find-references`, `find-implementations`, `call-hierarchy` and `document-symbols` used to print JSON unless given `--text`. Scripts that parse their output need `--json` (`search` and `document-symbols` already had it; the other four gain it). `--text` is still accepted and is now the default, so it can stay in existing commands. The MCP tools already default to text.
 - **The MCP tools return text by default.** They used to return JSON shaped like racli's protobuf messages, such as `workspaceSymbolResponse.flat.items`. Pass `format: "json"` for the CLI's JSON, which arrives as a string in a text content block, and no longer as `structuredContent`.
 
 ## [0.2.0] - 2026-09-30

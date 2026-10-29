@@ -48,9 +48,12 @@ pub struct FindDefinitionArgs {
     /// Also print each definition's whole source, including its doc comment.
     #[arg(long)]
     pub source: bool,
-    /// Print one human-readable line per location instead of JSON.
-    #[arg(long)]
+    /// Print one human-readable line per location (the default).
+    #[arg(long, conflicts_with = "json")]
     pub text: bool,
+    /// Print JSON instead of text.
+    #[arg(long, conflicts_with = "text")]
+    pub json: bool,
 }
 
 /// Runs the find-definition RPC from each definition the symbol names find and from the
@@ -97,7 +100,7 @@ pub async fn run_find_definition(
         results.push((target.symbol, resp, details));
     }
 
-    if args.text {
+    if !args.json {
         for (symbol, resp, details) in &results {
             match symbol {
                 Some(symbol) => {

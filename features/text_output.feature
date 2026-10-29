@@ -72,7 +72,7 @@ Feature: racli --text output and 1-based positions
   Scenario: JSON keeps LSP's absolute URIs and 0-based ranges
     When the following command is run:
       """
-      racli find-definition --path fixtures/queue/src/main.rs --line 81 --character 22
+      racli find-definition --path fixtures/queue/src/main.rs --line 81 --character 22 --json
       """
     Then it should exit with status code 0
     And the JSON output should match JSONPath "$[?@.range.start.line == 2 && @.range.start.character == 7]"

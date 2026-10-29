@@ -20,7 +20,7 @@ use crate::server::split_search_query_into_segments;
 use crate::text_position::display_path;
 use crate::text_position::position_text;
 
-/// How `racli search` prints results (default is JSON).
+/// How `racli search` prints results (default is text).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum SearchOutputFormat {
     /// One human-readable line per symbol (legacy plain-text layout).
@@ -34,16 +34,16 @@ pub enum SearchOutputFormat {
 /// Arguments for `racli search` (query passed to LSP `workspace/symbol`).
 #[derive(Parser)]
 pub struct SearchArgs {
-    /// Print results as plain text, one symbol per line (equivalent to `--output-format text`).
+    /// Print results as plain text, one symbol per line (equivalent to `--output-format text`; the default).
     #[arg(long, conflicts_with_all = ["json", "csv"])]
     pub text: bool,
-    /// Print results as JSON (equivalent to `--output-format json`; same as the default).
+    /// Print results as JSON (equivalent to `--output-format json`).
     #[arg(long, conflicts_with_all = ["csv", "text"])]
     pub json: bool,
     /// Print results as CSV with headers (equivalent to `--output-format csv`).
     #[arg(long, conflicts_with_all = ["json", "text"])]
     pub csv: bool,
-    /// Select how search results are printed (default: json).
+    /// Select how search results are printed (default: text).
     #[arg(long, value_enum)]
     pub output_format: Option<SearchOutputFormat>,
     /// Symbol kinds to return (default: rust-analyzer's `only-types`); `all-symbols` adds functions, methods, constants, and fields.
@@ -81,10 +81,8 @@ impl SearchArgs {
             SearchPrintKind::Json
         } else if self.csv {
             SearchPrintKind::Csv
-        } else if self.text {
-            SearchPrintKind::Text
         } else {
-            SearchPrintKind::Json
+            SearchPrintKind::Text
         }
     }
 }
@@ -495,8 +493,14 @@ mod search_output_tests {
     }
 
     #[test]
-    fn search_args_default_print_kind_is_json() {
+    fn search_args_default_print_kind_is_text() {
         let args = SearchArgs::try_parse_from(["racli", "q"]).expect("parse");
+        assert_eq!(args.print_kind(), SearchPrintKind::Text);
+    }
+
+    #[test]
+    fn search_args_json_flag_selects_json() {
+        let args = SearchArgs::try_parse_from(["racli", "--json", "q"]).expect("parse");
         assert_eq!(args.print_kind(), SearchPrintKind::Json);
     }
 

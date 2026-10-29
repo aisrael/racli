@@ -37,9 +37,12 @@ pub struct FindImplementationsArgs {
     pub character: Option<u32>,
     #[command(flatten)]
     pub symbol: SymbolArgs,
-    /// Print one human-readable line per location instead of JSON.
-    #[arg(long)]
+    /// Print one human-readable line per location (the default).
+    #[arg(long, conflicts_with = "json")]
     pub text: bool,
+    /// Print JSON instead of text.
+    #[arg(long, conflicts_with = "text")]
+    pub json: bool,
 }
 
 /// Runs the find-implementations RPC from each definition the symbol names find and from the
@@ -76,7 +79,7 @@ pub async fn run_find_implementations(
         results.push((target.symbol, resp));
     }
 
-    if args.text {
+    if !args.json {
         let mut sources = SourceLines::default();
         for (symbol, resp) in &results {
             match symbol {

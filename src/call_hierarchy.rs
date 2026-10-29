@@ -73,9 +73,12 @@ pub struct CallHierarchyArgs {
     /// How many recursive levels of callers/callees to fetch (each level is one more LSP round trip per node).
     #[arg(long, default_value_t = 1)]
     pub depth: u32,
-    /// Print an indented outline instead of JSON.
-    #[arg(long)]
+    /// Print an indented outline (the default).
+    #[arg(long, conflicts_with = "json")]
     pub text: bool,
+    /// Print JSON instead of text.
+    #[arg(long, conflicts_with = "text")]
+    pub json: bool,
 }
 
 /// One RPC round trip's worth of backend access, abstracting over a gRPC socket (CLI) vs. an
@@ -498,7 +501,7 @@ pub async fn run_call_hierarchy_command(
         }
     }
 
-    if args.text {
+    if !args.json {
         // Each tree starts with its item, which already names the symbol.
         for (_, result) in &results {
             write_call_hierarchy_text(out, result);
