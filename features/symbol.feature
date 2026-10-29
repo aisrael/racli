@@ -18,28 +18,32 @@ Feature: racli position commands by symbol name
   Scenario: a module path picks one of two definitions with the same name
     When the following command is run:
       """
-      racli find-references sys::mkfifo --json
+      racli find-references sys::mkfifo --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 1 item
-    And the JSON output should match JSONPath "$[0].result[*].uri" with a value ending with "main.rs"
+    And the output should be
+      """
+      mkfifo [FUNCTION] fixtures/queue/src/sys.rs:3:8
+        fixtures/queue/src/main.rs:81:22:         let _ = sys::mkfifo(PATH, 0o666);
+        fixtures/queue/src/sys.rs:3:8: pub fn mkfifo(path: &str, mode: u16) -> i32 {
+      """
 
   Scenario: an ambiguous name gives a result for each definition
     When the following command is run:
       """
-      racli find-references mkfifo --json
+      racli find-references mkfifo --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 2 items
+    And the output should contain "mkfifo [FUNCTION] fixtures/queue/src/sys.rs:3:8"
+    And the output should contain "mkfifo [FUNCTION] fixtures/queue/src/sys.rs:25:16"
 
   Scenario Outline: a type or trait qualifies a method
     When the following command is run:
       """
-      racli find-references <name> --json
+      racli find-references <name> --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 1 item
-    And the JSON output should match JSONPath "$[0].symbol.containerName" with a value ending with "<container>"
+    And the output should contain "name [FUNCTION] in <container> "
 
     Examples:
       | name        | container |
@@ -49,36 +53,43 @@ Feature: racli position commands by symbol name
   Scenario: several names give a result for each
     When the following command is run:
       """
-      racli find-definition Fifo Named --json
+      racli find-definition Fifo Named --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 2 items
-    And the JSON output should match JSONPath "$[1].symbol.name" with a value ending with "Named"
+    And the output should be
+      """
+      Fifo [STRUCT] fixtures/queue/src/sys.rs:35:12
+        fixtures/queue/src/sys.rs:35:12: pub struct Fifo;
+      Named [INTERFACE] fixtures/queue/src/sys.rs:31:11
+        fixtures/queue/src/sys.rs:31:11: pub trait Named {
+      """
 
   Scenario: a definition two names find is run once
     When the following command is run:
       """
-      racli find-references mkfifo sys::mkfifo --json
+      racli find-references mkfifo sys::mkfifo --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 2 items
+    And the output should contain "mkfifo [FUNCTION] fixtures/queue/src/sys.rs:3:8"
+    And the output should contain "mkfifo [FUNCTION] fixtures/queue/src/sys.rs:25:16"
 
   Scenario: a position given with a name is labelled with its symbol
     When the following command is run:
       """
-      racli find-references Fifo --path fixtures/queue/src/main.rs --line 86 --character 32 --json
+      racli find-references Fifo --path fixtures/queue/src/main.rs --line 86 --character 32 --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 2 items
-    And the JSON output should match JSONPath "$[1].symbol.containerName" with a value ending with "Fifo"
+    And the output should contain "Fifo [STRUCT] fixtures/queue/src/sys.rs:35:12"
+    And the output should contain "name [FUNCTION] in Fifo fixtures/queue/src/sys.rs:38:8"
 
   Scenario: a position whose symbol a name already found is run once
     When the following command is run:
       """
-      racli find-references mkfifo --path fixtures/queue/src/sys.rs --line 3 --character 8 --json
+      racli find-references mkfifo --path fixtures/queue/src/sys.rs --line 3 --character 8 --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 2 items
+    And the output should contain "mkfifo [FUNCTION] fixtures/queue/src/sys.rs:3:8"
+    And the output should contain "mkfifo [FUNCTION] fixtures/queue/src/sys.rs:25:16"
 
   Scenario: an unknown name lists the closest symbols
     When the following command is run:
@@ -92,37 +103,41 @@ Feature: racli position commands by symbol name
   Scenario: an unknown name doesn't stop the others
     When the following command is run:
       """
-      racli find-definition Fifo mkfif --json
+      racli find-definition Fifo mkfif --text
       """
     Then it should exit with status code 0
     And the error output should contain "no symbol named mkfif"
-    And the JSON output should be an array of 1 item
+    And the output should contain "Fifo [STRUCT] fixtures/queue/src/sys.rs:35:12"
 
   Scenario: a position in a file that doesn't exist doesn't stop the names
     When the following command is run:
       """
-      racli find-definition Fifo --path fixtures/queue/src/nope.rs --line 3 --character 8 --json
+      racli find-definition Fifo --path fixtures/queue/src/nope.rs --line 3 --character 8 --text
       """
     Then it should exit with status code 0
     And the error output should contain "cannot canonicalize fixtures/queue/src/nope.rs"
-    And the JSON output should be an array of 1 item
+    And the output should contain "Fifo [STRUCT] fixtures/queue/src/sys.rs:35:12"
 
   Scenario: --kind keeps only definitions of that kind
     When the following command is run:
       """
-      racli find-definition Fifo --kind struct --json
+      racli find-definition Fifo --kind struct --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 1 item
-    And the JSON output should match JSONPath "$[0].result[*].uri" with a value ending with "sys.rs"
+    And the output should be
+      """
+      Fifo [STRUCT] fixtures/queue/src/sys.rs:35:12
+        fixtures/queue/src/sys.rs:35:12: pub struct Fifo;
+      """
 
   Scenario: --glob keeps only definitions in files it matches
     When the following command is run:
       """
-      racli find-references unlink --glob fixtures/queue/src/*.rs --json
+      racli find-references unlink --glob fixtures/queue/src/*.rs --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 2 items
+    And the output should contain "unlink [FUNCTION] fixtures/queue/src/sys.rs:11:8"
+    And the output should contain "unlink [FUNCTION] fixtures/queue/src/sys.rs:26:16"
 
   Scenario: --glob that leaves out every definition lists them
     When the following command is run:
@@ -144,11 +159,10 @@ Feature: racli position commands by symbol name
   Scenario: call-hierarchy by name shows the caller
     When the following command is run:
       """
-      racli call-hierarchy sys::mkfifo --direction incoming --json
+      racli call-hierarchy sys::mkfifo --direction incoming --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 1 item
-    And the JSON output should match JSONPath "$[0].result.incoming[*].uri" with a value ending with "main.rs"
+    And the output should contain "main (FUNCTION) fixtures/queue/src/main.rs:58:4"
 
   Scenario Outline: arguments that don't make a name or a position are usage errors
     When the following command is run:

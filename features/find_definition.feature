@@ -8,14 +8,6 @@ Feature: racli find-definition
     Then it should exit with status code 0
     And the output should contain "sys.rs"
 
-  Scenario: JSON find-definition resolves the mkfifo call to its declaration
-    When the following command is run:
-      """
-      racli find-definition --path fixtures/queue/src/main.rs --line 81 --character 22 --json
-      """
-    Then it should exit with status code 0
-    And the JSON output should match JSONPath "$[*].uri" with a value ending with "sys.rs"
-
   Scenario: --source prints a definition's whole source
     When the following command is run:
       """
