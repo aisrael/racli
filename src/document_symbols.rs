@@ -1,19 +1,20 @@
 //! `racli document-symbols`: CLI arguments and formatting for LSP document-symbol outline results.
 
-use std::io::Write;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use clap::Parser;
 use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::client::Client;
-use crate::client::Reply;
 use crate::client::client_unix_socket_path;
+use crate::command_output::CommandError;
+use crate::command_output::CommandOutput;
+use crate::command_output::within_timeout;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspRange;
+use crate::racli_backend::RacliBackend;
 use crate::text_position::range_text;
 
 /// How `racli document-symbols` prints results (default is JSON).
@@ -66,7 +67,34 @@ impl DocumentSymbolsArgs {
     }
 }
 
-/// Runs the document-symbols RPC and prints the outline in the format selected by `args`.
+/// Runs the document-symbols RPC and writes the outline to `out` in the format selected by `args`.
+pub async fn run_document_symbols(
+    backend: &dyn RacliBackend,
+    args: &DocumentSymbolsArgs,
+    out: &mut CommandOutput,
+) -> Result<(), CommandError> {
+    let abs = match args.path.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            out.note(format!("cannot canonicalize {}: {e}", args.path.display()));
+            return Ok(());
+        }
+    };
+
+    let file_path = abs.display().to_string();
+
+    let resp = within_timeout(backend.document_symbols(&file_path))
+        .await?
+        .map_err(CommandError::Failed)?;
+    match args.print_kind() {
+        DocumentSymbolsPrintKind::Text => write_document_symbols_text(out, &resp),
+        DocumentSymbolsPrintKind::Json => write_document_symbols_json(out, &resp),
+    }
+    Ok(())
+}
+
+/// Runs `racli document-symbols` against the project's server and prints what
+/// [`run_document_symbols`] writes.
 pub async fn run_cli_document_symbols(args: DocumentSymbolsArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
@@ -77,34 +105,9 @@ pub async fn run_cli_document_symbols(args: DocumentSymbolsArgs) {
             return;
         }
     };
-
-    let abs = match args.path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!(
-                "racli document-symbols: cannot canonicalize {}: {e}",
-                args.path.display()
-            );
-            return;
-        }
-    };
-
-    let file_path = abs.display().to_string();
-
-    match tokio::time::timeout(Duration::from_secs(60), client.document_symbols(&file_path)).await {
-        Ok(Ok(Reply { value: resp, .. })) => match args.print_kind() {
-            DocumentSymbolsPrintKind::Text => print_document_symbols_text(&resp),
-            DocumentSymbolsPrintKind::Json => print_document_symbols_json(&resp),
-        },
-        Ok(Err(err)) => {
-            eprintln!("racli document-symbols ({sock_display}): {err}");
-        }
-        Err(_elapsed) => {
-            eprintln!(
-                "racli document-symbols ({sock_display}): request timed out after 60 seconds"
-            );
-        }
-    }
+    let mut out = CommandOutput::default();
+    let result = run_document_symbols(&client, &args, &mut out).await;
+    out.print_cli("document-symbols", &sock_display, result);
 }
 
 /// One document symbol row in JSON output, recursively nesting `children`.
@@ -178,30 +181,29 @@ fn document_symbol_to_json(s: &LspDocumentSymbol) -> DocumentSymbolJson {
     }
 }
 
-/// Prints a [`DocumentSymbolsResponse`] as JSON (hierarchical array of symbol objects).
-fn print_document_symbols_json(resp: &DocumentSymbolsResponse) {
+/// Writes a [`DocumentSymbolsResponse`] as JSON (hierarchical array of symbol objects).
+fn write_document_symbols_json(out: &mut CommandOutput, resp: &DocumentSymbolsResponse) {
     let rows: Vec<DocumentSymbolJson> = resp.symbols.iter().map(document_symbol_to_json).collect();
-    let mut stdout = std::io::stdout().lock();
-    if let Err(e) = serde_json::to_writer(&mut stdout, &rows) {
-        eprintln!("racli document-symbols: failed to serialize JSON: {e}");
-        return;
+    match serde_json::to_string(&rows) {
+        Ok(json) => out.println(json),
+        Err(e) => out.note(format!("failed to serialize JSON: {e}")),
     }
-    let _ = writeln!(stdout);
 }
 
-/// Prints a depth-first indented tree: `name (KIND) startLine:startCol-endLine:endCol` per line, with
+/// Writes a depth-first indented tree: `name (KIND) startLine:startCol-endLine:endCol` per line, with
 /// 1-based lines and columns, two spaces per depth.
-fn print_document_symbols_text(resp: &DocumentSymbolsResponse) {
+fn write_document_symbols_text(out: &mut CommandOutput, resp: &DocumentSymbolsResponse) {
     if resp.symbols.is_empty() {
-        println!("(no symbols)");
+        out.println("(no symbols)");
         return;
     }
     for sym in &resp.symbols {
-        print_symbol_tree_line(sym, 0);
+        write_symbol_tree_line(out, sym, 0);
     }
 }
 
-fn print_symbol_tree_line(sym: &LspDocumentSymbol, depth: usize) {
+/// Writes `sym` and its children, indented two spaces per `depth`.
+fn write_symbol_tree_line(out: &mut CommandOutput, sym: &LspDocumentSymbol, depth: usize) {
     let indent = "  ".repeat(depth);
     let range = sym
         .range
@@ -210,9 +212,9 @@ fn print_symbol_tree_line(sym: &LspDocumentSymbol, depth: usize) {
         .filter(|s| !s.is_empty())
         .map(|s| format!(" {s}"))
         .unwrap_or_default();
-    println!("{indent}{} ({}){range}", sym.name, sym.kind);
+    out.println(format!("{indent}{} ({}){range}", sym.name, sym.kind));
     for child in &sym.children {
-        print_symbol_tree_line(child, depth + 1);
+        write_symbol_tree_line(out, child, depth + 1);
     }
 }
 

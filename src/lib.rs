@@ -10,6 +10,8 @@ pub mod call_hierarchy;
 mod cli;
 /// gRPC client helpers for talking to `racli server` over a Unix socket.
 pub mod client;
+/// What a client command prints, for the CLI to print or the MCP server to return.
+pub mod command_output;
 /// `find-definition --hover` and `--source`: a definition's hover and its whole source.
 pub mod definition_details;
 /// `racli document-symbols`: CLI arguments and formatting for LSP document-symbol outline results.

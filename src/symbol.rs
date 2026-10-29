@@ -3,12 +3,14 @@
 //! run from names as well as, or instead of, a file position.
 
 use std::collections::HashSet;
-use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::command_output::CommandError;
+use crate::command_output::CommandOutput;
+use crate::command_output::within_timeout;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspRange;
 use crate::proto::racli::SearchResponse;
@@ -232,6 +234,27 @@ pub struct Targets {
     pub grouped: bool,
     /// Names that found no definition, and positions with no symbol, which don't stop the others.
     pub errors: Vec<String>,
+}
+
+/// Checks a position command's names and position, then finds where it runs from, within 60
+/// seconds. Names that find nothing, and positions with no symbol, go to `out`'s standard error.
+pub async fn command_targets(
+    backend: &dyn RacliBackend,
+    names: &[String],
+    path: Option<&Path>,
+    line: Option<u32>,
+    character: Option<u32>,
+    args: &SymbolArgs,
+    out: &mut CommandOutput,
+) -> Result<Targets, CommandError> {
+    let specs = classify(names, path, line, character, args).map_err(CommandError::Usage)?;
+    let mut found = within_timeout(targets(backend, args, specs))
+        .await?
+        .map_err(CommandError::Failed)?;
+    for err in found.errors.drain(..) {
+        out.backend_error(err);
+    }
+    Ok(found)
 }
 
 /// Finds where a position command runs from: each definition the names find, and the position.
@@ -569,14 +592,15 @@ pub(crate) fn range_json(range: LspRange) -> Option<RangeJson> {
     })
 }
 
-/// Prints each definition's result as JSON: `[{"symbol": …, "result": …}]`.
-pub fn print_symbol_results_json<T: Serialize>(command: &str, results: &[SymbolResultJson<'_, T>]) {
-    let mut stdout = std::io::stdout().lock();
-    if let Err(e) = serde_json::to_writer(&mut stdout, results) {
-        eprintln!("racli {command}: failed to serialize JSON: {e}");
-        return;
+/// Writes each definition's result as JSON: `[{"symbol": …, "result": …}]`.
+pub fn write_symbol_results_json<T: Serialize>(
+    out: &mut CommandOutput,
+    results: &[SymbolResultJson<'_, T>],
+) {
+    match serde_json::to_string(results) {
+        Ok(json) => out.println(json),
+        Err(e) => out.note(format!("failed to serialize JSON: {e}")),
     }
-    let _ = writeln!(stdout);
 }
 
 #[cfg(test)]

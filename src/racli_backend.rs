@@ -4,12 +4,14 @@
 use crate::client::Client;
 use crate::proto::racli::DocumentSymbolsResponse;
 use crate::proto::racli::FindDefinitionResponse;
+use crate::proto::racli::FindImplementationsResponse;
+use crate::proto::racli::FindReferencesResponse;
 use crate::proto::racli::HoverResponse;
 use crate::proto::racli::SearchResponse;
 use crate::racli_session::RacliSession;
 use crate::rust_analyzer::SymbolSearchOptions;
 
-/// The racli operations the client-side lookups use. Positions are LSP's, 0-based.
+/// The racli operations the client commands use. Positions are LSP's, 0-based.
 // `#[async_trait]`'s expansion trips `double_must_use` (Rust 1.99+).
 #[allow(clippy::double_must_use)]
 #[tonic::async_trait]
@@ -27,6 +29,21 @@ pub trait RacliBackend: Send + Sync {
         line: u32,
         character: u32,
     ) -> Result<FindDefinitionResponse, String>;
+    /// Runs `textDocument/references`, declaration included, at a position in `file_path`
+    /// (`Racli.FindReferences`).
+    async fn find_references(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<FindReferencesResponse, String>;
+    /// Runs `textDocument/implementation` at a position in `file_path` (`Racli.FindImplementations`).
+    async fn find_implementations(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<FindImplementationsResponse, String>;
     /// Runs `textDocument/documentSymbol` for `file_path` (`Racli.DocumentSymbols`).
     async fn document_symbols(&self, file_path: &str) -> Result<DocumentSymbolsResponse, String>;
     /// Runs `textDocument/hover` at a position in `file_path` (`Racli.Hover`).
@@ -59,6 +76,30 @@ impl RacliBackend for Client {
         character: u32,
     ) -> Result<FindDefinitionResponse, String> {
         Client::find_definition(self, file_path, line, character)
+            .await
+            .map(|reply| reply.value)
+            .map_err(|e| e.to_string())
+    }
+
+    async fn find_references(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<FindReferencesResponse, String> {
+        Client::find_references(self, file_path, line, character)
+            .await
+            .map(|reply| reply.value)
+            .map_err(|e| e.to_string())
+    }
+
+    async fn find_implementations(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<FindImplementationsResponse, String> {
+        Client::find_implementations(self, file_path, line, character)
             .await
             .map(|reply| reply.value)
             .map_err(|e| e.to_string())
@@ -104,6 +145,28 @@ impl RacliBackend for RacliSession {
         character: u32,
     ) -> Result<FindDefinitionResponse, String> {
         RacliSession::find_definition(self, file_path.to_string(), line, character)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn find_references(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<FindReferencesResponse, String> {
+        RacliSession::find_references(self, file_path.to_string(), line, character)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn find_implementations(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<FindImplementationsResponse, String> {
+        RacliSession::find_implementations(self, file_path.to_string(), line, character)
             .await
             .map_err(|e| e.to_string())
     }

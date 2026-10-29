@@ -1,16 +1,18 @@
 //! `racli search`: CLI arguments and formatting for workspace symbol results.
 
 use std::io::Write;
-use std::time::Duration;
 
 use clap::Parser;
 use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::client::Client;
-use crate::client::Reply;
 use crate::client::client_unix_socket_path;
+use crate::command_output::CommandError;
+use crate::command_output::CommandOutput;
+use crate::command_output::within_timeout;
 use crate::proto::racli::lsp_workspace_symbol_response::Payload;
+use crate::racli_backend::RacliBackend;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
@@ -87,7 +89,37 @@ impl SearchArgs {
     }
 }
 
-/// Runs the search RPC and prints results in the format selected by `args`.
+/// Runs the search RPC and writes results to `out` in the format selected by `args`.
+pub async fn run_search(
+    backend: &dyn RacliBackend,
+    args: &SearchArgs,
+    out: &mut CommandOutput,
+) -> Result<(), CommandError> {
+    let options = SymbolSearchOptions {
+        kind: args.kind,
+        scope: args.scope,
+    };
+    let mut resp = within_timeout(backend.search(&args.query, options))
+        .await?
+        .map_err(CommandError::Failed)?;
+    if args.exact {
+        keep_exact_names(&mut resp, &args.query);
+    }
+    if resp.truncated {
+        out.note(
+            "rust-analyzer had more results than the server's --symbol-search-limit, so some \
+             are missing; narrow the query or raise the limit",
+        );
+    }
+    match args.print_kind() {
+        SearchPrintKind::Text => write_search_response(out, resp),
+        SearchPrintKind::Json => write_search_response_json(out, resp),
+        SearchPrintKind::Csv => write_search_response_csv_output(out, resp),
+    }
+    Ok(())
+}
+
+/// Runs `racli search` against the project's server and prints what [`run_search`] writes.
 pub async fn run_cli_search(args: SearchArgs) {
     let sock = client_unix_socket_path();
     let sock_display = sock.display().to_string();
@@ -98,74 +130,42 @@ pub async fn run_cli_search(args: SearchArgs) {
             return;
         }
     };
-    let options = SymbolSearchOptions {
-        kind: args.kind,
-        scope: args.scope,
-    };
-    match tokio::time::timeout(
-        Duration::from_secs(60),
-        client.search_with_options(&args.query, options),
-    )
-    .await
-    {
-        Ok(Ok(Reply {
-            value: mut resp, ..
-        })) => {
-            if args.exact {
-                keep_exact_names(&mut resp, &args.query);
-            }
-            if resp.truncated {
-                eprintln!(
-                    "racli search: rust-analyzer had more results than the server's \
-                     --symbol-search-limit, so some are missing; narrow the query or raise the limit"
-                );
-            }
-            match args.print_kind() {
-                SearchPrintKind::Text => print_search_response(resp),
-                SearchPrintKind::Json => print_search_response_json(resp),
-                SearchPrintKind::Csv => print_search_response_csv(resp),
-            }
-        }
-        Ok(Err(err)) => {
-            eprintln!("racli search ({sock_display}): {err}");
-        }
-        Err(_elapsed) => {
-            eprintln!("racli search ({sock_display}): request timed out after 60 seconds");
-        }
-    }
+    let mut out = CommandOutput::default();
+    let result = run_search(&client, &args, &mut out).await;
+    out.print_cli("search", &sock_display, result);
 }
 
-/// Prints a [`crate::proto::racli::SearchResponse`] as human-readable lines: `name [KIND] path:line:col`.
-fn print_search_response(resp: crate::proto::racli::SearchResponse) {
+/// Writes a [`crate::proto::racli::SearchResponse`] as human-readable lines: `name [KIND] path:line:col`.
+fn write_search_response(out: &mut CommandOutput, resp: crate::proto::racli::SearchResponse) {
     let Some(ws) = resp.workspace_symbol_response else {
-        println!("(no workspace symbol response)");
+        out.println("(no workspace symbol response)");
         return;
     };
     let Some(payload) = ws.payload else {
-        println!("(empty workspace symbol result)");
+        out.println("(empty workspace symbol result)");
         return;
     };
     match payload {
         Payload::Flat(list) => {
-            println!("flat: {} symbol(s)", list.items.len());
+            out.println(format!("flat: {} symbol(s)", list.items.len()));
             for it in list.items {
-                println!(
+                out.println(format!(
                     "{} [{}] {}",
                     it.name,
                     it.kind,
                     symbol_location_text(&it.uri, it.range.as_ref())
-                );
+                ));
             }
         }
         Payload::Nested(list) => {
-            println!("nested: {} symbol(s)", list.items.len());
+            out.println(format!("nested: {} symbol(s)", list.items.len()));
             for it in list.items {
-                println!(
+                out.println(format!(
                     "{} [{}] {}",
                     it.name,
                     it.kind,
                     symbol_location_text(&it.uri, it.range.as_ref())
-                );
+                ));
             }
         }
     }
@@ -285,12 +285,12 @@ fn proto_lsp_range_to_json(r: &crate::proto::racli::LspRange) -> SearchRangeJson
     }
 }
 
-/// Prints search results as a compact JSON array of symbol rows.
-fn print_search_response_json(resp: crate::proto::racli::SearchResponse) {
+/// Writes search results as a compact JSON array of symbol rows.
+fn write_search_response_json(out: &mut CommandOutput, resp: crate::proto::racli::SearchResponse) {
     let rows = search_response_to_json_rows(resp);
     match serde_json::to_string(&rows) {
-        Ok(s) => println!("{s}"),
-        Err(e) => eprintln!("racli search: failed to encode JSON: {e}"),
+        Ok(s) => out.println(s),
+        Err(e) => out.note(format!("failed to encode JSON: {e}")),
     }
 }
 
@@ -335,12 +335,16 @@ fn write_search_response_csv(
     Ok(())
 }
 
-/// Prints search results as CSV with a header row.
-fn print_search_response_csv(resp: crate::proto::racli::SearchResponse) {
-    let mut stdout = std::io::stdout().lock();
-    if let Err(e) = write_search_response_csv(&mut stdout, resp) {
-        eprintln!("racli search: failed to write CSV: {e}");
+/// Writes search results as CSV with a header row.
+fn write_search_response_csv_output(
+    out: &mut CommandOutput,
+    resp: crate::proto::racli::SearchResponse,
+) {
+    let mut csv = Vec::new();
+    if let Err(e) = write_search_response_csv(&mut csv, resp) {
+        out.note(format!("failed to write CSV: {e}"));
     }
+    out.print(String::from_utf8_lossy(&csv));
 }
 
 #[cfg(test)]

@@ -46,7 +46,7 @@ const QUERIES: &[ReferenceQuery] = &[
     },
     ReferenceQuery {
         file: "src/lib.rs",
-        line: 67,
+        line: 70,
         character: 15,
         symbol: "effective_unix_socket_path",
     },

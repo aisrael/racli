@@ -1,25 +1,26 @@
 //! `racli find-definition`: CLI arguments and formatting for LSP go-to-definition results.
 
-use std::io::Write;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use clap::Parser;
 use serde::Serialize;
 
 use crate::client::Client;
-use crate::client::Reply;
 use crate::client::client_unix_socket_path;
+use crate::command_output::CommandError;
+use crate::command_output::CommandOutput;
+use crate::command_output::within_timeout;
 use crate::definition_details::DefinitionDetails;
 use crate::definition_details::DefinitionSource;
 use crate::definition_details::definition_details;
 use crate::definition_details::hover_text;
 use crate::definition_details::numbered_source;
 use crate::proto::racli::FindDefinitionResponse;
+use crate::racli_backend::RacliBackend;
 use crate::symbol;
 use crate::symbol::SymbolArgs;
 use crate::symbol::SymbolResultJson;
-use crate::symbol::print_symbol_results_json;
+use crate::symbol::write_symbol_results_json;
 use crate::text_position::SourceLines;
 use crate::text_position::parse_one_based;
 
@@ -53,92 +54,56 @@ pub struct FindDefinitionArgs {
 }
 
 /// Runs the find-definition RPC from each definition the symbol names find and from the
-/// `--path` position, if given, and prints locations as JSON or plain text.
-pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
-    let sock = client_unix_socket_path();
-    let sock_display = sock.display().to_string();
-    let client = match Client::new(&sock) {
-        Ok(client) => client,
-        Err(err) => {
-            eprintln!("racli find-definition ({sock_display}): {err}");
-            return;
-        }
-    };
-
-    let specs = symbol::classify(
+/// `--path` position, if given, and writes locations as JSON or plain text to `out`.
+pub async fn run_find_definition(
+    backend: &dyn RacliBackend,
+    args: &FindDefinitionArgs,
+    out: &mut CommandOutput,
+) -> Result<(), CommandError> {
+    let targets = symbol::command_targets(
+        backend,
         &args.names,
         args.path.as_deref(),
         args.line,
         args.character,
         &args.symbol,
+        out,
     )
-    .unwrap_or_else(|e| symbol::exit_with_usage_error(&e));
-    let targets = match tokio::time::timeout(
-        Duration::from_secs(60),
-        symbol::targets(&client, &args.symbol, specs),
-    )
-    .await
-    {
-        Ok(Ok(targets)) => targets,
-        Ok(Err(err)) => {
-            eprintln!("racli find-definition ({sock_display}): {err}");
-            return;
-        }
-        Err(_elapsed) => {
-            eprintln!("racli find-definition ({sock_display}): request timed out after 60 seconds");
-            return;
-        }
-    };
-    for err in &targets.errors {
-        eprintln!("racli find-definition ({sock_display}): {err}");
-    }
+    .await?;
     let grouped = targets.grouped;
 
     let mut sources = SourceLines::default();
     let mut results = Vec::with_capacity(targets.targets.len());
     for target in targets.targets {
-        match tokio::time::timeout(
-            Duration::from_secs(60),
-            client.find_definition(&target.file_path, target.line, target.character),
-        )
-        .await
-        {
-            Ok(Ok(Reply { value: resp, .. })) => {
-                let mut details = Vec::new();
-                if args.hover || args.source {
-                    for loc in &resp.locations {
-                        let (found, errors) =
-                            definition_details(&client, loc, args.hover, args.source, &mut sources)
-                                .await;
-                        for err in errors {
-                            eprintln!("racli find-definition ({sock_display}): {err}");
-                        }
-                        details.push(found);
-                    }
+        let resp = within_timeout(backend.find_definition(
+            &target.file_path,
+            target.line,
+            target.character,
+        ))
+        .await?
+        .map_err(CommandError::Failed)?;
+        let mut details = Vec::new();
+        if args.hover || args.source {
+            for loc in &resp.locations {
+                let (found, errors) =
+                    definition_details(backend, loc, args.hover, args.source, &mut sources).await;
+                for err in errors {
+                    out.backend_error(err);
                 }
-                results.push((target.symbol, resp, details));
-            }
-            Ok(Err(err)) => {
-                eprintln!("racli find-definition ({sock_display}): {err}");
-                return;
-            }
-            Err(_elapsed) => {
-                eprintln!(
-                    "racli find-definition ({sock_display}): request timed out after 60 seconds"
-                );
-                return;
+                details.push(found);
             }
         }
+        results.push((target.symbol, resp, details));
     }
 
     if args.text {
         for (symbol, resp, details) in &results {
             match symbol {
                 Some(symbol) => {
-                    println!("{}", symbol.header());
-                    print_find_definition_text(resp, details, "  ", &mut sources);
+                    out.println(symbol.header());
+                    write_find_definition_text(out, resp, details, "  ", &mut sources);
                 }
-                None => print_find_definition_text(resp, details, "", &mut sources),
+                None => write_find_definition_text(out, resp, details, "", &mut sources),
             }
         }
     } else if grouped {
@@ -151,21 +116,40 @@ pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
                 })
             })
             .collect();
-        print_symbol_results_json("find-definition", &grouped);
+        write_symbol_results_json(out, &grouped);
     } else if let Some((_, resp, details)) = results.first() {
-        print_find_definition_json(resp, details);
+        write_find_definition_json(out, resp, details);
     }
+    Ok(())
 }
 
-/// Prints a [`FindDefinitionResponse`] as JSON (array of `uri` + `range`, plus any details).
-fn print_find_definition_json(resp: &FindDefinitionResponse, details: &[DefinitionDetails]) {
-    let rows = find_definition_json_rows(resp, details);
-    let mut stdout = std::io::stdout().lock();
-    if let Err(e) = serde_json::to_writer(&mut stdout, &rows) {
-        eprintln!("racli find-definition: failed to serialize JSON: {e}");
-        return;
+/// Runs `racli find-definition` against the project's server and prints what
+/// [`run_find_definition`] writes.
+pub async fn run_cli_find_definition(args: FindDefinitionArgs) {
+    let sock = client_unix_socket_path();
+    let sock_display = sock.display().to_string();
+    let client = match Client::new(&sock) {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("racli find-definition ({sock_display}): {err}");
+            return;
+        }
+    };
+    let mut out = CommandOutput::default();
+    let result = run_find_definition(&client, &args, &mut out).await;
+    out.print_cli("find-definition", &sock_display, result);
+}
+
+/// Writes a [`FindDefinitionResponse`] as JSON (array of `uri` + `range`, plus any details).
+fn write_find_definition_json(
+    out: &mut CommandOutput,
+    resp: &FindDefinitionResponse,
+    details: &[DefinitionDetails],
+) {
+    match serde_json::to_string(&find_definition_json_rows(resp, details)) {
+        Ok(json) => out.println(json),
+        Err(e) => out.note(format!("failed to serialize JSON: {e}")),
     }
-    let _ = writeln!(stdout);
 }
 
 /// The JSON rows for a [`FindDefinitionResponse`]: one `uri` + `range` per location, with its
@@ -248,17 +232,18 @@ fn proto_lsp_range_to_json(r: &crate::proto::racli::LspRange) -> DefinitionRange
     }
 }
 
-/// Prints locations as one line each, after `indent`: `path:line:col: source line`, with the path
+/// Writes locations as one line each, after `indent`: `path:line:col: source line`, with the path
 /// relative to the current directory and 1-based line and column. A location's hover and source
 /// follow it, indented two more spaces.
-fn print_find_definition_text(
+fn write_find_definition_text(
+    out: &mut CommandOutput,
     resp: &FindDefinitionResponse,
     details: &[DefinitionDetails],
     indent: &str,
     sources: &mut SourceLines,
 ) {
     if resp.locations.is_empty() {
-        println!("{indent}(no definition)");
+        out.println(format!("{indent}(no definition)"));
         return;
     }
     for (i, loc) in resp.locations.iter().enumerate() {
@@ -268,22 +253,25 @@ fn print_find_definition_text(
             .and_then(|r| r.start.as_ref())
             .map(|p| (p.line, p.character))
             .unwrap_or((0, 0));
-        println!("{indent}{}", sources.location(&loc.uri, line, character));
+        out.println(format!(
+            "{indent}{}",
+            sources.location(&loc.uri, line, character)
+        ));
         let Some(detail) = details.get(i) else {
             continue;
         };
         if let Some(hover) = &detail.hover {
             for line in hover_text(hover).lines() {
                 if line.is_empty() {
-                    println!();
+                    out.println("");
                 } else {
-                    println!("{indent}  {line}");
+                    out.println(format!("{indent}  {line}"));
                 }
             }
         }
         if let Some(source) = &detail.source {
             for line in numbered_source(&source.text, source.range.start.line) {
-                println!("{indent}  {line}");
+                out.println(format!("{indent}  {line}"));
             }
         }
     }

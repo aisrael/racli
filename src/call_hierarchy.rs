@@ -8,10 +8,8 @@
 
 use std::collections::HashSet;
 use std::future::Future;
-use std::io::Write;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::time::Duration;
 
 use clap::Parser;
 use clap::ValueEnum;
@@ -21,16 +19,20 @@ use serde::Serialize;
 
 use crate::client::Client;
 use crate::client::client_unix_socket_path;
+use crate::command_output::CommandError;
+use crate::command_output::CommandOutput;
+use crate::command_output::within_timeout;
 use crate::proto::racli::LspCallHierarchyIncomingCall;
 use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::LspCallHierarchyOutgoingCall;
 use crate::proto::racli::LspPosition;
 use crate::proto::racli::LspRange;
+use crate::racli_backend::RacliBackend;
 use crate::racli_session::RacliSession;
 use crate::symbol;
 use crate::symbol::SymbolArgs;
 use crate::symbol::SymbolResultJson;
-use crate::symbol::print_symbol_results_json;
+use crate::symbol::write_symbol_results_json;
 use crate::text_position::parse_one_based;
 use crate::text_position::position_text;
 
@@ -272,6 +274,9 @@ pub struct CallHierarchyOutput {
     /// Other items `prepareCallHierarchy` resolved at the same position, beyond the first (ambiguous cursor position).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub other_candidates: Vec<CallHierarchyItemJson>,
+    /// Calls that failed during the walk, whose callers or callees are left out.
+    #[serde(skip)]
+    pub errors: Vec<String>,
 }
 
 fn position_to_json(p: &LspPosition) -> PositionJson {
@@ -306,13 +311,15 @@ fn item_to_json(item: &LspCallHierarchyItem) -> CallHierarchyItemJson {
 }
 
 /// Fetches one level of callers (`incoming: true`) or callees for `item`, then recurses into each
-/// newly-visited result while `depth_remaining` allows, guarding cycles via `visited`.
+/// newly-visited result while `depth_remaining` allows, guarding cycles via `visited`. A call that
+/// fails adds its error to `errors` and contributes no nodes.
 fn walk<'a>(
     backend: &'a dyn CallHierarchyBackend,
     incoming: bool,
     item: LspCallHierarchyItem,
     depth_remaining: u32,
     visited: &'a mut HashSet<VisitKey>,
+    errors: &'a mut Vec<String>,
 ) -> Pin<Box<dyn Future<Output = Vec<CallNodeJson>> + Send + 'a>> {
     Box::pin(async move {
         if depth_remaining == 0 {
@@ -326,7 +333,7 @@ fn walk<'a>(
                     .filter_map(|c| c.from.map(|from| (from, c.from_ranges)))
                     .collect(),
                 Err(e) => {
-                    eprintln!("racli call-hierarchy: {e}");
+                    errors.push(e);
                     return Vec::new();
                 }
             }
@@ -337,7 +344,7 @@ fn walk<'a>(
                     .filter_map(|c| c.to.map(|to| (to, c.from_ranges)))
                     .collect(),
                 Err(e) => {
-                    eprintln!("racli call-hierarchy: {e}");
+                    errors.push(e);
                     return Vec::new();
                 }
             }
@@ -353,6 +360,7 @@ fn walk<'a>(
                     next_item.clone(),
                     depth_remaining - 1,
                     visited,
+                    errors,
                 )
                 .await
             } else {
@@ -387,18 +395,39 @@ pub async fn run_call_hierarchy(
     }
     let root = items.remove(0);
     let other_candidates = items.iter().map(item_to_json).collect();
+    let mut errors = Vec::new();
 
     let incoming = if matches!(direction, Direction::Incoming | Direction::Both) {
         let mut visited = HashSet::new();
         visited.insert(visit_key(&root));
-        Some(walk(backend, true, root.clone(), depth, &mut visited).await)
+        Some(
+            walk(
+                backend,
+                true,
+                root.clone(),
+                depth,
+                &mut visited,
+                &mut errors,
+            )
+            .await,
+        )
     } else {
         None
     };
     let outgoing = if matches!(direction, Direction::Outgoing | Direction::Both) {
         let mut visited = HashSet::new();
         visited.insert(visit_key(&root));
-        Some(walk(backend, false, root.clone(), depth, &mut visited).await)
+        Some(
+            walk(
+                backend,
+                false,
+                root.clone(),
+                depth,
+                &mut visited,
+                &mut errors,
+            )
+            .await,
+        )
     } else {
         None
     };
@@ -408,6 +437,7 @@ pub async fn run_call_hierarchy(
         incoming,
         outgoing,
         other_candidates,
+        errors,
     })
 }
 
@@ -429,100 +459,66 @@ pub struct CallHierarchyRequestJson {
     pub depth: Option<u32>,
 }
 
-/// Runs the call-hierarchy walk over a Unix socket from each definition the symbol names find and
-/// from the `--path` position, if given, and prints the result as JSON or `--text`.
-pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
-    let sock = client_unix_socket_path();
-    let sock_display = sock.display().to_string();
-    let client = match Client::new(&sock) {
-        Ok(client) => client,
-        Err(err) => {
-            eprintln!("racli call-hierarchy ({sock_display}): {err}");
-            return;
-        }
-    };
-
-    let specs = symbol::classify(
+/// Runs the call-hierarchy walk from each definition the symbol names find and from the `--path`
+/// position, if given, and writes the result to `out` as JSON or `--text`. `backend` finds the
+/// definitions, and `calls` walks from them.
+pub async fn run_call_hierarchy_command(
+    backend: &dyn RacliBackend,
+    calls: &dyn CallHierarchyBackend,
+    args: &CallHierarchyArgs,
+    out: &mut CommandOutput,
+) -> Result<(), CommandError> {
+    let targets = symbol::command_targets(
+        backend,
         &args.names,
         args.path.as_deref(),
         args.line,
         args.character,
         &args.symbol,
+        out,
     )
-    .unwrap_or_else(|e| symbol::exit_with_usage_error(&e));
-    let targets = match tokio::time::timeout(
-        Duration::from_secs(60),
-        symbol::targets(&client, &args.symbol, specs),
-    )
-    .await
-    {
-        Ok(Ok(targets)) => targets,
-        Ok(Err(err)) => {
-            eprintln!("racli call-hierarchy ({sock_display}): {err}");
-            return;
-        }
-        Err(_elapsed) => {
-            eprintln!("racli call-hierarchy ({sock_display}): request timed out after 60 seconds");
-            return;
-        }
-    };
-    let backend = SocketBackend { client };
-    for err in &targets.errors {
-        eprintln!("racli call-hierarchy ({sock_display}): {err}");
-    }
+    .await?;
     let grouped = targets.grouped;
 
     let mut results = Vec::with_capacity(targets.targets.len());
     for target in targets.targets {
-        match tokio::time::timeout(
-            Duration::from_secs(60),
-            run_call_hierarchy(
-                &backend,
-                target.file_path,
-                target.line,
-                target.character,
-                args.direction,
-                args.depth,
-            ),
-        )
-        .await
-        {
-            Ok(Ok(result)) => {
+        let walked = within_timeout(run_call_hierarchy(
+            calls,
+            target.file_path,
+            target.line,
+            target.character,
+            args.direction,
+            args.depth,
+        ))
+        .await?;
+        match walked {
+            Ok(result) => {
+                for error in &result.errors {
+                    out.note(error.clone());
+                }
                 for candidate in &result.other_candidates {
-                    eprintln!(
-                        "racli call-hierarchy: did you mean {} at {}?",
+                    out.note(format!(
+                        "did you mean {} at {}?",
                         candidate.name,
                         item_position_text(candidate)
-                    );
+                    ));
                 }
                 results.push((target.symbol, result));
             }
-            Ok(Err(CallHierarchyError::NoItem)) => match &target.symbol {
+            Err(CallHierarchyError::NoItem) => match &target.symbol {
                 Some(symbol) => {
-                    eprintln!(
-                        "racli call-hierarchy: no call hierarchy item for {}",
-                        symbol.header()
-                    );
+                    out.note(format!("no call hierarchy item for {}", symbol.header()));
                 }
-                None => println!("(no call hierarchy item at that position)"),
+                None => out.println("(no call hierarchy item at that position)"),
             },
-            Ok(Err(CallHierarchyError::Backend(e))) => {
-                eprintln!("racli call-hierarchy ({sock_display}): {e}");
-                return;
-            }
-            Err(_elapsed) => {
-                eprintln!(
-                    "racli call-hierarchy ({sock_display}): request timed out after 60 seconds"
-                );
-                return;
-            }
+            Err(CallHierarchyError::Backend(e)) => return Err(CommandError::Failed(e)),
         }
     }
 
     if args.text {
         // Each tree starts with its item, which already names the symbol.
         for (_, result) in &results {
-            print_call_hierarchy_text(result);
+            write_call_hierarchy_text(out, result);
         }
     } else if grouped {
         let grouped: Vec<_> = results
@@ -534,56 +530,75 @@ pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
                 })
             })
             .collect();
-        print_symbol_results_json("call-hierarchy", &grouped);
+        write_symbol_results_json(out, &grouped);
     } else if let Some((_, result)) = results.first() {
-        print_call_hierarchy_json(result);
+        write_call_hierarchy_json(out, result);
+    }
+    Ok(())
+}
+
+/// Runs `racli call-hierarchy` against the project's server and prints what
+/// [`run_call_hierarchy_command`] writes.
+pub async fn run_cli_call_hierarchy(args: CallHierarchyArgs) {
+    let sock = client_unix_socket_path();
+    let sock_display = sock.display().to_string();
+    let client = match Client::new(&sock) {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("racli call-hierarchy ({sock_display}): {err}");
+            return;
+        }
+    };
+    let calls = SocketBackend { client };
+    let mut out = CommandOutput::default();
+    let result = run_call_hierarchy_command(&calls.client, &calls, &args, &mut out).await;
+    out.print_cli("call-hierarchy", &sock_display, result);
+}
+
+/// Writes the call tree as JSON.
+fn write_call_hierarchy_json(out: &mut CommandOutput, result: &CallHierarchyOutput) {
+    match serde_json::to_string(result) {
+        Ok(json) => out.println(json),
+        Err(e) => out.note(format!("failed to serialize JSON: {e}")),
     }
 }
 
-fn print_call_hierarchy_json(result: &CallHierarchyOutput) {
-    let mut stdout = std::io::stdout().lock();
-    if let Err(e) = serde_json::to_writer(&mut stdout, result) {
-        eprintln!("racli call-hierarchy: failed to serialize JSON: {e}");
-        return;
-    }
-    let _ = writeln!(stdout);
-}
-
-/// Prints the call tree as an indented outline: `name (KIND) path:line:col` per item, with 1-based
+/// Writes the call tree as an indented outline: `name (KIND) path:line:col` per item, with 1-based
 /// line and column.
-fn print_call_hierarchy_text(result: &CallHierarchyOutput) {
-    println!(
+fn write_call_hierarchy_text(out: &mut CommandOutput, result: &CallHierarchyOutput) {
+    out.println(format!(
         "{} ({}) {}",
         result.item.name,
         result.item.kind,
         item_position_text(&result.item)
-    );
+    ));
     if let Some(incoming) = &result.incoming {
-        println!("<- callers:");
+        out.println("<- callers:");
         if incoming.is_empty() {
-            println!("  (none)");
+            out.println("  (none)");
         }
-        print_call_nodes_text(incoming, 1);
+        write_call_nodes_text(out, incoming, 1);
     }
     if let Some(outgoing) = &result.outgoing {
-        println!("-> callees:");
+        out.println("-> callees:");
         if outgoing.is_empty() {
-            println!("  (none)");
+            out.println("  (none)");
         }
-        print_call_nodes_text(outgoing, 1);
+        write_call_nodes_text(out, outgoing, 1);
     }
 }
 
-fn print_call_nodes_text(nodes: &[CallNodeJson], indent: usize) {
+/// Writes each node and its children, indented two spaces per level from `indent`.
+fn write_call_nodes_text(out: &mut CommandOutput, nodes: &[CallNodeJson], indent: usize) {
     for node in nodes {
-        println!(
+        out.println(format!(
             "{}{} ({}) {}",
             "  ".repeat(indent),
             node.item.name,
             node.item.kind,
             item_position_text(&node.item)
-        );
-        print_call_nodes_text(&node.children, indent + 1);
+        ));
+        write_call_nodes_text(out, &node.children, indent + 1);
     }
 }
 
@@ -674,7 +689,7 @@ mod tests {
         let mut visited = HashSet::new();
         visited.insert(visit_key(&root));
 
-        let nodes = walk(&backend, true, root, 1, &mut visited).await;
+        let nodes = walk(&backend, true, root, 1, &mut visited, &mut Vec::new()).await;
 
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].item.name, "a");
@@ -698,7 +713,7 @@ mod tests {
         let mut visited = HashSet::new();
         visited.insert(visit_key(&root));
 
-        let nodes = walk(&backend, true, root, 10, &mut visited).await;
+        let nodes = walk(&backend, true, root, 10, &mut visited, &mut Vec::new()).await;
 
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].item.name, "a");
@@ -723,7 +738,7 @@ mod tests {
         let mut visited = HashSet::new();
         visited.insert(visit_key(&root));
 
-        let nodes = walk(&backend, true, root, 0, &mut visited).await;
+        let nodes = walk(&backend, true, root, 0, &mut visited, &mut Vec::new()).await;
 
         assert!(nodes.is_empty());
     }
