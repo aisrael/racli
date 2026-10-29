@@ -181,12 +181,13 @@ Feature: racli mcp tools mirror the CLI commands
     Then the tool result should not be an error
     And the output should contain "mkfifo (FUNCTION) 3:1-9:2"
 
-  Scenario Outline: arguments the command would reject are invalid params
+  Scenario Outline: arguments the command would reject are an error result with the reason
     When the MCP tool "find_references" is called with:
       """
       <arguments>
       """
-    Then the tool call should be rejected as invalid params mentioning "<message>"
+    Then the tool result should be an error
+    And the output should contain "<message>"
 
     Examples:
       | arguments                                                             | message                                     |

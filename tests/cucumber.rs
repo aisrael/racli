@@ -25,7 +25,6 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::model::CallToolResult;
 use rmcp::service::Peer;
 use rmcp::service::RunningService;
-use rmcp::service::ServiceError;
 use rmcp::transport::ConfigureCommandExt;
 use rmcp::transport::TokioChildProcess;
 use serde_json::Value;
@@ -50,13 +49,12 @@ struct CommandOutput {
     stderr: String,
 }
 
-/// How an MCP tool call ended, populated by the MCP `When` steps.
+/// An MCP tool result, populated by the MCP `When` steps: whether it reported `isError`, and its
+/// `_meta`. Its text blocks go in `command_output`.
 #[derive(Debug)]
-enum McpCall {
-    /// The tool ran: whether it reported `isError`, and the result's `_meta`.
-    Ran { is_error: bool, meta: Value },
-    /// The call was rejected with a JSON-RPC error.
-    Rejected { code: i64, message: String },
+struct McpCall {
+    is_error: bool,
+    meta: Value,
 }
 
 #[derive(Debug, Default, cucumber::World)]
@@ -329,38 +327,27 @@ async fn call_mcp_tool(
     if let Some(arguments) = arguments {
         params = params.with_arguments(arguments);
     }
-    let outcome = tokio::time::timeout(Duration::from_secs(60), peer.call_tool(params))
+    let result = tokio::time::timeout(Duration::from_secs(60), peer.call_tool(params))
         .await
-        .unwrap_or_else(|_| panic!("MCP tool {name} timed out after 60 seconds"));
-    match outcome {
-        Ok(result) => {
-            let texts = tool_texts(&result);
-            let (stdout, stderr) = match texts.split_first() {
-                Some((first, rest)) => (first.clone(), rest.join("\n")),
-                None => (String::new(), String::new()),
-            };
-            world.command_output = Some(CommandOutput {
-                exit_code: 0,
-                stdout,
-                stderr,
-            });
-            world.mcp_call = Some(McpCall::Ran {
-                is_error: result.is_error == Some(true),
-                meta: result
-                    .meta
-                    .map(|meta| Value::Object(meta.0))
-                    .unwrap_or(Value::Null),
-            });
-        }
-        Err(ServiceError::McpError(error)) => {
-            world.command_output = None;
-            world.mcp_call = Some(McpCall::Rejected {
-                code: i64::from(error.code.0),
-                message: error.message.to_string(),
-            });
-        }
-        Err(e) => panic!("MCP tool {name} failed: {e}"),
-    }
+        .unwrap_or_else(|_| panic!("MCP tool {name} timed out after 60 seconds"))
+        .unwrap_or_else(|e| panic!("MCP tool {name} failed: {e}"));
+    let texts = tool_texts(&result);
+    let (stdout, stderr) = match texts.split_first() {
+        Some((first, rest)) => (first.clone(), rest.join("\n")),
+        None => (String::new(), String::new()),
+    };
+    world.command_output = Some(CommandOutput {
+        exit_code: 0,
+        stdout,
+        stderr,
+    });
+    world.mcp_call = Some(McpCall {
+        is_error: result.is_error == Some(true),
+        meta: result
+            .meta
+            .map(|meta| Value::Object(meta.0))
+            .unwrap_or(Value::Null),
+    });
 }
 
 #[when(regex = r#"^the MCP tool "([^"]+)" is called$"#)]
@@ -389,7 +376,7 @@ fn mcp_call(world: &RacliWorld) -> &McpCall {
 #[then(expr = "the tool result should not be an error")]
 async fn the_tool_result_should_not_be_an_error(world: &mut RacliWorld) {
     match mcp_call(world) {
-        McpCall::Ran {
+        McpCall {
             is_error: false, ..
         } => {}
         other => panic!(
@@ -402,22 +389,9 @@ async fn the_tool_result_should_not_be_an_error(world: &mut RacliWorld) {
 #[then(expr = "the tool result should be an error")]
 async fn the_tool_result_should_be_an_error(world: &mut RacliWorld) {
     match mcp_call(world) {
-        McpCall::Ran { is_error: true, .. } => {}
+        McpCall { is_error: true, .. } => {}
         other => panic!(
             "expected a tool result with isError, got {other:?}\n{:?}",
-            world.command_output
-        ),
-    }
-}
-
-#[then(expr = "the tool call should be rejected as invalid params mentioning {string}")]
-async fn the_tool_call_should_be_rejected(world: &mut RacliWorld, expected: String) {
-    const INVALID_PARAMS: i64 = -32602;
-    match mcp_call(world) {
-        McpCall::Rejected { code, message }
-            if *code == INVALID_PARAMS && message.contains(&expected) => {}
-        other => panic!(
-            "expected an invalid_params error mentioning {expected:?}, got {other:?}\n{:?}",
             world.command_output
         ),
     }
@@ -426,7 +400,7 @@ async fn the_tool_call_should_be_rejected(world: &mut RacliWorld, expected: Stri
 #[then(expr = "the tool result's _meta should have {string} set to {string}")]
 async fn the_tool_result_meta_should_have(world: &mut RacliWorld, key: String, expected: String) {
     match mcp_call(world) {
-        McpCall::Ran { meta, .. } if meta[&key] == Value::String(expected.clone()) => {}
+        McpCall { meta, .. } if meta[&key] == Value::String(expected.clone()) => {}
         other => panic!("expected _meta {key:?} to be {expected:?}, got {other:?}"),
     }
 }

@@ -82,6 +82,7 @@ pub async fn run_find_definition(
         ))
         .await?
         .map_err(CommandError::Failed)?;
+        out.mark_answered();
         let mut details = Vec::new();
         if args.hover || args.source {
             for loc in &resp.locations {

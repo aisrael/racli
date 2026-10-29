@@ -1,55 +1,51 @@
-//! The `racli mcp` server: MCP tools on stdio via `rmcp`, served by an in-process `RacliSession` (rust-analyzer + file watcher).
+//! The `racli mcp` server: MCP tools on stdio via `rmcp`, served by an in-process `RacliSession`
+//! (rust-analyzer). Each tool runs its CLI command and returns what the command prints (ADR 006).
 
 mod mcp_proto_json;
+mod params;
 
 use std::sync::Arc;
 
-use crate::call_hierarchy;
-use crate::call_hierarchy::CallHierarchyError;
-use crate::call_hierarchy::CallHierarchyOutput;
-use crate::call_hierarchy::CallHierarchyRequestJson;
-use crate::call_hierarchy::Direction;
-use mcp_proto_json::DocumentSymbolsRequestJson;
-use mcp_proto_json::DocumentSymbolsResponseJson;
-use mcp_proto_json::FindDefinitionRequestJson;
-use mcp_proto_json::FindDefinitionResponseJson;
-use mcp_proto_json::FindImplementationsRequestJson;
-use mcp_proto_json::FindImplementationsResponseJson;
-use mcp_proto_json::FindReferencesRequestJson;
-use mcp_proto_json::FindReferencesResponseJson;
-use mcp_proto_json::GetVersionResponseJson;
-use mcp_proto_json::SearchRequestJson;
-use mcp_proto_json::SearchResponseJson;
-use mcp_proto_json::document_symbols_response_proto_to_json;
-use mcp_proto_json::find_definition_response_proto_to_json;
-use mcp_proto_json::find_implementations_response_proto_to_json;
-use mcp_proto_json::find_references_response_proto_to_json;
 use mcp_proto_json::get_version_response_proto_to_json;
-use mcp_proto_json::search_response_proto_to_json;
+use params::CallHierarchyParams;
+use params::DocumentSymbolsParams;
+use params::FindDefinitionParams;
+use params::PositionParams;
+use params::SearchParams;
 
 use rmcp::ErrorData;
 use rmcp::ServerHandler;
 use rmcp::handler::server::router::tool::ToolRouter;
-use rmcp::handler::server::wrapper::Json;
 use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::CallToolResult;
+use rmcp::model::ContentBlock;
 use rmcp::model::Implementation;
+use rmcp::model::MetaObject;
 use rmcp::model::ServerCapabilities;
 use rmcp::model::ServerConfig;
 use rmcp::tool;
 use rmcp::tool_handler;
 use rmcp::tool_router;
+use serde_json::Value;
 
 use crate::actors::backend::BackendStartError;
 use crate::actors::frontend::FrontendError;
 use crate::actors::root::FrontendKind;
 use crate::actors::root::RootError;
 use crate::actors::root::run_until_shutdown;
+use crate::backend_status::BackendStatus;
+use crate::call_hierarchy::run_call_hierarchy_command;
+use crate::command_output::CommandError;
+use crate::command_output::CommandOutput;
+use crate::document_symbols::run_document_symbols;
+use crate::find_definition::run_find_definition;
+use crate::find_implementations::run_find_implementations;
+use crate::find_references::run_find_references;
 use crate::grpc_server::install_unix_shutdown_signals;
 use crate::logging::init_server_tracing;
-use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
 use crate::rust_analyzer::RustAnalyzerError;
-use crate::rust_analyzer::SymbolSearchOptions;
+use crate::search::run_search;
 
 /// Failures during the MCP lifecycle on stdio or the embedded workspace backend.
 #[derive(Debug, thiserror::Error)]
@@ -108,150 +104,195 @@ impl RacliMcpHandler {
         }
     }
 
-    fn racli_rpc_error_to_mcp(err: RacliRpcError) -> ErrorData {
-        match err {
-            RacliRpcError::InvalidArgument(msg) => ErrorData::invalid_params(msg, None),
-            RacliRpcError::Internal(msg) => ErrorData::internal_error(msg, None),
+    /// The tool result for a command that wrote `out` and ended with `result` (ADR 006 decisions
+    /// 1, 4 and 5): its standard output, then its standard error and a warning when rust-analyzer
+    /// isn't ready, with the backend status in `_meta`.
+    fn tool_result(
+        &self,
+        out: &CommandOutput,
+        result: Result<(), CommandError>,
+    ) -> Result<CallToolResult, ErrorData> {
+        match result {
+            Ok(()) => {}
+            Err(CommandError::Usage(message)) => return Ok(self.rejected(message)),
+            Err(CommandError::Failed(message)) => {
+                return Err(ErrorData::internal_error(message, None));
+            }
         }
+        let status = self.session.backend_status();
+        let mut content = vec![ContentBlock::text(out.stdout())];
+        let stderr = out.stderr_messages().join("\n");
+        if !stderr.is_empty() {
+            content.push(ContentBlock::text(stderr));
+        }
+        if let Some(warning) = status_warning(&status) {
+            content.push(ContentBlock::text(warning));
+        }
+        let mut tool_result = if out.answered() {
+            CallToolResult::success(content)
+        } else {
+            CallToolResult::error(content)
+        };
+        tool_result.meta = Some(status_meta(&status));
+        Ok(tool_result)
     }
 
-    fn call_hierarchy_error_to_mcp(err: CallHierarchyError) -> ErrorData {
-        match err {
-            CallHierarchyError::NoItem => {
-                ErrorData::invalid_params("no call hierarchy item at that position", None)
-            }
-            CallHierarchyError::Backend(msg) => ErrorData::internal_error(msg, None),
+    /// The tool result for arguments the command would reject: `isError`, with the reason, so the
+    /// caller can retry, as rmcp does for arguments that don't match the schema.
+    fn rejected(&self, reason: String) -> CallToolResult {
+        let mut tool_result = CallToolResult::error(vec![ContentBlock::text(reason)]);
+        tool_result.meta = Some(status_meta(&self.session.backend_status()));
+        tool_result
+    }
+}
+
+/// `_meta` for a tool result: `racli/backend`, and `racli/backendMessage` with `error`.
+fn status_meta(status: &BackendStatus) -> MetaObject {
+    let mut meta = serde_json::Map::new();
+    let name = match status {
+        BackendStatus::Ready => "ready",
+        BackendStatus::Indexing => "indexing",
+        BackendStatus::Error(_) => "error",
+        BackendStatus::Unknown => return MetaObject::from(meta),
+    };
+    meta.insert("racli/backend".into(), Value::from(name));
+    if let BackendStatus::Error(message) = status {
+        meta.insert("racli/backendMessage".into(), Value::from(message.as_str()));
+    }
+    MetaObject::from(meta)
+}
+
+/// The text block that says a result may be incomplete, unless rust-analyzer is ready.
+fn status_warning(status: &BackendStatus) -> Option<String> {
+    match status {
+        BackendStatus::Ready | BackendStatus::Unknown => None,
+        BackendStatus::Indexing => {
+            Some("rust-analyzer is still indexing; results may be incomplete".into())
         }
+        BackendStatus::Error(message) => Some(format!(
+            "rust-analyzer reported an error ({message}); results may be incomplete"
+        )),
     }
 }
 
 #[tool_router(router = tool_router)]
 impl RacliMcpHandler {
-    /// Returns the running racli version and rust-analyzer LSP serverInfo (`Racli.GetVersion`).
+    /// Returns the racli version and rust-analyzer's LSP serverInfo (`racli version`).
     #[tool(
         name = "get_version",
-        description = "Returns crate version string and rust-analyzer serverInfo from LSP initialize (mirrors gRPC Racli.GetVersion)."
+        description = "Returns racli's version and rust-analyzer's serverInfo, as JSON. Its _meta says whether rust-analyzer is ready, still indexing, or reported an error (racli/backend)."
     )]
-    async fn get_version(&self) -> Result<Json<GetVersionResponseJson>, ErrorData> {
-        let resp = self.session.get_version();
-        Ok(Json(get_version_response_proto_to_json(&resp)))
+    async fn get_version(&self) -> Result<CallToolResult, ErrorData> {
+        let resp = get_version_response_proto_to_json(&self.session.get_version());
+        let value = serde_json::to_value(resp)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        let mut tool_result = CallToolResult::structured(value);
+        tool_result.meta = Some(status_meta(&self.session.backend_status()));
+        Ok(tool_result)
     }
 
-    /// Runs workspace symbol resolution (`Racli.Search`).
+    /// Runs `racli search`.
     #[tool(
         name = "search",
-        description = "Runs LSP workspace/symbol via rust-analyzer with the racli merged query semantics (mirrors gRPC Racli.Search). An empty query lists all symbols up to the server's result limit; set kind to all_symbols to include functions, methods, constants, and fields, and scope to workspace_and_dependencies to include dependency crates."
+        description = "Fuzzy workspace symbol search (racli search). Returns one `name [KIND] path:line:col` line per symbol, 1-based. Only types unless kind is all_symbols (adds functions, methods, constants, fields); scope workspace_and_dependencies adds dependencies and std; exact keeps only exact names. `|` separates alternative patterns."
     )]
-    async fn search_symbols(
+    async fn search(
         &self,
-        Parameters(req): Parameters<SearchRequestJson>,
-    ) -> Result<Json<SearchResponseJson>, ErrorData> {
-        let resp = self
-            .session
-            .search(
-                req.query,
-                SymbolSearchOptions {
-                    kind: req.kind,
-                    scope: req.scope,
-                },
-            )
-            .await
-            .map_err(Self::racli_rpc_error_to_mcp)?;
-        Ok(Json(search_response_proto_to_json(&resp)))
+        Parameters(params): Parameters<SearchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = params.into_args();
+        let mut out = CommandOutput::default();
+        let result = run_search(self.session.as_ref(), &args, &mut out).await;
+        self.tool_result(&out, result)
     }
 
-    /// Runs go-to-definition at a path + LSP position (`Racli.FindDefinition`).
+    /// Runs `racli find-definition`.
     #[tool(
         name = "find_definition",
-        description = "Runs LSP textDocument/definition for file_path and 0-based line/character UTF-16 (mirrors gRPC Racli.FindDefinition)."
+        description = "Where symbols are defined (racli find-definition), by names such as `mkfifo`, `sys::mkfifo` or `Fifo::name`, and/or a 1-based position (path, line, character). Returns `path:line:col: source line` per definition, under a header per name. hover adds the signature and doc comment; source adds the whole body. kind and glob narrow the definitions names find."
     )]
     async fn find_definition(
         &self,
-        Parameters(req): Parameters<FindDefinitionRequestJson>,
-    ) -> Result<Json<FindDefinitionResponseJson>, ErrorData> {
-        let resp = self
-            .session
-            .find_definition(req.file_path, req.line, req.character)
-            .await
-            .map_err(Self::racli_rpc_error_to_mcp)?;
-        Ok(Json(find_definition_response_proto_to_json(&resp)))
+        Parameters(params): Parameters<FindDefinitionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = match params.into_args() {
+            Ok(args) => args,
+            Err(reason) => return Ok(self.rejected(reason)),
+        };
+        let mut out = CommandOutput::default();
+        let result = run_find_definition(self.session.as_ref(), &args, &mut out).await;
+        self.tool_result(&out, result)
     }
 
-    /// Lists references (declaration included) at a path + LSP position (`Racli.FindReferences`).
+    /// Runs `racli find-references`.
     #[tool(
         name = "find_references",
-        description = "Runs LSP textDocument/references (declaration included) for file_path and 0-based line/character UTF-16 (mirrors gRPC Racli.FindReferences)."
+        description = "Every use of symbols, declaration included (racli find-references), by names such as `mkfifo`, `sys::mkfifo` or `Fifo::name`, and/or a 1-based position (path, line, character). Returns `path:line:col: source line` per reference, under a header per definition. kind and glob narrow the definitions names find."
     )]
     async fn find_references(
         &self,
-        Parameters(req): Parameters<FindReferencesRequestJson>,
-    ) -> Result<Json<FindReferencesResponseJson>, ErrorData> {
-        let resp = self
-            .session
-            .find_references(req.file_path, req.line, req.character)
-            .await
-            .map_err(Self::racli_rpc_error_to_mcp)?;
-        Ok(Json(find_references_response_proto_to_json(&resp)))
+        Parameters(params): Parameters<PositionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = match params.into_find_references_args() {
+            Ok(args) => args,
+            Err(reason) => return Ok(self.rejected(reason)),
+        };
+        let mut out = CommandOutput::default();
+        let result = run_find_references(self.session.as_ref(), &args, &mut out).await;
+        self.tool_result(&out, result)
     }
 
-    /// Resolves trait/type implementations (or trait-method overrides) at a path + LSP position (`Racli.FindImplementations`).
+    /// Runs `racli find-implementations`.
     #[tool(
         name = "find_implementations",
-        description = "Runs LSP textDocument/implementation for file_path and 0-based line/character UTF-16 (mirrors gRPC Racli.FindImplementations). On a trait or type, returns its impl blocks; on a trait method, returns per-impl overrides; invoked from inside an impl block itself, typically returns nothing."
+        description = "A trait's or type's impl blocks, or a trait method's overrides (racli find-implementations), by names or a 1-based position (path, line, character). Returns `path:line:col: source line` per implementation. Nothing from inside an impl block."
     )]
     async fn find_implementations(
         &self,
-        Parameters(req): Parameters<FindImplementationsRequestJson>,
-    ) -> Result<Json<FindImplementationsResponseJson>, ErrorData> {
-        let resp = self
-            .session
-            .find_implementations(req.file_path, req.line, req.character)
-            .await
-            .map_err(Self::racli_rpc_error_to_mcp)?;
-        Ok(Json(find_implementations_response_proto_to_json(&resp)))
+        Parameters(params): Parameters<PositionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = match params.into_find_implementations_args() {
+            Ok(args) => args,
+            Err(reason) => return Ok(self.rejected(reason)),
+        };
+        let mut out = CommandOutput::default();
+        let result = run_find_implementations(self.session.as_ref(), &args, &mut out).await;
+        self.tool_result(&out, result)
     }
 
-    /// Walks the call hierarchy (callers and/or callees) at a path + LSP position, resolving one
-    /// item via `prepareCallHierarchy` then recursing up to `depth` levels of
-    /// `incomingCalls`/`outgoingCalls`. Pair with `find_references` for full blast-radius /
-    /// rename-safety analysis: `find_references` finds every usage site, `call_hierarchy` follows
-    /// the call graph through those sites.
+    /// Runs `racli call-hierarchy`. Pair with `find_references` for blast-radius analysis:
+    /// `find_references` finds every use, `call_hierarchy` follows the call graph.
     #[tool(
         name = "call_hierarchy",
-        description = "Runs LSP prepareCallHierarchy then walks incoming/outgoingCalls up to `depth` levels (default 1) for file_path and 0-based line/character UTF-16. direction is incoming, outgoing, or both (default). Pair with find_references for full blast-radius / rename-safety analysis."
+        description = "Callers and callees of functions (racli call-hierarchy), by names or a 1-based position (path, line, character). Returns an indented tree of `name (KIND) path:line:col`. direction is incoming, outgoing or both (default); depth is how many levels (default 1). Pair with find_references for blast-radius analysis."
     )]
     async fn call_hierarchy(
         &self,
-        Parameters(req): Parameters<CallHierarchyRequestJson>,
-    ) -> Result<Json<CallHierarchyOutput>, ErrorData> {
-        call_hierarchy::run_call_hierarchy(
-            self.session.as_ref(),
-            req.file_path,
-            req.line,
-            req.character,
-            req.direction.unwrap_or(Direction::Both),
-            req.depth.unwrap_or(1),
-        )
-        .await
-        .map(Json)
-        .map_err(Self::call_hierarchy_error_to_mcp)
+        Parameters(params): Parameters<CallHierarchyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = match params.into_args() {
+            Ok(args) => args,
+            Err(reason) => return Ok(self.rejected(reason)),
+        };
+        let mut out = CommandOutput::default();
+        let session = self.session.as_ref();
+        let result = run_call_hierarchy_command(session, session, &args, &mut out).await;
+        self.tool_result(&out, result)
     }
 
-    /// Lists the hierarchical symbol outline for a single file (`Racli.DocumentSymbols`).
+    /// Runs `racli document-symbols`.
     #[tool(
         name = "document_symbols",
-        description = "Runs LSP textDocument/documentSymbol for file_path and returns a hierarchical symbol outline (mirrors gRPC Racli.DocumentSymbols)."
+        description = "A file's symbol outline (racli document-symbols), instead of reading the whole file. Returns an indented tree of `name (KIND) start-end` with 1-based ranges."
     )]
     async fn document_symbols(
         &self,
-        Parameters(req): Parameters<DocumentSymbolsRequestJson>,
-    ) -> Result<Json<DocumentSymbolsResponseJson>, ErrorData> {
-        let resp = self
-            .session
-            .document_symbols(req.file_path)
-            .await
-            .map_err(Self::racli_rpc_error_to_mcp)?;
-        Ok(Json(document_symbols_response_proto_to_json(&resp)))
+        Parameters(params): Parameters<DocumentSymbolsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = params.into_args();
+        let mut out = CommandOutput::default();
+        let result = run_document_symbols(self.session.as_ref(), &args, &mut out).await;
+        self.tool_result(&out, result)
     }
 }
 

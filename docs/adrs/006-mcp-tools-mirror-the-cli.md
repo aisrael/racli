@@ -63,7 +63,7 @@ The position tools, `search` and `document_symbols` take `format`, as the CLI's 
   given (ADR 001 decision 5). Like the CLI's JSON, it keeps LSP's URIs and 0-based ranges (ADR 002
   decision 3).
 
-Any other value is an `invalid_params` error. The schema lists the values each tool takes, so a
+Any other value is rejected (decision 5). The schema lists the values each tool takes, so a
 format added later, such as `csv` for `search` as on the CLI, is one more value rather than another
 parameter.
 
@@ -73,8 +73,8 @@ don't declare an `outputSchema` or return `structuredContent`.
 
 ### 3. Positions are 1-based, given with `path`
 
-`line` and `character` are 1-based, `character` in UTF-16 units, as on the CLI. `0` is an
-`invalid_params` error. This replaces ADR 002 decision 3 for MCP inputs.
+`line` and `character` are 1-based, `character` in UTF-16 units, as on the CLI. `0` is rejected
+(decision 5). This replaces ADR 002 decision 3 for MCP inputs.
 
 The file is given with `path`, not `filePath`, matching `--path`. As on the CLI, `path`, `line`
 and `character` go together, and names can be given with or without them. A relative `path` is
@@ -93,9 +93,12 @@ incomplete`. As in ADR 004 decision 2, requests are never refused or delayed.
 
 ### 5. Errors follow the CLI's
 
-- What the CLI reports as a usage error is an `invalid_params` error: a name that isn't a Rust
-  path, part of a position, `kind` or `glob` without a name, an invalid glob, and neither names
-  nor a position. Messages name the MCP parameters, such as `path`, rather than the CLI options.
+- Arguments the command would reject are a tool result with `isError: true` and the reason, as
+  rmcp already returns for arguments that don't match a tool's schema, such as an unknown
+  `format`. They are what the CLI reports as a usage error: a name that isn't a Rust path, part of
+  a position, `0` for `line` or `character`, `kind` or `glob` without a name, an invalid glob, and
+  neither names nor a position. Messages name the MCP parameters, such as `path`, rather than the
+  CLI options. The caller, usually a model, reads the reason and can retry.
 - A name that finds nothing doesn't stop the others (ADR 001 decision 7). Its message, with the
   closest symbols, goes in the second text block. If no name or position found anything, the
   result has `isError: true`, so the caller sees the call failed and reads the suggestions.
@@ -122,6 +125,9 @@ incomplete`. As in ADR 004 decision 2, requests are never refused or delayed.
 - **Keeping `filePath`.** Rejected: a caller still sending 0-based positions would get answers one
   line and column off without knowing. With `path`, the old call fails, because `line` and
   `character` arrive without `path`.
+- **Rejected arguments as a JSON-RPC `invalid_params` error.** Rejected: rmcp returns arguments
+  that don't match a tool's schema as a tool result with `isError`, so the caller can read the
+  reason and retry, and racli's own checks would then report bad input a second way.
 - **A status field in each result.** Rejected: it would be in the text the model reads on every
   call, and in the JSON shape, for a state that is usually `ready`. The warning block covers the
   case that matters.

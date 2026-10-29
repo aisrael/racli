@@ -70,6 +70,7 @@ pub async fn run_find_references(
         ))
         .await?
         .map_err(CommandError::Failed)?;
+        out.mark_answered();
         results.push((target.symbol, resp));
     }
 

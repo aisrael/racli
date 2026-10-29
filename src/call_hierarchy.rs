@@ -441,24 +441,6 @@ pub async fn run_call_hierarchy(
     })
 }
 
-/// `CallHierarchyRequest` JSON body for MCP `call_hierarchy`.
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CallHierarchyRequestJson {
-    /// Resolved on the server; same rules as gRPC `PrepareCallHierarchyRequest::file_path`.
-    pub file_path: String,
-    /// Zero-based line (LSP `Position`).
-    pub line: u32,
-    /// Zero-based UTF-16 character offset on the line.
-    pub character: u32,
-    /// Which side of the call graph to walk (default `both`).
-    #[serde(default)]
-    pub direction: Option<Direction>,
-    /// How many recursive levels of callers/callees to fetch (default `1`).
-    #[serde(default)]
-    pub depth: Option<u32>,
-}
-
 /// Runs the call-hierarchy walk from each definition the symbol names find and from the `--path`
 /// position, if given, and writes the result to `out` as JSON or `--text`. `backend` finds the
 /// definitions, and `calls` walks from them.
@@ -493,6 +475,7 @@ pub async fn run_call_hierarchy_command(
         .await?;
         match walked {
             Ok(result) => {
+                out.mark_answered();
                 for error in &result.errors {
                     out.note(error.clone());
                 }

@@ -86,6 +86,7 @@ pub async fn run_document_symbols(
     let resp = within_timeout(backend.document_symbols(&file_path))
         .await?
         .map_err(CommandError::Failed)?;
+    out.mark_answered();
     match args.print_kind() {
         DocumentSymbolsPrintKind::Text => write_document_symbols_text(out, &resp),
         DocumentSymbolsPrintKind::Json => write_document_symbols_json(out, &resp),

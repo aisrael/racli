@@ -102,6 +102,7 @@ pub async fn run_search(
     let mut resp = within_timeout(backend.search(&args.query, options))
         .await?
         .map_err(CommandError::Failed)?;
+    out.mark_answered();
     if args.exact {
         keep_exact_names(&mut resp, &args.query);
     }

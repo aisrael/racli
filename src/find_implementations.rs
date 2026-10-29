@@ -72,6 +72,7 @@ pub async fn run_find_implementations(
         ))
         .await?
         .map_err(CommandError::Failed)?;
+        out.mark_answered();
         results.push((target.symbol, resp));
     }
 

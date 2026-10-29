@@ -209,7 +209,7 @@ pub fn exit_with_usage_error(message: &str) -> ! {
 }
 
 /// Whether `arg` is a Rust path such as `mkfifo`, `sys::mkfifo`, `Fifo::name` or `r#type`.
-fn is_rust_path(arg: &str) -> bool {
+pub(crate) fn is_rust_path(arg: &str) -> bool {
     arg.split("::").all(|segment| {
         let ident = segment.strip_prefix("r#").unwrap_or(segment);
         let mut chars = ident.chars();

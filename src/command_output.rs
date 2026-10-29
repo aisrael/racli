@@ -26,9 +26,37 @@ pub enum CommandError {
 pub struct CommandOutput {
     stdout: String,
     stderr: Vec<StderrLine>,
+    /// Whether the backend answered for at least one target.
+    answered: bool,
 }
 
 impl CommandOutput {
+    /// What the command printed on standard output.
+    pub fn stdout(&self) -> &str {
+        &self.stdout
+    }
+
+    /// The standard error lines, without the CLI's `racli <command>` prefixes.
+    pub fn stderr_messages(&self) -> Vec<&str> {
+        self.stderr
+            .iter()
+            .map(|line| match line {
+                StderrLine::Backend(message) | StderrLine::Command(message) => message.as_str(),
+            })
+            .collect()
+    }
+
+    /// Whether the backend answered for at least one target, so the command found something to
+    /// report, even if that's no results.
+    pub fn answered(&self) -> bool {
+        self.answered
+    }
+
+    /// Records that the backend answered for a target.
+    pub fn mark_answered(&mut self) {
+        self.answered = true;
+    }
+
     /// Appends `text` to standard output.
     pub fn print(&mut self, text: impl AsRef<str>) {
         self.stdout.push_str(text.as_ref());
