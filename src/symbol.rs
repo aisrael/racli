@@ -3,18 +3,19 @@
 //! run from names as well as, or instead of, a file position.
 
 use std::collections::HashSet;
-use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::client::Client;
-use crate::client::ClientError;
+use crate::command_output::CommandError;
+use crate::command_output::CommandOutput;
+use crate::command_output::within_timeout;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspRange;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::lsp_workspace_symbol_response::Payload;
+use crate::racli_backend::RacliBackend;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
@@ -114,8 +115,8 @@ pub struct SymbolResultJson<'a, T: Serialize> {
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveSymbolError {
     /// The symbol search RPC failed.
-    #[error(transparent)]
-    Search(#[from] ClientError),
+    #[error("{0}")]
+    Search(String),
     /// No symbol has that name, or none passes `--kind` and `--glob`.
     #[error("{}", not_found_message(.name, .filtered, .truncated, .suggestions))]
     NotFound {
@@ -208,7 +209,7 @@ pub fn exit_with_usage_error(message: &str) -> ! {
 }
 
 /// Whether `arg` is a Rust path such as `mkfifo`, `sys::mkfifo`, `Fifo::name` or `r#type`.
-fn is_rust_path(arg: &str) -> bool {
+pub(crate) fn is_rust_path(arg: &str) -> bool {
     arg.split("::").all(|segment| {
         let ident = segment.strip_prefix("r#").unwrap_or(segment);
         let mut chars = ident.chars();
@@ -231,14 +232,36 @@ pub struct Targets {
     /// Whether any symbol name was given. Then every target is labelled with its symbol, and the
     /// results are grouped by it.
     pub grouped: bool,
-    /// Names that found no definition, and positions with no symbol, which don't stop the others.
+    /// Names that found no definition, and positions with no file or no symbol, which don't stop
+    /// the others.
     pub errors: Vec<String>,
+}
+
+/// Checks a position command's names and position, then finds where it runs from, within 60
+/// seconds. Names that find nothing, and positions with no symbol, go to `out`'s standard error.
+pub async fn command_targets(
+    backend: &dyn RacliBackend,
+    names: &[String],
+    path: Option<&Path>,
+    line: Option<u32>,
+    character: Option<u32>,
+    args: &SymbolArgs,
+    out: &mut CommandOutput,
+) -> Result<Targets, CommandError> {
+    let specs = classify(names, path, line, character, args).map_err(CommandError::Usage)?;
+    let mut found = within_timeout(targets(backend, args, specs))
+        .await?
+        .map_err(CommandError::Failed)?;
+    for err in found.errors.drain(..) {
+        out.backend_error(err);
+    }
+    Ok(found)
 }
 
 /// Finds where a position command runs from: each definition the names find, and the position.
 /// A definition found twice, by two names or by a name and the position, is run once.
 pub async fn targets(
-    client: &Client,
+    backend: &dyn RacliBackend,
     args: &SymbolArgs,
     specs: Vec<TargetSpec>,
 ) -> Result<Targets, String> {
@@ -259,7 +282,7 @@ pub async fn targets(
     let mut seen = HashSet::new();
     for spec in specs {
         match spec {
-            TargetSpec::Name(name) => match resolve_symbol(client, &name, &filter).await {
+            TargetSpec::Name(name) => match resolve_symbol(backend, &name, &filter).await {
                 Ok((matches, truncated)) => {
                     if truncated {
                         result.errors.push(format!("{name}: {TRUNCATED_NOTE}"));
@@ -288,13 +311,19 @@ pub async fn targets(
                 line,
                 character,
             } => {
-                let file_path = path
-                    .canonicalize()
-                    .map_err(|e| format!("cannot canonicalize {}: {e}", path.display()))?
-                    .display()
-                    .to_string();
+                // A file that can't be found is an error for this target only, as an unknown
+                // name is, so the names still run.
+                let file_path = match path.canonicalize() {
+                    Ok(file_path) => file_path.display().to_string(),
+                    Err(e) => {
+                        result
+                            .errors
+                            .push(format!("cannot canonicalize {}: {e}", path.display()));
+                        continue;
+                    }
+                };
                 let symbol = if grouped {
-                    match symbol_at(client, &file_path, line, character).await? {
+                    match symbol_at(backend, &file_path, line, character).await? {
                         Some(m) if !seen.insert((m.uri.clone(), m.range)) => continue,
                         Some(m) => Some(m),
                         None => {
@@ -324,16 +353,12 @@ pub async fn targets(
 
 /// The symbol whose definition the position refers to, to label a position given with names.
 async fn symbol_at(
-    client: &Client,
+    backend: &dyn RacliBackend,
     file_path: &str,
     line: u32,
     character: u32,
 ) -> Result<Option<SymbolMatch>, String> {
-    let definition = client
-        .find_definition(file_path, line, character)
-        .await
-        .map(|reply| reply.value)
-        .map_err(|e| e.to_string())?;
+    let definition = backend.find_definition(file_path, line, character).await?;
     let Some((uri, lsp_range)) = definition
         .locations
         .into_iter()
@@ -350,11 +375,9 @@ async fn symbol_at(
     else {
         return Ok(None);
     };
-    let outline = client
-        .document_symbols(path.display().to_string())
-        .await
-        .map(|reply| reply.value)
-        .map_err(|e| e.to_string())?;
+    let outline = backend
+        .document_symbols(&path.display().to_string())
+        .await?;
     let Some(symbol) = outline_symbol_at(&outline.symbols, &lsp_range) else {
         return Ok(None);
     };
@@ -363,12 +386,7 @@ async fn symbol_at(
         SymbolSearchScope::Workspace,
         SymbolSearchScope::WorkspaceAndDependencies,
     ] {
-        let found = exact_matches(
-            search(client, &symbol.name, scope)
-                .await
-                .map_err(|e| e.to_string())?,
-            &symbol.name,
-        );
+        let found = exact_matches(search(backend, &symbol.name, scope).await?, &symbol.name);
         if let Some(m) = found.into_iter().find(|m| m.uri == uri && m.range == range) {
             return Ok(Some(m));
         }
@@ -428,7 +446,7 @@ impl SymbolFilter<'_> {
 /// Finds the definitions named `name`, searching the workspace first and then its dependencies.
 /// Also says whether the search that found them was cut to the server's limit.
 async fn resolve_symbol(
-    client: &Client,
+    backend: &dyn RacliBackend,
     name: &str,
     filter: &SymbolFilter<'_>,
 ) -> Result<(Vec<SymbolMatch>, bool), ResolveSymbolError> {
@@ -441,7 +459,9 @@ async fn resolve_symbol(
         SymbolSearchScope::WorkspaceAndDependencies,
     ] {
         // rust-analyzer resolves a module path such as `raw::mkfifo` itself.
-        let results = search(client, name, scope).await?;
+        let results = search(backend, name, scope)
+            .await
+            .map_err(ResolveSymbolError::Search)?;
         let mut truncated = results.truncated;
         if suggestions.is_empty() {
             suggestions = all_symbols(results.clone());
@@ -451,7 +471,9 @@ async fn resolve_symbol(
             && let Some(container) = container
         {
             // It doesn't resolve `Type::member`, so match the container's name instead.
-            let leaf_results = search(client, leaf, scope).await?;
+            let leaf_results = search(backend, leaf, scope)
+                .await
+                .map_err(ResolveSymbolError::Search)?;
             truncated |= leaf_results.truncated;
             if scope == SymbolSearchScope::Workspace {
                 suggestions = all_symbols(leaf_results.clone());
@@ -489,18 +511,15 @@ async fn resolve_symbol(
 
 /// Runs `workspace/symbol` for `query` over all symbol kinds in `scope`.
 async fn search(
-    client: &Client,
+    backend: &dyn RacliBackend,
     query: &str,
     scope: SymbolSearchScope,
-) -> Result<SearchResponse, ClientError> {
+) -> Result<SearchResponse, String> {
     let options = SymbolSearchOptions {
         kind: Some(SymbolSearchKind::AllSymbols),
         scope: Some(scope),
     };
-    client
-        .search_with_options(query, options)
-        .await
-        .map(|reply| reply.value)
+    backend.search(query, options).await
 }
 
 /// Splits `a::b::c` into its qualifier `a::b` and its name `c`.
@@ -580,14 +599,15 @@ pub(crate) fn range_json(range: LspRange) -> Option<RangeJson> {
     })
 }
 
-/// Prints each definition's result as JSON: `[{"symbol": …, "result": …}]`.
-pub fn print_symbol_results_json<T: Serialize>(command: &str, results: &[SymbolResultJson<'_, T>]) {
-    let mut stdout = std::io::stdout().lock();
-    if let Err(e) = serde_json::to_writer(&mut stdout, results) {
-        eprintln!("racli {command}: failed to serialize JSON: {e}");
-        return;
+/// Writes each definition's result as JSON: `[{"symbol": …, "result": …}]`.
+pub fn write_symbol_results_json<T: Serialize>(
+    out: &mut CommandOutput,
+    results: &[SymbolResultJson<'_, T>],
+) {
+    match serde_json::to_string(results) {
+        Ok(json) => out.println(json),
+        Err(e) => out.note(format!("failed to serialize JSON: {e}")),
     }
-    let _ = writeln!(stdout);
 }
 
 #[cfg(test)]

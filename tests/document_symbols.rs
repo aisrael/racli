@@ -48,9 +48,9 @@ async fn search_until_non_empty(sock: &Path) {
     }
 }
 
-/// Integration test: gRPC `DocumentSymbols` returns `Core` in `src/server.rs` with its methods present in its subtree.
+/// Integration test: gRPC `DocumentSymbols` returns the operations in `src/server.rs` as top-level symbols.
 #[tokio::test]
-async fn grpc_document_symbols_server_rs_core_struct() {
+async fn grpc_document_symbols_server_rs_operations() {
     if std::process::Command::new("rust-analyzer")
         .arg("--version")
         .status()
@@ -94,8 +94,7 @@ async fn grpc_document_symbols_server_rs_core_struct() {
         "expected at least one top-level symbol in src/server.rs"
     );
 
-    // Flatten the tree (depth-first) so `Core`'s methods are found whether rust-analyzer nests
-    // them directly under the `Core` struct symbol or under an intermediate `impl` symbol.
+    // Flatten the tree (depth-first) so the functions are found wherever rust-analyzer nests them.
     fn collect_names<'a>(
         symbols: &'a [racli::proto::racli::LspDocumentSymbol],
         out: &mut Vec<&'a str>,
@@ -108,10 +107,6 @@ async fn grpc_document_symbols_server_rs_core_struct() {
     let mut all_names = Vec::new();
     collect_names(&resp.symbols, &mut all_names);
 
-    assert!(
-        all_names.contains(&"Core"),
-        "expected a `Core` symbol, got {all_names:?}"
-    );
     for expected in [
         "version",
         "search",

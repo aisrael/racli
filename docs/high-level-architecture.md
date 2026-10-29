@@ -41,7 +41,7 @@ The client only speaks gRPC to `racli server`, and finds the server's socket by 
 
 MCP hosts (for example **Cursor**, **Claude Desktop**, or any client that speaks the [Model Context Protocol](https://modelcontextprotocol.io)) register `racli mcp` as an MCP server **command**. When a session needs tools, the host **spawns** that command as a **child process** and drives MCP over the child’s **stdio**: framed JSON-RPC on **stdin** / **stdout**, with **stderr** available for logs.
 
-The MCP child process **starts its own rust-analyzer session** (same LSP `initialize` / `initialized` flow and workspace file watching as `racli server`) and serves tools **in-process**. It does **not** connect to `racli server` over the Unix socket. Tool semantics match the **`Racli` gRPC** API (`GetVersion`, `Search`, `FindDefinition`) but are implemented via the same in-crate `RacliSession` logic as the gRPC server, without dialing the socket.
+The MCP child process **starts its own rust-analyzer session** (same LSP `initialize` / `initialized` flow and workspace file watching as `racli server`) and serves tools **in-process**. It does **not** connect to `racli server` over the Unix socket. Each tool is a **client command** (`search`, `find_definition`, `find_references`, `find_implementations`, `call_hierarchy`, `document_symbols`, plus `get_version`): the command's own code runs against the in-process `RacliCore` instead of a gRPC `Client`, and the tool returns what the command prints. See [ADR 006](adrs/006-mcp-tools-mirror-the-cli.md).
 
 ```mermaid
 sequenceDiagram
@@ -55,7 +55,7 @@ sequenceDiagram
     Mcp-->>Host: MCP tool result on stdio
 ```
 
-Configure the MCP host so the **`racli mcp` working directory** is the intended Rust workspace root (the directory you would `cd` into before running `cargo build`). **`racli server`** remains the path for CLI clients (`racli search`, `racli find-definition`, `racli version`): those commands still use gRPC on the Unix socket.
+Configure the MCP host so the **`racli mcp` working directory** is the intended Rust workspace root (the directory you would `cd` into before running `cargo build`). Relative paths in tool results and parameters are relative to it. **`racli server`** remains the path for CLI clients (`racli search`, `racli find-definition`, `racli version`): those commands still use gRPC on the Unix socket.
 
 ## racli tee
 
@@ -85,6 +85,38 @@ sequenceDiagram
 
 The editor's `shutdown` is acknowledged locally, and `exit` (or stdin EOF) shuts the whole tree down.
 
+## From `main()` to rust-analyzer
+
+The types a request passes through, from the CLI's `main()` to the rust-analyzer child. Structs carry the in-crate traits they implement in `«guillemets»`:
+
+- **`RacliBackend`** (`src/racli_backend.rs`) is the set of operations the client commands use: `search`, `find_definition`, `find_references`, `find_implementations`, `document_symbols`, `hover` and the three call-hierarchy operations (`prepare_call_hierarchy`, `incoming_calls` and `outgoing_calls`). Each command's `run_*` function takes a `&dyn RacliBackend`, so the same code runs over the socket (CLI) or in-process (MCP). See [ADR 006](adrs/006-mcp-tools-mirror-the-cli.md).
+
+```mermaid
+flowchart TD
+    Main["main()<br/>src/main.rs"] --> Run["racli::run()<br/>src/cli.rs<br/>parses the subcommand"]
+
+    Run -->|"client commands<br/>(search, find-references, …)"| CliRun["run_cli_*()<br/>build a Client from the socket path"]
+    Run -->|"racli mcp"| McpRun["MCP server<br/>RacliMcpHandler<br/>(rmcp ServerHandler)"]
+    Run -->|"racli server / tee"| ServerRun["RootActor → GrpcFrontend<br/>(see actor tree)"]
+
+    CliRun --> Client["<b>Client</b><br/>«RacliBackend»<br/>src/client.rs"]
+    Client -->|"RacliClient (tonic stub)<br/>gRPC over /tmp/racli-#lt;hash#gt;.sock"| Grpc
+
+    ServerRun --> Grpc["<b>RacliGrpc</b><br/>tonic Racli service<br/>src/grpc_server.rs<br/>holds Arc#lt;RacliCore#gt;"]
+    Grpc --> Session
+    McpRun -->|"Arc#lt;RacliCore#gt;,<br/>no socket"| Session
+
+    Session["<b>RacliCore</b><br/>«RacliBackend»<br/>src/racli_core.rs"]
+    Session -->|"ractor::call!(RustAnalyzerMsg)"| Actor["<b>RustAnalyzerActor</b><br/>mailbox serializes LSP traffic<br/>src/actors/rust_analyzer.rs"]
+    Actor -->|"server::search(), find_definition(), …<br/>free functions, src/server.rs"| RAS["<b>RustAnalyzerSession</b><br/>owns the child process<br/>src/rust_analyzer.rs"]
+    RAS --> Lsp["<b>LspClient</b><br/>LSP over stdio<br/>src/lsp_client.rs"]
+    Lsp --> RA["rust-analyzer<br/>(child process)"]
+```
+
+- **`Client` and `RacliCore` implement the same trait for different reasons.** `Client` forwards each operation over the socket to a server that does the work. `RacliCore` does the work itself: it calls the actor that owns rust-analyzer. `RacliGrpc` is a thin adapter: it receives each gRPC request and calls the `RacliCore` it holds.
+- **`RacliCore` is shared.** The socket server (`racli server`, `racli tee`) and `racli mcp` each build one and use it from their front end.
+- **`RustAnalyzerSession` is the only type that owns the child process.** `RacliCore` holds a handle to the actor that owns the `RustAnalyzerSession`, not the session itself.
+
 ## Internal actor tree
 
 Inside `racli server` and `racli mcp`, long-lived work is supervised by [ractor](https://docs.rs/ractor) actors (`src/actors/`):
@@ -93,12 +125,15 @@ Inside `racli server` and `racli mcp`, long-lived work is supervised by [ractor]
 flowchart TD
     Root[RootActor] --> Backend[BackendSupervisor]
     Root --> Frontend["GrpcFrontend | McpFrontend"]
-    Backend --> RA["RustAnalyzerActor<br/>(owns the rust-analyzer child)"]
+    Backend --> RA["RustAnalyzerActor<br/>(owns RustAnalyzerSession,<br/>and with it the rust-analyzer child)"]
     Backend -.-> Watcher["FileWatcherActor<br/>(notify → didChangeWatchedFiles)<br/>notify feature only"]
+    Backend -.->|"creates the shared Arc#lt;RacliCore#gt;"| Session["RacliCore<br/>«RacliBackend»"]
+    Frontend -.->|"uses"| Session
+    Session -.->|"ractor::call!"| RA
 ```
 
 - **File watching:** by default rust-analyzer watches the workspace itself (`files.watcher: "server"`), and there is no `FileWatcherActor`. Built with the `notify` feature, racli starts its own watcher instead and sends rust-analyzer `workspace/didChangeWatchedFiles`. See [ADR 005](adrs/005-file-watching-by-rust-analyzer.md).
 - **Startup:** rust-analyzer is spawned and LSP-initialized, then the file watcher starts (with the `notify` feature), then the front end binds the Unix socket (gRPC) or completes the MCP handshake. A failure at any step tears down what already started.
-- **Requests:** gRPC/MCP handlers call `RacliSession`, which sends messages to `RustAnalyzerActor`; its mailbox serializes LSP traffic.
+- **Requests:** gRPC/MCP handlers call `RacliCore`, which sends messages to `RustAnalyzerActor`; its mailbox serializes LSP traffic.
 - **Shutdown** (SIGINT/SIGTERM, gRPC serve error, or MCP stdin EOF) runs in reverse: front end → file watcher, if any (queued events drained) → rust-analyzer (`shutdown`/`exit`, then wait for the child).
 - **Failures:** a crashed backend actor is logged, not restarted; later requests fail with an `Internal` error.

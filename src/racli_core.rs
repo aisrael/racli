@@ -36,7 +36,7 @@ use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
-use crate::server::Core;
+use crate::server;
 
 /// Mirrors gRPC [`tonic::Status`] intent for callers that are not tonic-specific.
 #[derive(Debug, thiserror::Error)]
@@ -121,26 +121,23 @@ fn passthrough_params(
         .map_err(|e| RacliRpcError::InvalidArgument(format!("invalid params_json: {e}")))
 }
 
-/// Shared [`Core`] plus a handle to the rust-analyzer actor that owns the live LSP session.
-pub struct RacliSession {
-    core: Core,
+/// A handle to the rust-analyzer actor that owns the live LSP session, plus the session's `serverInfo`.
+pub struct RacliCore {
     lsp_server_info: LspServerInfo,
     initialize_result: Value,
     events: Arc<LspEvents>,
     rust_analyzer: ActorRef<RustAnalyzerMsg>,
 }
 
-impl RacliSession {
+impl RacliCore {
     /// Builds a session from an initialized rust-analyzer actor and its LSP `serverInfo`.
     pub(crate) fn new(
-        core: Core,
         lsp_server_info: LspServerInfo,
         initialize_result: Value,
         events: Arc<LspEvents>,
         rust_analyzer: ActorRef<RustAnalyzerMsg>,
     ) -> Self {
         Self {
-            core,
             lsp_server_info,
             initialize_result,
             events,
@@ -206,7 +203,7 @@ impl RacliSession {
 
     /// Returns protobuf [`GetVersionResponse`] (`Racli.GetVersion`).
     pub fn get_version(&self) -> GetVersionResponse {
-        let version = self.core.version();
+        let version = server::version();
         let lsp_server_info = self.lsp_server_info.clone();
         GetVersionResponse {
             version,

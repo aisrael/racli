@@ -12,7 +12,7 @@
 //!
 //! Children start top to bottom and stop in reverse order.
 
-/// [`backend::BackendSupervisor`]: owns the rust-analyzer and file watcher actors plus the shared [`crate::racli_session::RacliSession`].
+/// [`backend::BackendSupervisor`]: owns the rust-analyzer and file watcher actors plus the shared [`crate::racli_core::RacliCore`].
 pub(crate) mod backend;
 /// [`file_watcher::FileWatcherActor`]: forwards workspace filesystem changes to rust-analyzer.
 #[cfg(feature = "notify")]

@@ -39,9 +39,9 @@ use crate::proto::racli::PrepareCallHierarchyResponse;
 use crate::proto::racli::SearchRequest;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::racli_server::Racli;
-use crate::racli_session::RacliRpcError;
-use crate::racli_session::RacliSession;
-use crate::racli_session::symbol_search_options_from_proto;
+use crate::racli_core::RacliCore;
+use crate::racli_core::RacliRpcError;
+use crate::racli_core::symbol_search_options_from_proto;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
@@ -113,15 +113,15 @@ fn racli_rpc_error_to_status(err: RacliRpcError) -> Status {
     }
 }
 
-/// tonic service implementation that forwards RPCs to [`RacliSession`].
+/// tonic service implementation that forwards RPCs to [`RacliCore`].
 #[derive(Clone)]
 pub struct RacliGrpc {
-    session: Arc<RacliSession>,
+    session: Arc<RacliCore>,
 }
 
 impl RacliGrpc {
     /// Creates the tonic service over `session`.
-    pub(crate) fn new(session: Arc<RacliSession>) -> Self {
+    pub(crate) fn new(session: Arc<RacliCore>) -> Self {
         Self { session }
     }
 

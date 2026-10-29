@@ -74,6 +74,10 @@ harness = false
 name = "find_implementations"
 harness = false
 
+[[bench]]
+name = "document_symbols"
+harness = false
+
 [[test]]
 name = "cucumber"
 harness = false
