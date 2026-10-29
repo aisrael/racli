@@ -41,23 +41,37 @@ Feature: racli search
   Scenario: --exact applies to each alternative pattern
     When the following command is run:
       """
-      racli search name|unlink --kind all-symbols --exact --json
+      racli search name|unlink --kind all-symbols --exact --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 4 items
+    And the output should be
+      """
+      flat: 4 symbol(s)
+      name [FUNCTION] fixtures/queue/src/sys.rs:38:8
+      name [FUNCTION] fixtures/queue/src/sys.rs:32:8
+      unlink [FUNCTION] fixtures/queue/src/sys.rs:26:16
+      unlink [FUNCTION] fixtures/queue/src/sys.rs:11:8
+      """
 
   Scenario: --exact keeps a module path's symbol
     When the following command is run:
       """
-      racli search sys::mkfifo --kind all-symbols --exact --json
+      racli search sys::mkfifo --kind all-symbols --exact --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 1 item
+    And the output should be
+      """
+      flat: 1 symbol(s)
+      mkfifo [FUNCTION] fixtures/queue/src/sys.rs:3:8
+      """
 
   Scenario: --exact with only a partial name finds nothing
     When the following command is run:
       """
-      racli search mkfif --kind all-symbols --exact --json
+      racli search mkfif --kind all-symbols --exact --text
       """
     Then it should exit with status code 0
-    And the JSON output should be an array of 0 items
+    And the output should be
+      """
+      flat: 0 symbol(s)
+      """
