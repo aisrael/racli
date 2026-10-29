@@ -349,6 +349,8 @@ impl DocumentSymbolsParams {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -370,5 +372,147 @@ mod tests {
         assert_eq!(params.kind, None);
         assert_eq!(params.scope, None);
         assert_eq!(params.format, Format::Text);
+    }
+
+    /// Converts `arguments` into `racli find-references` arguments, as the `find_references` tool does.
+    fn find_references(arguments: serde_json::Value) -> Result<FindReferencesArgs, String> {
+        serde_json::from_value::<PositionParams>(arguments)
+            .unwrap()
+            .into_find_references_args()
+    }
+
+    /// The reason `arguments` are rejected.
+    fn rejection(arguments: serde_json::Value) -> String {
+        find_references(arguments)
+            .err()
+            .expect("expected the arguments to be rejected")
+    }
+
+    #[test]
+    fn arguments_the_cli_would_reject_are_rejected_naming_mcp_parameters() {
+        let cases = [
+            (
+                json!({"path": "src/sys.rs", "line": 0, "character": 8}),
+                "1-based",
+            ),
+            (
+                json!({"path": "src/sys.rs", "line": 3, "character": 0}),
+                "1-based",
+            ),
+            (
+                json!({"path": "src/sys.rs", "line": 3}),
+                "path, line and character are given together",
+            ),
+            (
+                json!({"filePath": "src/sys.rs", "line": 3, "character": 8}),
+                "path, line and character are given together",
+            ),
+            (
+                json!({}),
+                "give symbol names (names), or a position (path, line and character)",
+            ),
+            (
+                json!({"kind": "function", "path": "src/sys.rs", "line": 3, "character": 8}),
+                "kind and glob only apply to symbol names",
+            ),
+            (
+                json!({"glob": "src/**", "path": "src/sys.rs", "line": 3, "character": 8}),
+                "kind and glob only apply to symbol names",
+            ),
+            (
+                json!({"names": ["src/sys.rs"]}),
+                "src/sys.rs isn't a Rust name; for a position in a file, give path, line and character",
+            ),
+            (
+                json!({"names": ["mkfifo"], "glob": "["}),
+                "glob \"[\" is invalid",
+            ),
+        ];
+        for (arguments, expected) in cases {
+            let reason = rejection(arguments.clone());
+            assert!(reason.contains(expected), "{arguments}: {reason}");
+            assert!(
+                !reason.contains("--"),
+                "{arguments}: names a CLI option: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn names_and_a_position_pass_through_one_based() {
+        let args = find_references(json!({
+            "names": ["sys::mkfifo", "Fifo::name"],
+            "path": "src/main.rs",
+            "line": 81,
+            "character": 22,
+            "kind": "function",
+            "glob": "src/**"
+        }))
+        .unwrap();
+        assert_eq!(args.names, ["sys::mkfifo", "Fifo::name"]);
+        assert_eq!(args.path, Some(PathBuf::from("src/main.rs")));
+        assert_eq!((args.line, args.character), (Some(81), Some(22)));
+        assert_eq!(args.symbol.kind.as_deref(), Some("function"));
+        assert_eq!(
+            args.symbol.glob.map(|g| g.as_str().to_string()),
+            Some("src/**".into())
+        );
+        assert!(args.text);
+    }
+
+    #[test]
+    fn format_picks_text_or_json_and_rejects_anything_else() {
+        assert!(
+            !find_references(json!({"names": ["mkfifo"], "format": "json"}))
+                .unwrap()
+                .text
+        );
+        assert!(
+            serde_json::from_value::<PositionParams>(json!({"names": ["mkfifo"], "format": "csv"}))
+                .is_err()
+        );
+
+        let search = |format: &str| {
+            serde_json::from_value::<SearchParams>(json!({"query": "Fifo", "format": format}))
+                .unwrap()
+                .into_args()
+                .output_format
+        };
+        assert_eq!(search("text"), Some(SearchOutputFormat::Text));
+        assert_eq!(search("json"), Some(SearchOutputFormat::Json));
+
+        let outline =
+            serde_json::from_value::<DocumentSymbolsParams>(json!({"path": "src/sys.rs"}))
+                .unwrap()
+                .into_args();
+        assert_eq!(
+            outline.output_format,
+            Some(DocumentSymbolsOutputFormat::Text)
+        );
+    }
+
+    #[test]
+    fn find_definition_and_call_hierarchy_take_their_own_options() {
+        let definition = serde_json::from_value::<FindDefinitionParams>(
+            json!({"names": ["Named"], "hover": true, "source": true}),
+        )
+        .unwrap()
+        .into_args()
+        .unwrap();
+        assert!(definition.hover && definition.source && definition.text);
+
+        let calls = |arguments| {
+            serde_json::from_value::<CallHierarchyParams>(arguments)
+                .unwrap()
+                .into_args()
+                .unwrap()
+        };
+        let defaults = calls(json!({"names": ["mkfifo"]}));
+        assert_eq!((defaults.direction, defaults.depth), (Direction::Both, 1));
+        let incoming = calls(json!({"names": ["mkfifo"], "direction": "incoming", "depth": 3}));
+        assert_eq!(
+            (incoming.direction, incoming.depth),
+            (Direction::Incoming, 3)
+        );
     }
 }

@@ -104,46 +104,60 @@ impl RacliMcpHandler {
         }
     }
 
-    /// The tool result for a command that wrote `out` and ended with `result` (ADR 006 decisions
-    /// 1, 4 and 5): its standard output, then its standard error and a warning when rust-analyzer
-    /// isn't ready, with the backend status in `_meta`.
+    /// The tool result for a command that wrote `out` and ended with `result`, with the backend's
+    /// current status (see [`command_result`]).
     fn tool_result(
         &self,
         out: &CommandOutput,
         result: Result<(), CommandError>,
     ) -> Result<CallToolResult, ErrorData> {
-        match result {
-            Ok(()) => {}
-            Err(CommandError::Usage(message)) => return Ok(self.rejected(message)),
-            Err(CommandError::Failed(message)) => {
-                return Err(ErrorData::internal_error(message, None));
-            }
-        }
-        let status = self.session.backend_status();
-        let mut content = vec![ContentBlock::text(out.stdout())];
-        let stderr = out.stderr_messages().join("\n");
-        if !stderr.is_empty() {
-            content.push(ContentBlock::text(stderr));
-        }
-        if let Some(warning) = status_warning(&status) {
-            content.push(ContentBlock::text(warning));
-        }
-        let mut tool_result = if out.answered() {
-            CallToolResult::success(content)
-        } else {
-            CallToolResult::error(content)
-        };
-        tool_result.meta = Some(status_meta(&status));
-        Ok(tool_result)
+        command_result(out, result, &self.session.backend_status())
     }
 
-    /// The tool result for arguments the command would reject: `isError`, with the reason, so the
-    /// caller can retry, as rmcp does for arguments that don't match the schema.
+    /// The tool result for arguments the command would reject (see [`rejected_result`]).
     fn rejected(&self, reason: String) -> CallToolResult {
-        let mut tool_result = CallToolResult::error(vec![ContentBlock::text(reason)]);
-        tool_result.meta = Some(status_meta(&self.session.backend_status()));
-        tool_result
+        rejected_result(reason, &self.session.backend_status())
     }
+}
+
+/// The tool result for a command that wrote `out` and ended with `result` (ADR 006 decisions 1, 4
+/// and 5): its standard output, then its standard error and a warning when rust-analyzer isn't
+/// ready, with `status` in `_meta`, and `isError` if the backend answered for no target.
+fn command_result(
+    out: &CommandOutput,
+    result: Result<(), CommandError>,
+    status: &BackendStatus,
+) -> Result<CallToolResult, ErrorData> {
+    match result {
+        Ok(()) => {}
+        Err(CommandError::Usage(message)) => return Ok(rejected_result(message, status)),
+        Err(CommandError::Failed(message)) => {
+            return Err(ErrorData::internal_error(message, None));
+        }
+    }
+    let mut content = vec![ContentBlock::text(out.stdout())];
+    let stderr = out.stderr_messages().join("\n");
+    if !stderr.is_empty() {
+        content.push(ContentBlock::text(stderr));
+    }
+    if let Some(warning) = status_warning(status) {
+        content.push(ContentBlock::text(warning));
+    }
+    let mut tool_result = if out.answered() {
+        CallToolResult::success(content)
+    } else {
+        CallToolResult::error(content)
+    };
+    tool_result.meta = Some(status_meta(status));
+    Ok(tool_result)
+}
+
+/// The tool result for arguments the command would reject: `isError`, with the reason, so the
+/// caller can retry, as rmcp does for arguments that don't match the schema.
+fn rejected_result(reason: String, status: &BackendStatus) -> CallToolResult {
+    let mut tool_result = CallToolResult::error(vec![ContentBlock::text(reason)]);
+    tool_result.meta = Some(status_meta(status));
+    tool_result
 }
 
 /// `_meta` for a tool result: `racli/backend`, and `racli/backendMessage` with `error`.
@@ -332,4 +346,116 @@ pub async fn run_stdio(symbol_search_limit: u32) -> Result<(), ServerError> {
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rmcp::model::ErrorCode;
+    use serde_json::json;
+
+    use super::*;
+
+    /// A result's text blocks, whether it has `isError`, and its `_meta`.
+    fn parts(result: &CallToolResult) -> (Vec<String>, bool, Value) {
+        let value = serde_json::to_value(result).unwrap();
+        let texts = value["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|block| block["text"].as_str().unwrap().to_string())
+            .collect();
+        (texts, value["isError"] == true, value["_meta"].clone())
+    }
+
+    /// The output of a command the backend answered, with one result line.
+    fn answered_output() -> CommandOutput {
+        let mut out = CommandOutput::default();
+        out.println("src/sys.rs:3:8: pub fn mkfifo");
+        out.mark_answered();
+        out
+    }
+
+    #[test]
+    fn a_ready_result_is_stdout_with_the_status_in_meta() {
+        let result = command_result(&answered_output(), Ok(()), &BackendStatus::Ready).unwrap();
+        let (texts, is_error, meta) = parts(&result);
+        assert_eq!(texts, ["src/sys.rs:3:8: pub fn mkfifo\n"]);
+        assert!(!is_error);
+        assert_eq!(meta, json!({"racli/backend": "ready"}));
+    }
+
+    #[test]
+    fn stderr_then_the_indexing_warning_follow_stdout() {
+        let mut out = answered_output();
+        out.backend_error("no symbol named mkfif; closest:\n  mkfifo [FUNCTION] src/sys.rs:3:8");
+        out.note("did you mean mkfifo at src/sys.rs:25:16?");
+        let result = command_result(&out, Ok(()), &BackendStatus::Indexing).unwrap();
+        let (texts, is_error, meta) = parts(&result);
+        assert_eq!(texts.len(), 3);
+        assert_eq!(
+            texts[1],
+            "no symbol named mkfif; closest:\n  mkfifo [FUNCTION] src/sys.rs:3:8\n\
+             did you mean mkfifo at src/sys.rs:25:16?"
+        );
+        assert!(texts[2].contains("still indexing"), "{}", texts[2]);
+        assert!(!is_error);
+        assert_eq!(meta, json!({"racli/backend": "indexing"}));
+    }
+
+    #[test]
+    fn an_error_status_carries_its_message() {
+        let status = BackendStatus::Error("no workspace".into());
+        let result = command_result(&answered_output(), Ok(()), &status).unwrap();
+        let (texts, _, meta) = parts(&result);
+        assert!(texts[1].contains("no workspace"), "{}", texts[1]);
+        assert_eq!(
+            meta,
+            json!({"racli/backend": "error", "racli/backendMessage": "no workspace"})
+        );
+    }
+
+    #[test]
+    fn an_unknown_status_adds_no_warning_or_meta_keys() {
+        let result = command_result(&answered_output(), Ok(()), &BackendStatus::Unknown).unwrap();
+        let (texts, _, meta) = parts(&result);
+        assert_eq!(texts.len(), 1);
+        assert_eq!(meta, json!({}));
+    }
+
+    #[test]
+    fn nothing_answered_is_an_error_result_that_keeps_stdout_first() {
+        let mut out = CommandOutput::default();
+        out.println("[]");
+        out.backend_error("no symbol named mkfif");
+        let result = command_result(&out, Ok(()), &BackendStatus::Ready).unwrap();
+        let (texts, is_error, _) = parts(&result);
+        assert!(is_error);
+        assert_eq!(texts, ["[]\n", "no symbol named mkfif"]);
+    }
+
+    #[test]
+    fn a_usage_error_is_an_error_result_with_the_reason() {
+        let usage = Err(CommandError::Usage(
+            "path, line and character are given together".into(),
+        ));
+        let result =
+            command_result(&CommandOutput::default(), usage, &BackendStatus::Ready).unwrap();
+        let (texts, is_error, meta) = parts(&result);
+        assert!(is_error);
+        assert_eq!(texts, ["path, line and character are given together"]);
+        assert_eq!(meta, json!({"racli/backend": "ready"}));
+    }
+
+    #[test]
+    fn a_failed_backend_call_is_an_internal_error() {
+        let failed = Err(CommandError::Failed(
+            "request timed out after 60 seconds".into(),
+        ));
+        let Err(error) = command_result(&CommandOutput::default(), failed, &BackendStatus::Ready)
+        else {
+            panic!("expected an internal error");
+        };
+        assert_eq!(error.code, ErrorCode::INTERNAL_ERROR);
+        assert_eq!(error.message, "request timed out after 60 seconds");
+    }
 }
