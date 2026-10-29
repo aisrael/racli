@@ -85,6 +85,42 @@ sequenceDiagram
 
 The editor's `shutdown` is acknowledged locally, and `exit` (or stdin EOF) shuts the whole tree down.
 
+## From `main()` to rust-analyzer
+
+The types a request passes through, from the CLI's `main()` to the rust-analyzer child. Structs carry the in-crate traits they implement in `«guillemets»`:
+
+- **`RacliBackend`** (`src/racli_backend.rs`) is the set of operations the client commands use: `search`, `find_definition`, `find_references`, `find_implementations`, `document_symbols` and `hover`. Each command's `run_*` function takes a `&dyn RacliBackend`, so the same code runs over the socket (CLI) or in-process (MCP). See [ADR 006](adrs/006-mcp-tools-mirror-the-cli.md).
+- **`CallHierarchyBackend`** (`src/call_hierarchy.rs`) is the smaller set of operations the call-hierarchy walk needs (prepare, incoming and outgoing calls).
+
+```mermaid
+flowchart TD
+    Main["main()<br/>src/main.rs"] --> Run["racli::run()<br/>src/cli.rs<br/>parses the subcommand"]
+
+    Run -->|"client commands<br/>(search, find-references, …)"| CliRun["run_cli_*()<br/>build a Client from the socket path"]
+    Run -->|"racli mcp"| McpRun["MCP server<br/>RacliMcpHandler<br/>(rmcp ServerHandler)"]
+    Run -->|"racli server / tee"| ServerRun["RootActor → GrpcFrontend<br/>(see actor tree)"]
+
+    CliRun --> Client["<b>Client</b><br/>«RacliBackend»<br/>src/client.rs"]
+    CliRun -->|call-hierarchy| SocketBackend["<b>SocketBackend</b><br/>«CallHierarchyBackend»<br/>wraps a Client"]
+    SocketBackend --> Client
+    Client -->|"RacliClient (tonic stub)<br/>gRPC over /tmp/racli-#lt;hash#gt;.sock"| Grpc
+
+    ServerRun --> Grpc["<b>RacliGrpc</b><br/>tonic Racli service<br/>src/grpc_server.rs<br/>holds Arc#lt;RacliSession#gt;"]
+    Grpc --> Session
+    McpRun -->|"Arc#lt;RacliSession#gt;,<br/>no socket"| Session
+
+    Session["<b>RacliSession</b><br/>«RacliBackend»<br/>«CallHierarchyBackend»<br/>src/racli_session.rs"]
+    Session -->|"ractor::call!(RustAnalyzerMsg)"| Actor["<b>RustAnalyzerActor</b><br/>mailbox serializes LSP traffic<br/>src/actors/rust_analyzer.rs"]
+    Actor -->|"server::search(), find_definition(), …<br/>free functions, src/server.rs"| RAS["<b>RustAnalyzerSession</b><br/>owns the child process<br/>src/rust_analyzer.rs"]
+    RAS --> Lsp["<b>LspClient</b><br/>LSP over stdio<br/>src/lsp_client.rs"]
+    Lsp --> RA["rust-analyzer<br/>(child process)"]
+```
+
+- **`Client` and `RacliSession` implement the same trait for different reasons.** `Client` forwards each operation over the socket to a server that does the work. `RacliSession` does the work itself: it calls the actor that owns rust-analyzer. `RacliGrpc` is a thin adapter: it receives each gRPC request and calls the `RacliSession` it holds.
+- **`RacliSession` is shared.** The socket server (`racli server`, `racli tee`) and `racli mcp` each build one and use it from their front end.
+- **`SocketBackend`** exists because `RacliBackend` doesn't include the three call-hierarchy operations. It wraps a `Client` and unwraps its gRPC replies into the LSP types `CallHierarchyBackend` returns, while `RacliSession` implements `CallHierarchyBackend` directly for MCP.
+- **`RustAnalyzerSession` is the only type that owns the child process.** `RacliSession` holds a handle to the actor that owns the `RustAnalyzerSession`, not the session itself.
+
 ## Internal actor tree
 
 Inside `racli server` and `racli mcp`, long-lived work is supervised by [ractor](https://docs.rs/ractor) actors (`src/actors/`):
@@ -93,8 +129,11 @@ Inside `racli server` and `racli mcp`, long-lived work is supervised by [ractor]
 flowchart TD
     Root[RootActor] --> Backend[BackendSupervisor]
     Root --> Frontend["GrpcFrontend | McpFrontend"]
-    Backend --> RA["RustAnalyzerActor<br/>(owns the rust-analyzer child)"]
+    Backend --> RA["RustAnalyzerActor<br/>(owns RustAnalyzerSession,<br/>and with it the rust-analyzer child)"]
     Backend -.-> Watcher["FileWatcherActor<br/>(notify → didChangeWatchedFiles)<br/>notify feature only"]
+    Backend -.->|"creates the shared Arc#lt;RacliSession#gt;"| Session["RacliSession<br/>«RacliBackend»<br/>«CallHierarchyBackend»"]
+    Frontend -.->|"uses"| Session
+    Session -.->|"ractor::call!"| RA
 ```
 
 - **File watching:** by default rust-analyzer watches the workspace itself (`files.watcher: "server"`), and there is no `FileWatcherActor`. Built with the `notify` feature, racli starts its own watcher instead and sends rust-analyzer `workspace/didChangeWatchedFiles`. See [ADR 005](adrs/005-file-watching-by-rust-analyzer.md).
