@@ -25,6 +25,10 @@ All notable changes to racli are documented in this file. The format is based on
 - **`racli::client` is a `Client` struct.** Its free functions taking a `socket_path` are now methods on `Client::new(socket_path)`, whose calls share one connection, opened on the first call. The per-RPC `Client*Error` enums are now one `ClientError`. `client_unix_socket_path` moved from `racli::utils` to `racli::client`. It wraps only racli's typed RPCs, not the LSP passthrough that `racli tee` uses (see [ADR 003](docs/adrs/003-high-level-client.md)). A command that looks up a name now connects once instead of once per RPC.
 - **`--line` and `--character` are 1-based**, so a position from `--text` output can be passed back as is. They used to be 0-based, as in LSP, and `0` is now rejected. The MCP tools still take 0-based positions.
 
+### Removed
+
+- **`racli::racli_live_backend::RacliLiveBackend`.** Only racli's own tests used it; `racli server`, `racli tee` and `racli mcp` start the backend through their actor tree. Its start error, `RacliBackendStartError`, is now `racli::BackendStartError`.
+
 ### Fixed
 
 - **`--text` output is faster with many results.** It resolved the current directory once per printed location; it now does so once per command. `find-references --text` for a type with 382 references went from about 17 ms to 13 ms.
