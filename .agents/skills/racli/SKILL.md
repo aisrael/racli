@@ -25,7 +25,7 @@ Pass symbol names to `find-definition`, `find-references`, `find-implementations
 ```sh
 racli find-references run_cli_search
 racli find-references SymbolMatch SymbolFilter    # several names
-racli find-implementations CallHierarchyBackend::prepare
+racli find-implementations RacliBackend::hover
 ```
 
 - **Names** match exactly: a bare name (`mkfifo`), a module path from the crate root (`sys::mkfifo`, not `raw::mkfifo` for `sys::raw::mkfifo`), or a member qualified by its type or trait (`Fifo::name`). The workspace is searched first, then dependencies.

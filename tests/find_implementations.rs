@@ -48,9 +48,9 @@ async fn search_until_non_empty(sock: &Path) {
     }
 }
 
-/// Integration test: gRPC `FindImplementations` resolves `CallHierarchyBackend` in `src/call_hierarchy.rs` to its impl blocks.
+/// Integration test: gRPC `FindImplementations` resolves `RacliBackend` in `src/racli_backend.rs` to its impl blocks.
 #[tokio::test]
-async fn grpc_find_implementations_call_hierarchy_backend() {
+async fn grpc_find_implementations_racli_backend() {
     if std::process::Command::new("rust-analyzer")
         .arg("--version")
         .status()
@@ -79,25 +79,25 @@ async fn grpc_find_implementations_call_hierarchy_backend() {
 
     search_until_non_empty(sock.as_path()).await;
 
-    let call_hierarchy_rs = std::env::current_dir()
+    let racli_backend_rs = std::env::current_dir()
         .expect("cwd")
-        .join("src/call_hierarchy.rs");
-    let file_path = call_hierarchy_rs
+        .join("src/racli_backend.rs");
+    let file_path = racli_backend_rs
         .canonicalize()
-        .expect("canonicalize call_hierarchy.rs");
+        .expect("canonicalize racli_backend.rs");
 
-    // 0-based LSP position on `CallHierarchyBackend` in `pub trait CallHierarchyBackend: Send + Sync {`.
+    // 0-based LSP position on `RacliBackend` in `pub trait RacliBackend: Send + Sync {`.
     let resp = Client::new(sock.as_path())
         .unwrap()
-        .find_implementations(file_path.to_string_lossy().as_ref(), 88, 10)
+        .find_implementations(file_path.to_string_lossy().as_ref(), 20, 10)
         .await
         .expect("find_implementations")
         .value;
 
-    let mut saw_call_hierarchy = false;
+    let mut saw_racli_backend = false;
     for loc in &resp.locations {
-        if loc.uri.ends_with("call_hierarchy.rs") {
-            saw_call_hierarchy = true;
+        if loc.uri.ends_with("racli_backend.rs") {
+            saw_racli_backend = true;
             assert!(
                 loc.range.is_some(),
                 "expected range on implementation location"
@@ -105,8 +105,8 @@ async fn grpc_find_implementations_call_hierarchy_backend() {
         }
     }
     assert!(
-        saw_call_hierarchy,
-        "expected at least one implementation in call_hierarchy.rs, got {:?}",
+        saw_racli_backend,
+        "expected at least one implementation in racli_backend.rs, got {:?}",
         resp.locations
     );
 

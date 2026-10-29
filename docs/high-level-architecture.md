@@ -89,8 +89,7 @@ The editor's `shutdown` is acknowledged locally, and `exit` (or stdin EOF) shuts
 
 The types a request passes through, from the CLI's `main()` to the rust-analyzer child. Structs carry the in-crate traits they implement in `«guillemets»`:
 
-- **`RacliBackend`** (`src/racli_backend.rs`) is the set of operations the client commands use: `search`, `find_definition`, `find_references`, `find_implementations`, `document_symbols` and `hover`. Each command's `run_*` function takes a `&dyn RacliBackend`, so the same code runs over the socket (CLI) or in-process (MCP). See [ADR 006](adrs/006-mcp-tools-mirror-the-cli.md).
-- **`CallHierarchyBackend`** (`src/call_hierarchy.rs`) is the smaller set of operations the call-hierarchy walk needs (prepare, incoming and outgoing calls).
+- **`RacliBackend`** (`src/racli_backend.rs`) is the set of operations the client commands use: `search`, `find_definition`, `find_references`, `find_implementations`, `document_symbols`, `hover` and the three call-hierarchy operations (`prepare_call_hierarchy`, `incoming_calls` and `outgoing_calls`). Each command's `run_*` function takes a `&dyn RacliBackend`, so the same code runs over the socket (CLI) or in-process (MCP). See [ADR 006](adrs/006-mcp-tools-mirror-the-cli.md).
 
 ```mermaid
 flowchart TD
@@ -101,15 +100,13 @@ flowchart TD
     Run -->|"racli server / tee"| ServerRun["RootActor → GrpcFrontend<br/>(see actor tree)"]
 
     CliRun --> Client["<b>Client</b><br/>«RacliBackend»<br/>src/client.rs"]
-    CliRun -->|call-hierarchy| SocketBackend["<b>SocketBackend</b><br/>«CallHierarchyBackend»<br/>wraps a Client"]
-    SocketBackend --> Client
     Client -->|"RacliClient (tonic stub)<br/>gRPC over /tmp/racli-#lt;hash#gt;.sock"| Grpc
 
     ServerRun --> Grpc["<b>RacliGrpc</b><br/>tonic Racli service<br/>src/grpc_server.rs<br/>holds Arc#lt;RacliCore#gt;"]
     Grpc --> Session
     McpRun -->|"Arc#lt;RacliCore#gt;,<br/>no socket"| Session
 
-    Session["<b>RacliCore</b><br/>«RacliBackend»<br/>«CallHierarchyBackend»<br/>src/racli_core.rs"]
+    Session["<b>RacliCore</b><br/>«RacliBackend»<br/>src/racli_core.rs"]
     Session -->|"ractor::call!(RustAnalyzerMsg)"| Actor["<b>RustAnalyzerActor</b><br/>mailbox serializes LSP traffic<br/>src/actors/rust_analyzer.rs"]
     Actor -->|"server::search(), find_definition(), …<br/>free functions, src/server.rs"| RAS["<b>RustAnalyzerSession</b><br/>owns the child process<br/>src/rust_analyzer.rs"]
     RAS --> Lsp["<b>LspClient</b><br/>LSP over stdio<br/>src/lsp_client.rs"]
@@ -118,7 +115,6 @@ flowchart TD
 
 - **`Client` and `RacliCore` implement the same trait for different reasons.** `Client` forwards each operation over the socket to a server that does the work. `RacliCore` does the work itself: it calls the actor that owns rust-analyzer. `RacliGrpc` is a thin adapter: it receives each gRPC request and calls the `RacliCore` it holds.
 - **`RacliCore` is shared.** The socket server (`racli server`, `racli tee`) and `racli mcp` each build one and use it from their front end.
-- **`SocketBackend`** exists because `RacliBackend` doesn't include the three call-hierarchy operations. It wraps a `Client` and unwraps its gRPC replies into the LSP types `CallHierarchyBackend` returns, while `RacliCore` implements `CallHierarchyBackend` directly for MCP.
 - **`RustAnalyzerSession` is the only type that owns the child process.** `RacliCore` holds a handle to the actor that owns the `RustAnalyzerSession`, not the session itself.
 
 ## Internal actor tree
@@ -131,7 +127,7 @@ flowchart TD
     Root --> Frontend["GrpcFrontend | McpFrontend"]
     Backend --> RA["RustAnalyzerActor<br/>(owns RustAnalyzerSession,<br/>and with it the rust-analyzer child)"]
     Backend -.-> Watcher["FileWatcherActor<br/>(notify → didChangeWatchedFiles)<br/>notify feature only"]
-    Backend -.->|"creates the shared Arc#lt;RacliCore#gt;"| Session["RacliCore<br/>«RacliBackend»<br/>«CallHierarchyBackend»"]
+    Backend -.->|"creates the shared Arc#lt;RacliCore#gt;"| Session["RacliCore<br/>«RacliBackend»"]
     Frontend -.->|"uses"| Session
     Session -.->|"ractor::call!"| RA
 ```
