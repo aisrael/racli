@@ -34,8 +34,6 @@ pub mod lsp_map;
 pub mod mcp;
 /// Protobuf and tonic-generated types for the Racli gRPC API.
 pub mod proto;
-/// Shared live workspace backend (rust-analyzer + watcher + `RacliSession`) for gRPC and MCP.
-pub mod racli_live_backend;
 /// Shared gRPC/MCP backend (rust-analyzer + [`crate::server::Core`]).
 pub mod racli_session;
 /// `rust-analyzer` LSP child process used by `racli server`.
@@ -57,6 +55,7 @@ pub mod utils;
 #[cfg(feature = "notify")]
 mod workspace_file_watcher;
 
+pub use actors::backend::BackendStartError;
 pub use cli::RunError;
 pub use cli::run;
 pub use grpc_server::GrpcServerError;

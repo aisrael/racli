@@ -24,6 +24,28 @@ use crate::racli_session::RacliSession;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::server::Core;
 
+/// Failures starting the backend: rust-analyzer, or (with the `notify` feature) the file watcher,
+/// before the front end starts.
+#[derive(Debug, thiserror::Error)]
+pub enum BackendStartError {
+    /// `rust-analyzer` could not be spawned or LSP initialization failed.
+    #[error(transparent)]
+    RustAnalyzer(#[from] RustAnalyzerError),
+    /// A backend actor failed to start for a reason other than rust-analyzer itself.
+    #[error("backend actor failed to start: {0}")]
+    Actor(String),
+}
+
+impl BackendStartError {
+    /// Recovers a typed [`RustAnalyzerError`] from an actor startup failure, keeping anything else as text.
+    pub(crate) fn from_actor(err: ActorProcessingErr) -> Self {
+        match err.downcast::<RustAnalyzerError>() {
+            Ok(e) => Self::RustAnalyzer(*e),
+            Err(other) => Self::Actor(other.to_string()),
+        }
+    }
+}
+
 /// Messages handled by [`BackendSupervisor`].
 pub(crate) enum BackendMsg {
     /// Returns the shared session used by gRPC/MCP handlers.
@@ -171,4 +193,100 @@ async fn shutdown_rust_analyzer(
     };
     let _ = rust_analyzer.stop_and_wait(None, None).await;
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::task::JoinHandle;
+
+    use super::*;
+    use crate::racli_session::RacliRpcError;
+    use crate::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
+    use crate::rust_analyzer::SymbolSearchOptions;
+
+    /// Whether `rust-analyzer --version` succeeds; prints a skip notice otherwise.
+    fn rust_analyzer_available() -> bool {
+        let ok = std::process::Command::new("rust-analyzer")
+            .arg("--version")
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok {
+            eprintln!("skip: rust-analyzer not on PATH or --version failed");
+        }
+        ok
+    }
+
+    /// Starts a [`BackendSupervisor`] on `workspace_root` and returns it with its session.
+    async fn start(
+        workspace_root: PathBuf,
+    ) -> (ActorRef<BackendMsg>, JoinHandle<()>, Arc<RacliSession>) {
+        let args = BackendArgs {
+            workspace_root,
+            symbol_search_limit: DEFAULT_SYMBOL_SEARCH_LIMIT,
+        };
+        let (supervisor, handle) = tokio::time::timeout(
+            Duration::from_secs(120),
+            Actor::spawn(None, BackendSupervisor, args),
+        )
+        .await
+        .expect("backend start should finish within timeout")
+        .expect("spawn BackendSupervisor");
+        let session = ractor::call!(supervisor, BackendMsg::GetSession).expect("GetSession");
+        (supervisor, handle, session)
+    }
+
+    /// Shuts the supervisor down and waits for it to exit.
+    async fn shutdown(supervisor: ActorRef<BackendMsg>, handle: JoinHandle<()>) {
+        let stop = async {
+            let result = ractor::call!(supervisor, BackendMsg::Shutdown).expect("Shutdown");
+            let _ = handle.await;
+            result
+        };
+        tokio::time::timeout(Duration::from_secs(30), stop)
+            .await
+            .expect("shutdown should finish within timeout")
+            .expect("shutdown ok");
+    }
+
+    /// The session returns the crate version and rust-analyzer's serverInfo, then the backend shuts down cleanly.
+    #[tokio::test]
+    async fn get_version_round_trip() {
+        if !rust_analyzer_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (supervisor, handle, session) = start(dir.path().to_path_buf()).await;
+
+        let resp = session.get_version();
+        assert_eq!(resp.version, env!("CARGO_PKG_VERSION"));
+        let lsp = resp.lsp_server_info.expect("lsp_server_info");
+        assert_eq!(lsp.name, "rust-analyzer");
+        assert!(!lsp.version.is_empty());
+
+        shutdown(supervisor, handle).await;
+    }
+
+    /// Once the backend is shut down, a retained session fails requests with `Internal` instead of hanging or panicking.
+    #[tokio::test]
+    async fn requests_after_shutdown_fail_internal() {
+        if !rust_analyzer_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (supervisor, handle, session) = start(dir.path().to_path_buf()).await;
+        shutdown(supervisor, handle).await;
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            session.search("anything".into(), SymbolSearchOptions::default()),
+        )
+        .await
+        .expect("search after shutdown should not hang");
+        assert!(
+            matches!(result, Err(RacliRpcError::Internal(_))),
+            "expected Internal error after shutdown, got {result:?}"
+        );
+    }
 }

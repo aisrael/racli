@@ -50,4 +50,4 @@ jobs:
         run: cargo clippy --all-targets --features notify -- -D warnings
 
       - name: Run file-watching tests (notify feature)
-        run: cargo test --features notify --test live_backend
+        run: cargo test --features notify --test file_watching

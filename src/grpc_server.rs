@@ -5,6 +5,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::actors::backend::BackendStartError;
 use crate::actors::frontend::FrontendError;
 use crate::actors::root::FrontendKind;
 use crate::actors::root::RootError;
@@ -38,7 +39,6 @@ use crate::proto::racli::PrepareCallHierarchyResponse;
 use crate::proto::racli::SearchRequest;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::racli_server::Racli;
-use crate::racli_live_backend::RacliBackendStartError;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
 use crate::racli_session::symbol_search_options_from_proto;
@@ -77,11 +77,11 @@ pub enum GrpcServerError {
     Actor(String),
 }
 
-impl From<RacliBackendStartError> for GrpcServerError {
-    fn from(value: RacliBackendStartError) -> Self {
+impl From<BackendStartError> for GrpcServerError {
+    fn from(value: BackendStartError) -> Self {
         match value {
-            RacliBackendStartError::RustAnalyzer(e) => Self::RustAnalyzer(e),
-            RacliBackendStartError::Actor(msg) => Self::Actor(msg),
+            BackendStartError::RustAnalyzer(e) => Self::RustAnalyzer(e),
+            BackendStartError::Actor(msg) => Self::Actor(msg),
         }
     }
 }

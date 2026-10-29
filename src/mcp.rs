@@ -39,13 +39,13 @@ use rmcp::tool;
 use rmcp::tool_handler;
 use rmcp::tool_router;
 
+use crate::actors::backend::BackendStartError;
 use crate::actors::frontend::FrontendError;
 use crate::actors::root::FrontendKind;
 use crate::actors::root::RootError;
 use crate::actors::root::run_until_shutdown;
 use crate::grpc_server::install_unix_shutdown_signals;
 use crate::logging::init_server_tracing;
-use crate::racli_live_backend::RacliBackendStartError;
 use crate::racli_session::RacliRpcError;
 use crate::racli_session::RacliSession;
 use crate::rust_analyzer::RustAnalyzerError;
@@ -65,7 +65,7 @@ pub enum ServerError {
     },
     /// Spawning rust-analyzer or starting the workspace watcher failed.
     #[error(transparent)]
-    BackendStart(#[from] RacliBackendStartError),
+    BackendStart(#[from] BackendStartError),
     /// Shutting down rust-analyzer after MCP exited failed.
     #[error(transparent)]
     BackendShutdown(#[from] RustAnalyzerError),

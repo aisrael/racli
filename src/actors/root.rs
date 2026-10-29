@@ -12,6 +12,7 @@ use tokio::task::JoinHandle;
 
 use crate::actors::backend::BackendArgs;
 use crate::actors::backend::BackendMsg;
+use crate::actors::backend::BackendStartError;
 use crate::actors::backend::BackendSupervisor;
 use crate::actors::frontend::FrontendError;
 use crate::actors::frontend::FrontendMsg;
@@ -20,7 +21,6 @@ use crate::actors::frontend::GrpcFrontendArgs;
 use crate::actors::frontend::McpFrontend;
 use crate::actors::frontend::McpFrontendArgs;
 use crate::actors::startup_error;
-use crate::racli_live_backend::RacliBackendStartError;
 use crate::rust_analyzer::RustAnalyzerError;
 
 /// Which front end [`RootActor`] serves.
@@ -36,7 +36,7 @@ pub(crate) enum FrontendKind {
 pub(crate) enum RootError {
     /// The backend (rust-analyzer or watcher) failed to start.
     #[error(transparent)]
-    StartBackend(RacliBackendStartError),
+    StartBackend(BackendStartError),
     /// The front end failed to start (socket bind or MCP handshake).
     #[error(transparent)]
     StartFrontend(FrontendError),
@@ -53,7 +53,7 @@ impl RootError {
     fn from_startup(err: ActorProcessingErr) -> Self {
         match err.downcast::<FrontendError>() {
             Ok(e) => Self::StartFrontend(*e),
-            Err(other) => Self::StartBackend(RacliBackendStartError::from_actor(other)),
+            Err(other) => Self::StartBackend(BackendStartError::from_actor(other)),
         }
     }
 }
