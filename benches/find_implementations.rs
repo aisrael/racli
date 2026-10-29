@@ -47,10 +47,10 @@ const QUERIES: &[ImplementationQuery] = &[
         symbol: "RacliSession",
     },
     ImplementationQuery {
-        file: "src/server.rs",
-        line: 20,
+        file: "src/client.rs",
+        line: 111,
         character: 11,
-        symbol: "Core",
+        symbol: "Client",
     },
 ];
 

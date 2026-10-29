@@ -38,7 +38,7 @@ pub mod mcp;
 pub mod proto;
 /// The racli backend's operations over a gRPC `Client` or an in-process `RacliSession`.
 pub mod racli_backend;
-/// Shared gRPC/MCP backend (rust-analyzer + [`crate::server::Core`]).
+/// Shared gRPC/MCP backend (rust-analyzer + [`crate::server`] operations).
 pub mod racli_session;
 /// `rust-analyzer` LSP child process used by `racli server`.
 pub mod rust_analyzer;

@@ -43,10 +43,10 @@ const QUERIES: &[DefinitionQuery] = &[
         symbol: "RacliSession",
     },
     DefinitionQuery {
-        file: "src/racli_session.rs",
-        line: 125,
-        character: 10,
-        symbol: "Core",
+        file: "src/racli_backend.rs",
+        line: 59,
+        character: 22,
+        symbol: "Client",
     },
     DefinitionQuery {
         file: "src/cli.rs",

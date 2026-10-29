@@ -18,18 +18,18 @@ use crate::rust_analyzer::RustAnalyzerError;
 use crate::rust_analyzer::RustAnalyzerSession;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchResult;
-use crate::server::Core;
+use crate::server;
 
 /// Reply port for an LSP request that returns the raw JSON-RPC `result`.
 pub(crate) type LspReply = RpcReplyPort<Result<Value, RustAnalyzerError>>;
 /// Reply port for [`RustAnalyzerMsg::Search`]: the result, and whether it was cut to the limit.
 pub(crate) type SearchReply = RpcReplyPort<Result<SymbolSearchResult, RustAnalyzerError>>;
 
-/// Messages handled by [`RustAnalyzerActor`]; request variants mirror the [`Core`] methods.
+/// Messages handled by [`RustAnalyzerActor`]; request variants mirror the [`server`] functions.
 pub(crate) enum RustAnalyzerMsg {
     /// `serverInfo` captured from LSP `initialize`.
     ServerInfo(RpcReplyPort<LspServerInfo>),
-    /// LSP `workspace/symbol` (see [`Core::search`]).
+    /// LSP `workspace/symbol` (see [`server::search`]).
     Search {
         query: String,
         options: SymbolSearchOptions,
@@ -113,10 +113,9 @@ pub(crate) struct RustAnalyzerArgs {
     pub symbol_search_limit: u32,
 }
 
-/// State of [`RustAnalyzerActor`]: the live session (`None` once shut down) and stateless [`Core`] helpers.
+/// State of [`RustAnalyzerActor`]: the live session (`None` once shut down).
 pub(crate) struct RustAnalyzerState {
     session: Option<RustAnalyzerSession>,
-    core: Core,
 }
 
 /// Spawns rust-analyzer in `pre_start` and runs one LSP request at a time against it.
@@ -154,7 +153,6 @@ impl Actor for RustAnalyzerActor {
             RustAnalyzerSession::spawn(&args.workspace_root, args.symbol_search_limit).await?;
         Ok(RustAnalyzerState {
             session: Some(session),
-            core: Core::default(),
         })
     }
 
@@ -165,7 +163,6 @@ impl Actor for RustAnalyzerActor {
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
         // LSP failures go back on the reply port; returning `Err` here would kill the actor.
-        let core = state.core;
         match message {
             RustAnalyzerMsg::ServerInfo(reply) => {
                 let info = state
@@ -205,52 +202,58 @@ impl Actor for RustAnalyzerActor {
                 query,
                 options,
                 reply,
-            } => reply_with_session!(state, reply, |ra| core.search(ra, query, options)),
+            } => reply_with_session!(state, reply, |ra| server::search(ra, query, options)),
             RustAnalyzerMsg::FindDefinition {
                 uri,
                 line,
                 character,
                 reply,
-            } => reply_with_session!(state, reply, |ra| core
-                .find_definition(ra, uri, line, character)),
+            } => reply_with_session!(state, reply, |ra| server::find_definition(
+                ra, uri, line, character
+            )),
             RustAnalyzerMsg::FindImplementations {
                 uri,
                 line,
                 character,
                 reply,
-            } => reply_with_session!(state, reply, |ra| core
-                .find_implementations(ra, uri, line, character)),
+            } => reply_with_session!(state, reply, |ra| server::find_implementations(
+                ra, uri, line, character
+            )),
             RustAnalyzerMsg::FindReferences {
                 uri,
                 line,
                 character,
                 reply,
-            } => reply_with_session!(state, reply, |ra| core
-                .find_references(ra, uri, line, character)),
+            } => reply_with_session!(state, reply, |ra| server::find_references(
+                ra, uri, line, character
+            )),
             RustAnalyzerMsg::PrepareCallHierarchy {
                 uri,
                 line,
                 character,
                 reply,
-            } => reply_with_session!(state, reply, |ra| core
-                .prepare_call_hierarchy(ra, uri, line, character)),
+            } => reply_with_session!(state, reply, |ra| server::prepare_call_hierarchy(
+                ra, uri, line, character
+            )),
             RustAnalyzerMsg::IncomingCalls { item, reply } => {
-                reply_with_session!(state, reply, |ra| core
-                    .call_hierarchy_incoming_calls(ra, item))
+                reply_with_session!(state, reply, |ra| server::call_hierarchy_incoming_calls(
+                    ra, item
+                ))
             }
             RustAnalyzerMsg::OutgoingCalls { item, reply } => {
-                reply_with_session!(state, reply, |ra| core
-                    .call_hierarchy_outgoing_calls(ra, item))
+                reply_with_session!(state, reply, |ra| server::call_hierarchy_outgoing_calls(
+                    ra, item
+                ))
             }
             RustAnalyzerMsg::DocumentSymbols { uri, reply } => {
-                reply_with_session!(state, reply, |ra| core.document_symbols(ra, uri))
+                reply_with_session!(state, reply, |ra| server::document_symbols(ra, uri))
             }
             RustAnalyzerMsg::Hover {
                 uri,
                 line,
                 character,
                 reply,
-            } => reply_with_session!(state, reply, |ra| core.hover(ra, uri, line, character)),
+            } => reply_with_session!(state, reply, |ra| server::hover(ra, uri, line, character)),
             #[cfg(feature = "notify")]
             RustAnalyzerMsg::DidChangeWatchedFiles(params) => {
                 let Some(ra) = state.session.as_mut() else {

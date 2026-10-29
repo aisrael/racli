@@ -42,10 +42,10 @@ const QUERIES: &[ReferenceQuery] = &[
         symbol: "RacliSession",
     },
     ReferenceQuery {
-        file: "src/server.rs",
-        line: 20,
+        file: "src/client.rs",
+        line: 111,
         character: 11,
-        symbol: "Core",
+        symbol: "Client",
     },
     ReferenceQuery {
         file: "src/lib.rs",

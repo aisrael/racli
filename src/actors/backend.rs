@@ -22,7 +22,6 @@ use crate::actors::rust_analyzer::RustAnalyzerMsg;
 use crate::actors::startup_error;
 use crate::racli_session::RacliSession;
 use crate::rust_analyzer::RustAnalyzerError;
-use crate::server::Core;
 
 /// Failures starting the backend: rust-analyzer, or (with the `notify` feature) the file watcher,
 /// before the front end starts.
@@ -121,7 +120,6 @@ impl Actor for BackendSupervisor {
         let initialize_result = ractor::call!(rust_analyzer, RustAnalyzerMsg::InitializeResult)?;
         let events = ractor::call!(rust_analyzer, RustAnalyzerMsg::Events)?;
         let session = Arc::new(RacliSession::new(
-            Core::default(),
             lsp_server_info,
             initialize_result,
             events,

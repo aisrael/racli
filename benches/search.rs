@@ -19,7 +19,7 @@ use serde_json::json;
 const QUERIES: &[&str] = &[
     "RustAnalyzerSession",
     "RacliSession",
-    "Core",
+    "Client",
     "effective_unix_socket_path",
     "LspError",
 ];
