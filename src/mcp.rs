@@ -6,6 +6,7 @@ mod params;
 
 use std::sync::Arc;
 
+use mcp_proto_json::GetVersionResponseJson;
 use mcp_proto_json::get_version_response_proto_to_json;
 use params::CallHierarchyParams;
 use params::DocumentSymbolsParams;
@@ -194,7 +195,8 @@ impl RacliMcpHandler {
     /// Returns the racli version and rust-analyzer's LSP serverInfo (`racli version`).
     #[tool(
         name = "get_version",
-        description = "Returns racli's version and rust-analyzer's serverInfo, as JSON. Its _meta says whether rust-analyzer is ready, still indexing, or reported an error (racli/backend)."
+        description = "Returns racli's version and rust-analyzer's serverInfo, as JSON. Its _meta says whether rust-analyzer is ready, still indexing, or reported an error (racli/backend).",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<GetVersionResponseJson>()
     )]
     async fn get_version(&self) -> Result<CallToolResult, ErrorData> {
         let resp = get_version_response_proto_to_json(&self.session.get_version());

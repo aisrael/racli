@@ -232,7 +232,8 @@ pub struct Targets {
     /// Whether any symbol name was given. Then every target is labelled with its symbol, and the
     /// results are grouped by it.
     pub grouped: bool,
-    /// Names that found no definition, and positions with no symbol, which don't stop the others.
+    /// Names that found no definition, and positions with no file or no symbol, which don't stop
+    /// the others.
     pub errors: Vec<String>,
 }
 
@@ -310,11 +311,17 @@ pub async fn targets(
                 line,
                 character,
             } => {
-                let file_path = path
-                    .canonicalize()
-                    .map_err(|e| format!("cannot canonicalize {}: {e}", path.display()))?
-                    .display()
-                    .to_string();
+                // A file that can't be found is an error for this target only, as an unknown
+                // name is, so the names still run.
+                let file_path = match path.canonicalize() {
+                    Ok(file_path) => file_path.display().to_string(),
+                    Err(e) => {
+                        result
+                            .errors
+                            .push(format!("cannot canonicalize {}: {e}", path.display()));
+                        continue;
+                    }
+                };
                 let symbol = if grouped {
                     match symbol_at(backend, &file_path, line, character).await? {
                         Some(m) if !seen.insert((m.uri.clone(), m.range)) => continue,

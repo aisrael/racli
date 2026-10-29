@@ -50,7 +50,7 @@ The command's logic runs in both, rather than being written again for MCP. Name 
 `RacliSession`, as `CallHierarchyBackend` does for call hierarchy. Each command's run writes its
 output to a buffer, which the CLI prints and the MCP server returns.
 
-`get_version` keeps its structured JSON.
+`get_version` keeps its structured JSON and declares its `outputSchema`.
 
 ### 2. `format` picks the output, and defaults to `text`
 
@@ -99,9 +99,10 @@ incomplete`. As in ADR 004 decision 2, requests are never refused or delayed.
   a position, `0` for `line` or `character`, `kind` or `glob` without a name, an invalid glob, and
   neither names nor a position. Messages name the MCP parameters, such as `path`, rather than the
   CLI options. The caller, usually a model, reads the reason and can retry.
-- A name that finds nothing doesn't stop the others (ADR 001 decision 7). Its message, with the
-  closest symbols, goes in the second text block. If no name or position found anything, the
-  result has `isError: true`, so the caller sees the call failed and reads the suggestions.
+- A name that finds nothing, or a position in a file that doesn't exist, doesn't stop the others
+  (ADR 001 decision 7). Its message, with the closest symbols for a name, goes in the second text
+  block. If no name or position found anything, the result has `isError: true`, so the caller sees
+  the call failed and reads why.
 - A failure in rust-analyzer or racli is an `internal_error`, as now.
 
 ## Alternatives Considered

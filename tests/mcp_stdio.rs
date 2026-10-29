@@ -35,6 +35,24 @@ async fn mcp_stdio_get_version_and_search_round_trip() {
 
     let peer = client.peer();
 
+    // `get_version` declares the shape of its structured JSON (ADR 006 decision 2).
+    let tools = tokio::time::timeout(Duration::from_secs(10), peer.list_all_tools())
+        .await
+        .expect("tools/list should finish within timeout")
+        .expect("tools/list");
+    let get_version = tools
+        .iter()
+        .find(|tool| tool.name == "get_version")
+        .expect("get_version tool");
+    let output_schema = get_version
+        .output_schema
+        .as_ref()
+        .expect("get_version should declare an outputSchema");
+    assert!(
+        output_schema["properties"]["version"].is_object(),
+        "unexpected outputSchema: {output_schema:?}"
+    );
+
     let version_result = tokio::time::timeout(
         Duration::from_secs(10),
         peer.call_tool(CallToolRequestParams::new("get_version")),

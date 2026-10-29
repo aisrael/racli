@@ -32,6 +32,7 @@ All notable changes to racli are documented in this file. The format is based on
 
 ### Fixed
 
+- **A `--path` that doesn't exist no longer stops the names given with it.** The position commands print that the file can't be found, as for a name that finds nothing, and still run from the names.
 - **`--text` output is faster with many results.** It resolved the current directory once per printed location; it now does so once per command. `find-references --text` for a type with 382 references went from about 17 ms to 13 ms.
 - **No rust-analyzer warning about a missing `rust-analyzer.toml` on every start.** Now that rust-analyzer watches files itself, it warned that it couldn't watch its user config file (e.g. `~/Library/Application Support/rust-analyzer/rust-analyzer.toml`) when there was none. racli now logs that warning at debug level and passes the rest of rust-analyzer's stderr through unchanged.
 

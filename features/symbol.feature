@@ -98,6 +98,15 @@ Feature: racli position commands by symbol name
     And the error output should contain "no symbol named mkfif"
     And the JSON output should be an array of 1 item
 
+  Scenario: a position in a file that doesn't exist doesn't stop the names
+    When the following command is run:
+      """
+      racli find-definition Fifo --path fixtures/queue/src/nope.rs --line 3 --character 8
+      """
+    Then it should exit with status code 0
+    And the error output should contain "cannot canonicalize fixtures/queue/src/nope.rs"
+    And the JSON output should be an array of 1 item
+
   Scenario: --kind keeps only definitions of that kind
     When the following command is run:
       """

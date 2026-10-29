@@ -94,6 +94,23 @@ Feature: racli mcp tools mirror the CLI commands
     And the error output should contain "no symbol named mkfif"
     And the JSON output should be an array of 1 item
 
+  Scenario: a position in a file that doesn't exist is an error result with the reason
+    When the MCP tool "find_references" is called with:
+      """
+      {"path": "src/nope.rs", "line": 3, "character": 8}
+      """
+    Then the tool result should be an error
+    And the error output should contain "cannot canonicalize src/nope.rs"
+
+  Scenario: a position in a file that doesn't exist doesn't stop the names
+    When the MCP tool "find_definition" is called with:
+      """
+      {"names": ["Fifo"], "path": "src/nope.rs", "line": 3, "character": 8, "format": "json"}
+      """
+    Then the tool result should not be an error
+    And the error output should contain "cannot canonicalize src/nope.rs"
+    And the JSON output should be an array of 1 item
+
   Scenario: kind keeps only definitions of that kind
     When the MCP tool "find_definition" is called with:
       """
