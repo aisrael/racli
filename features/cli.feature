@@ -6,8 +6,8 @@ Feature: CLI basics
       racli version
       ```
     Then it should exit with status code 0
-    And the output should contain "client: 0.2.0"
-    And the output should contain "server: 0.2.0"
+    And the output should contain "client: 0.3.0"
+    And the output should contain "server: 0.3.0"
     And the output should contain "rust-analyzer: "
 
   Scenario: racli --help lists the subcommands
