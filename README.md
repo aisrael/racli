@@ -115,7 +115,7 @@ Look up symbols in your dependencies and the standard library with `search --sco
 
 ### Short output
 
-Each result is one `path:line:col` line, with 1-based positions as `grep` and `rustc` use. Use `--json` for programmatic parsing.
+Each result is one line: `{path}:{line}:{col}`. Use `--json` or `--csv` for JSON or CSV output, suitable for programmatic parsing.
 
 ### One `rust-analyzer`
 
