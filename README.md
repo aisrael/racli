@@ -5,7 +5,7 @@ racli - a CLI tool for [rust-analyzer](https://github.com/rust-lang/rust-analyze
 [![Crates.io](https://img.shields.io/crates/v/racli.svg)](https://crates.io/crates/racli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
-`racli` is meant to be a CLI for `rust-analyzer`. It's meant to:
+`racli` is a CLI for `rust-analyzer`. It's meant to:
 
 - make using `rust-analyzer` more efficient, but allowing a single `rust-analyzer` process to be shared across multiple editors and agents
 - provide an interface for AI agents to search and navigate a Rust codebase that's faster and more token-efficient than `grep`
