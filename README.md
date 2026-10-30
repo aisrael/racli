@@ -14,11 +14,11 @@ See the [changelog](CHANGELOG.md) for change history.
 
 ## Installation
 
+For now, `racli` requires [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html) to install:
+
 ```sh
 cargo install racli
 ```
-
-rust-analyzer watches the workspace for changes itself. To have racli watch it instead and send rust-analyzer the changes, as racli did before, build with the `notify` feature: `cargo install racli --features notify`. That links the [notify](https://docs.rs/notify) crate, which on macOS loads CoreFoundation and CoreServices every time `racli` starts, CLI commands included. See [ADR 005](docs/adrs/005-file-watching-by-rust-analyzer.md).
 
 ## Usage
 
@@ -78,3 +78,52 @@ Some editors cannot pass arguments to the server. For these editors, use `racli-
 ```
 
 To check if racli serves the current directory, run `racli tee --check`. It exits with 0 if racli serves the directory. Otherwise, it exits with 1.
+
+
+## Features
+
+Because `racli` uses `rust-analyzer` under the hood, it can do more than just text search: it understands Rust types, traits, modules and call paths.
+
+### Exact results
+
+`racli find-references` and `racli find-definition` return real uses and definitions. They do not return matches in comments, strings or other symbols with the same name.
+
+### Look up by name
+
+- `racli find-references`
+- `racli find-definition`
+- `racli find-implementations`
+- `racli call-hiearchy`
+
+Each take one or more symbol names.
+
+### Implementations
+
+`find-implementations` lists the `impl` blocks of a trait or type, and the overrides of a trait method.
+
+### Call hierarchy
+
+`call-hierarchy` shows the callers and callees of a function, to the depth you choose.
+
+### Read less code
+
+`document-symbols` prints the outline of a file. `find-definition --hover` prints a signature and its docs. `find-definition --source` prints the whole body of a definition.
+
+### Dependencies and `std`
+
+Look up symbols in your dependencies and the standard library with `search --scope workspace-and-dependencies`.
+
+### Short output
+
+Each result is one `path:line:col` line, with 1-based positions as `grep` and `rustc` use. Use `--json` for programmatic parsing.
+
+### One `rust-analyzer`
+
+Several editors and agents can share one `rust-analyzer` process, so each does not start its own.
+
+For more information, see:
+
+- [Usage](#usage) for the MCP server, the CLI and `tee` mode
+- [Architecture](docs/high-level-architecture.md) for how the parts fit together
+- [ADRs](docs/adrs/) for the design decisions
+- [The `racli` agent skill](.agents/skills/racli/SKILL.md) for every command and option
