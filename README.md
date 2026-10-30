@@ -63,7 +63,7 @@ racli call-hierarchy run_cli_search
 racli document-symbols src/search.rs
 ```
 
-Each command prints one line of text for each result. Add `--json` to get JSON, or `--csv` for CSV output. Use `racli version` to see the client, server and rust-analyzer versions.
+Each command prints one line of text for each result. Add `--json` to get JSON. Use `racli version` to see the client, server and rust-analyzer versions.
 
 If a server already runs for the directory, `racli server` prints a message and exits.
 
@@ -93,9 +93,9 @@ Because `racli` uses `rust-analyzer` under the hood, it can do more than just te
 - `racli find-references`
 - `racli find-definition`
 - `racli find-implementations`
-- `racli call-hiearchy`
+- `racli call-hierarchy`
 
-Each take one or more symbol names.
+Each takes one or more symbol names.
 
 ### Implementations
 
@@ -123,7 +123,7 @@ Several editors and agents can share one `rust-analyzer` process, so each does n
 
 For more information, see:
 
-- [Usage](#usage) for the MCP server, the CLI and `tee` mode
+- [Usage](docs/racli-usage.md) - client commands for every command
 - [Architecture](docs/high-level-architecture.md) for how the parts fit together
 - [ADRs](docs/adrs/) for the design decisions
 - [The `racli` agent skill](.agents/skills/racli/SKILL.md) for every command and option
