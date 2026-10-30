@@ -52,6 +52,8 @@ cucumber = "0.23.0"
 jsonpath-rust = "1"
 libc = "0.2"
 rmcp = { version = "3.3.0", features = ["client", "transport-child-process"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_yaml_ng = "0.10.0"
 tempfile = "3"
 
 [[bench]]
@@ -76,6 +78,10 @@ harness = false
 
 [[bench]]
 name = "document_symbols"
+harness = false
+
+[[bench]]
+name = "tokens"
 harness = false
 
 [[test]]

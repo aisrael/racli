@@ -1,0 +1,110 @@
+# Configuration of the token benchmark (`cargo bench --bench tokens`).
+#
+# Choose a file with RACLI_BENCH_CONFIG=path/to/file.yaml. Without it, the benchmark reads
+# benches/config/racli.yaml.
+#
+# For each lookup (a racli command: find-definition, find-references, find-implementations or
+# call-hierarchy) the file lists the symbols to look up and, for each tool, the commands to compare:
+#   grep:  shell pipelines, run with `bash -c` in the workspace. A command is one string, or a
+#          list of strings that are joined with spaces (one pipeline stage for each item).
+#          `by_function: true` scores each output line as the function that contains it.
+#   racli: arguments of a `racli` call. The first one is the reference that every variant is scored
+#          against.
+# In a command, @NAME@ is the symbol, @OPTIONS@ is `grep_options` and @DIRS@ is `search_dirs`
+# (joined with spaces).
+#
+# Other keys:
+#   name:                results go to target/<name>/
+#   workspace:           the directory that grep and racli run in. A relative path starts at the
+#                        racli repository, and `~/` is the home directory.
+#   racli_ignore:        lines of racli output that contain one of these are dropped.
+#   unset_env:           environment variables to remove before the server starts.
+#   ready_symbol:        a symbol that a search finds once the server is ready.
+#   ready_timeout_secs:  how long to wait for the server (default 120).
+#   settle_timeout_secs: how long to wait for a stable answer to one query (default 60).
+
+name: tokens
+workspace: .
+search_dirs: [src, tests, benches]
+# This benchmark's own file is left out of both tools: its code calls `Client`, and rust-analyzer
+# would find that call while grep would not.
+grep_options: "--include='*.rs' --exclude-dir=target --exclude=tokens.rs"
+racli_ignore: [benches/tokens.rs]
+ready_symbol: RustAnalyzerSession
+ready_timeout_secs: 120
+settle_timeout_secs: 60
+
+lookups:
+  - name: find-definition
+    symbols: [RustAnalyzerSession, RacliCore, Client, client_unix_socket_path, LspError]
+    tools:
+      grep:
+        - name: grep
+          command:
+            - &definition_grep |-
+              grep -rnE @OPTIONS@ '\b(fn|struct|enum|trait|type|const|static|mod)[[:space:]]+@NAME@\b' @DIRS@
+        - name: grep+sed
+          command:
+            - *definition_grep
+            - |-
+              | while IFS=: read -r f l t; do if printf '%s' "$t" | grep -qE '(^|[^[:alnum:]_])fn[[:space:]]'; then end='/{[[:space:]]*$/'; else end='/^[[:space:]]*}/'; fi; echo "$f:$l"; sed -n "${l},${end}p" "$f"; done
+      racli:
+        - name: racli
+          args: ["find-definition", "@NAME@", "--text"]
+        - name: racli --hover
+          args: ["find-definition", "@NAME@", "--text", "--hover"]
+  - name: find-references
+    symbols: [RustAnalyzerSession, RacliCore, Client, effective_unix_socket_path, LspError]
+    tools:
+      grep:
+        - name: grep
+          command:
+            - &references_grep |-
+              grep -rnw @OPTIONS@ '@NAME@' @DIRS@
+        - name: grep+sed
+          command:
+            - *references_grep
+            - |-
+              | sed -E '/^[^:]+:[0-9]+:[[:space:]]*\/\//d'
+      racli:
+        - name: racli
+          args: ["find-references", "@NAME@", "--text"]
+  - name: find-implementations
+    symbols: [RacliBackend, RustAnalyzerSession, RacliCore, Client]
+    tools:
+      grep:
+        - name: grep
+          command:
+            - &implementations_grep |-
+              grep -rnE @OPTIONS@ '^[[:space:]]*(unsafe[[:space:]]+)?impl\b.*\b@NAME@\b' @DIRS@
+        - name: grep+sed
+          command:
+            - *implementations_grep
+            - |-
+              | sed -nE '/^[^:]+:[0-9]+:[[:space:]]*(unsafe[[:space:]]+)?impl(<[^>]*>)?[[:space:]]+(([[:alnum:]_]+::)*@NAME@([^[:alnum:]_]|$)|[^{]*[[:space:]]for[[:space:]]+&?(mut[[:space:]]+)?([[:alnum:]_]+::)*@NAME@([^[:alnum:]_]|$))/p'
+      racli:
+        - name: racli
+          args: ["find-implementations", "@NAME@", "--text"]
+  - name: call-hierarchy
+    symbols: [document_uri_from_path, workspace_symbol_response_to_proto, effective_unix_socket_path, client_unix_socket_path]
+    tools:
+      grep:
+        - name: grep
+          by_function: true
+          command:
+            - *references_grep
+        - name: grep+sed sites
+          by_function: true
+          command:
+            - *references_grep
+            - &call_sites_sed |-
+              | sed -E -e '/^[^:]+:[0-9]+:[[:space:]]*\/\//d' -e '/^[^:]+:[0-9]+:[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?use[[:space:]]/d' -e '/[^[:alnum:]_]fn[[:space:]]+@NAME@([^[:alnum:]_]|$)/d' -e '/(^|[^[:alnum:]_])@NAME@[[:space:]]*(::<[^>]*>)?\(/!d'
+        - name: grep+sed callers
+          command:
+            - *references_grep
+            - *call_sites_sed
+            - |-
+              | while IFS=: read -r f l _; do n=$(sed -n "1,${l}p" "$f" | grep -nE '(^|[[:space:]])fn[[:space:]]' | tail -1 | cut -d: -f1); [ -n "$n" ] || continue; echo "$f:$n: $(sed -n "${n}p" "$f" | sed -E 's/^[[:space:]]+//')"; done | sort -u
+      racli:
+        - name: racli
+          args: ["call-hierarchy", "@NAME@", "--direction", "incoming", "--text"]
