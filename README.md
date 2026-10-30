@@ -3,14 +3,14 @@ racli - a CLI tool for [rust-analyzer](https://github.com/rust-lang/rust-analyze
 
 [![CI Tests](https://github.com/aisrael/racli/actions/workflows/ci.yml/badge.svg)](https://github.com/aisrael/racli/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/racli.svg)](https://crates.io/crates/racli)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/aisrael/racli/blob/main/LICENSE)
 
 `racli` is a CLI for `rust-analyzer`. It's meant to:
 
 - make using `rust-analyzer` more efficient, but allowing a single `rust-analyzer` process to be shared across multiple editors and agents
 - provide an interface for AI agents to search and navigate a Rust codebase that's faster and more token-efficient than `grep`
 
-See the [changelog](CHANGELOG.md) for change history.
+See the [changelog](https://github.com/aisrael/racli/blob/main/CHANGELOG.md) for change history.
 
 ## Installation
 
@@ -36,7 +36,7 @@ Start it in the root of your Rust workspace. For example, to add it to Claude Co
 claude mcp add racli -- racli mcp
 ```
 
-The server gives your agent these tools: `search`, `find_definition`, `find_references`, `find_implementations`, `call_hierarchy` and `document_symbols`. They work like the CLI commands. They take symbol names and 1-based positions, and they return text. See [ADR 006](docs/adrs/006-mcp-tools-mirror-the-cli.md).
+The server gives your agent these tools: `search`, `find_definition`, `find_references`, `find_implementations`, `call_hierarchy` and `document_symbols`. They work like the CLI commands. They take symbol names and 1-based positions, and they return text.
 
 Each `racli mcp` process starts its own rust-analyzer. To share one rust-analyzer, use `racli server` or `racli tee`.
 
@@ -48,7 +48,7 @@ Each `racli mcp` process starts its own rust-analyzer. To share one rust-analyze
 racli server
 ```
 
-This opens a socket at `/tmp/racli-<hash>.sock`, with a unique hash computed from the workspace directory. Set `RACLI_UNIX_SOCKET` to specify a socket path. See [Configuration](docs/configuration.md) for this and other options.
+This opens a socket at `/tmp/racli-<hash>.sock`, with a unique hash computed from the workspace directory. Set `RACLI_UNIX_SOCKET` to specify a socket path. See [Configuration](https://github.com/aisrael/racli/blob/main/docs/configuration.md) for this and other options.
 
 In another terminal, run a `racli` client command in the same workspace or in any of its subdirectories.
 
@@ -79,7 +79,7 @@ Some editors cannot pass arguments to the server. For these editors, use `racli-
 
 To check if racli serves the current directory, run `racli tee --check`. It exits with 0 if racli serves the directory. Otherwise, it exits with 1.
 
-Because the backend `rust-analyzer` process is shared, `racli tee` has some [limitations](docs/racli-tee-limitations.md) vs a full-blown `rust-analyzer` LSP server.
+Because the backend `rust-analyzer` process is shared, `racli tee` has some [limitations](https://github.com/aisrael/racli/blob/main/docs/racli-tee-limitations.md) vs a full-blown `rust-analyzer` LSP server.
 
 
 ## Features
@@ -125,8 +125,7 @@ Several editors and agents can share one `rust-analyzer` process, so each does n
 
 For more information, see:
 
-- [Usage](docs/racli-usage.md) - client commands for every command
-- [Configuration](docs/configuration.md) for environment variables, command-line options and logging
-- [Architecture](docs/high-level-architecture.md) for how the parts fit together
-- [ADRs](docs/adrs/) for the design decisions
-- [The `racli` agent skill](.agents/skills/racli/SKILL.md) for every command and option
+- [Usage](https://github.com/aisrael/racli/blob/main/docs/racli-usage.md) - client commands for every command
+- [Configuration](https://github.com/aisrael/racli/blob/main/docs/configuration.md) for environment variables, command-line options and logging
+- [Architecture](https://github.com/aisrael/racli/blob/main/docs/high-level-architecture.md) for how the parts fit together
+- [The `racli` agent skill](https://github.com/aisrael/racli/blob/main/.agents/skills/racli/SKILL.md) for every command and option
