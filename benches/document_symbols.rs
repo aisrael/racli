@@ -71,7 +71,7 @@ fn bench_grep_vs_racli_document_symbols(
     c: &mut Criterion,
     racli: &Path,
     socket: &Path,
-    mcp: &support::RacliMcp,
+    mcp: Option<&support::RacliMcp>,
     workspace: &Path,
 ) {
     let mut group = c.benchmark_group("grep_vs_racli_document_symbols");
@@ -94,11 +94,13 @@ fn bench_grep_vs_racli_document_symbols(
                 );
             });
         });
-        group.bench_function(BenchmarkId::new("mcp_document_symbols", file), |b| {
-            b.iter(|| {
-                mcp_document_symbols(black_box(mcp), black_box(&abs_path));
+        if let Some(mcp) = mcp {
+            group.bench_function(BenchmarkId::new("mcp_document_symbols", file), |b| {
+                b.iter(|| {
+                    mcp_document_symbols(black_box(mcp), black_box(&abs_path));
+                });
             });
-        });
+        }
     }
     group.finish();
 }
@@ -135,17 +137,19 @@ fn main() {
         );
     });
     let socket = server.socket().to_path_buf();
-    let mcp = support::RacliMcp::start(&workspace);
-    mcp.wait_for(
-        "document_symbols",
-        json!({"path": first_file}),
-        |text| text.lines().count() > 1,
-        "racli mcp did not outline the first query's file in time",
-    );
+    let mcp = support::start_mcp_if_enabled(&workspace);
+    if let Some(mcp) = &mcp {
+        mcp.wait_for(
+            "document_symbols",
+            json!({"path": first_file}),
+            |text| text.lines().count() > 1,
+            "racli mcp did not outline the first query's file in time",
+        );
+    }
 
     let mut criterion = Criterion::default()
         .measurement_time(Duration::from_secs(60))
         .configure_from_args();
-    bench_grep_vs_racli_document_symbols(&mut criterion, &racli, &socket, &mcp, &workspace);
+    bench_grep_vs_racli_document_symbols(&mut criterion, &racli, &socket, mcp.as_ref(), &workspace);
     criterion.final_summary();
 }

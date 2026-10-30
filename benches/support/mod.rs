@@ -147,6 +147,17 @@ impl Drop for RacliServer {
     }
 }
 
+/// Starts a [`RacliMcp`] only when the `RACLI_BENCH_MCP` environment variable is set to a
+/// non-empty value other than `0` or `false`; the MCP benches are off by default.
+pub fn start_mcp_if_enabled(workspace: &Path) -> Option<RacliMcp> {
+    let enabled = std::env::var("RACLI_BENCH_MCP")
+        .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"));
+    if !enabled {
+        eprintln!("skipping the MCP benches; set RACLI_BENCH_MCP=1 to run them");
+    }
+    enabled.then(|| RacliMcp::start(workspace))
+}
+
 /// A `racli mcp` session rooted at a workspace, kept open across calls, as an MCP host keeps it.
 pub struct RacliMcp {
     rt: tokio::runtime::Runtime,

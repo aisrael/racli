@@ -147,7 +147,7 @@ fn bench_grep_vs_racli_find_references(
     c: &mut Criterion,
     racli: &Path,
     socket: &Path,
-    mcp: &support::RacliMcp,
+    mcp: Option<&support::RacliMcp>,
     workspace: &Path,
 ) {
     let mut group = c.benchmark_group("grep_vs_racli_find_references");
@@ -187,24 +187,28 @@ fn bench_grep_vs_racli_find_references(
                 });
             },
         );
-        group.bench_function(BenchmarkId::new("mcp_find_references", query.symbol), |b| {
-            b.iter(|| {
-                mcp_find_references(
-                    black_box(mcp),
-                    black_box(&abs_path),
-                    black_box(query.line),
-                    black_box(query.character),
-                );
-            });
-        });
-        group.bench_function(
-            BenchmarkId::new("mcp_find_references_by_name", query.symbol),
-            |b| {
+        if let Some(mcp) = mcp {
+            group.bench_function(BenchmarkId::new("mcp_find_references", query.symbol), |b| {
                 b.iter(|| {
-                    mcp_find_references_by_name(black_box(mcp), black_box(query.symbol));
+                    mcp_find_references(
+                        black_box(mcp),
+                        black_box(&abs_path),
+                        black_box(query.line),
+                        black_box(query.character),
+                    );
                 });
-            },
-        );
+            });
+        }
+        if let Some(mcp) = mcp {
+            group.bench_function(
+                BenchmarkId::new("mcp_find_references_by_name", query.symbol),
+                |b| {
+                    b.iter(|| {
+                        mcp_find_references_by_name(black_box(mcp), black_box(query.symbol));
+                    });
+                },
+            );
+        }
     }
     group.finish();
 }
@@ -259,17 +263,19 @@ fn main() {
         );
     });
     let socket = server.socket().to_path_buf();
-    let mcp = support::RacliMcp::start(&workspace);
-    mcp.wait_for(
-        "find_references",
-        json!({"names": [QUERIES[0].symbol]}),
-        |text| text.lines().count() > 1,
-        "racli mcp did not resolve the first query's references in time",
-    );
+    let mcp = support::start_mcp_if_enabled(&workspace);
+    if let Some(mcp) = &mcp {
+        mcp.wait_for(
+            "find_references",
+            json!({"names": [QUERIES[0].symbol]}),
+            |text| text.lines().count() > 1,
+            "racli mcp did not resolve the first query's references in time",
+        );
+    }
 
     let mut criterion = Criterion::default()
         .measurement_time(Duration::from_secs(60))
         .configure_from_args();
-    bench_grep_vs_racli_find_references(&mut criterion, &racli, &socket, &mcp, &workspace);
+    bench_grep_vs_racli_find_references(&mut criterion, &racli, &socket, mcp.as_ref(), &workspace);
     criterion.final_summary();
 }

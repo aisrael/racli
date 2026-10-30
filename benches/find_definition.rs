@@ -176,7 +176,7 @@ fn bench_grep_vs_racli_find_definition(
     c: &mut Criterion,
     racli: &Path,
     socket: &Path,
-    mcp: &support::RacliMcp,
+    mcp: Option<&support::RacliMcp>,
     workspace: &Path,
 ) {
     let mut group = c.benchmark_group("grep_vs_racli_find_definition");
@@ -238,28 +238,36 @@ fn bench_grep_vs_racli_find_definition(
                     });
                 },
             );
-            group.bench_function(
-                BenchmarkId::new(format!("mcp_find_definition{suffix}"), query.symbol),
-                |b| {
-                    b.iter(|| {
-                        mcp_find_definition(
-                            black_box(mcp),
-                            black_box(&abs_path),
-                            black_box(query.line),
-                            black_box(query.character),
-                            hover,
-                        );
-                    });
-                },
-            );
-            group.bench_function(
-                BenchmarkId::new(format!("mcp_find_definition_by_name{suffix}"), query.symbol),
-                |b| {
-                    b.iter(|| {
-                        mcp_find_definition_by_name(black_box(mcp), black_box(query.symbol), hover);
-                    });
-                },
-            );
+            if let Some(mcp) = mcp {
+                group.bench_function(
+                    BenchmarkId::new(format!("mcp_find_definition{suffix}"), query.symbol),
+                    |b| {
+                        b.iter(|| {
+                            mcp_find_definition(
+                                black_box(mcp),
+                                black_box(&abs_path),
+                                black_box(query.line),
+                                black_box(query.character),
+                                hover,
+                            );
+                        });
+                    },
+                );
+            }
+            if let Some(mcp) = mcp {
+                group.bench_function(
+                    BenchmarkId::new(format!("mcp_find_definition_by_name{suffix}"), query.symbol),
+                    |b| {
+                        b.iter(|| {
+                            mcp_find_definition_by_name(
+                                black_box(mcp),
+                                black_box(query.symbol),
+                                hover,
+                            );
+                        });
+                    },
+                );
+            }
         }
     }
     group.finish();
@@ -327,17 +335,19 @@ fn main() {
     });
     let socket = server.socket().to_path_buf();
     // `RacliMcp::start` waits for rust-analyzer to be ready, so hovers aren't taken while indexing.
-    let mcp = support::RacliMcp::start(&workspace);
-    mcp.wait_for(
-        "find_definition",
-        json!({"names": [QUERIES[0].symbol], "hover": true}),
-        |text| text.lines().count() > 2,
-        "racli mcp did not resolve the first query's definition in time",
-    );
+    let mcp = support::start_mcp_if_enabled(&workspace);
+    if let Some(mcp) = &mcp {
+        mcp.wait_for(
+            "find_definition",
+            json!({"names": [QUERIES[0].symbol], "hover": true}),
+            |text| text.lines().count() > 2,
+            "racli mcp did not resolve the first query's definition in time",
+        );
+    }
 
     let mut criterion = Criterion::default()
         .measurement_time(Duration::from_secs(60))
         .configure_from_args();
-    bench_grep_vs_racli_find_definition(&mut criterion, &racli, &socket, &mcp, &workspace);
+    bench_grep_vs_racli_find_definition(&mut criterion, &racli, &socket, mcp.as_ref(), &workspace);
     criterion.final_summary();
 }

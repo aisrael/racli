@@ -135,7 +135,7 @@ fn bench_grep_vs_racli_call_hierarchy(
     c: &mut Criterion,
     racli: &Path,
     socket: &Path,
-    mcp: &support::RacliMcp,
+    mcp: Option<&support::RacliMcp>,
     workspace: &Path,
 ) {
     let mut group = c.benchmark_group("grep_vs_racli_call_hierarchy");
@@ -175,24 +175,28 @@ fn bench_grep_vs_racli_call_hierarchy(
                 });
             },
         );
-        group.bench_function(BenchmarkId::new("mcp_call_hierarchy", query.symbol), |b| {
-            b.iter(|| {
-                mcp_call_hierarchy(
-                    black_box(mcp),
-                    black_box(&abs_path),
-                    black_box(query.line),
-                    black_box(query.character),
-                );
-            });
-        });
-        group.bench_function(
-            BenchmarkId::new("mcp_call_hierarchy_by_name", query.symbol),
-            |b| {
+        if let Some(mcp) = mcp {
+            group.bench_function(BenchmarkId::new("mcp_call_hierarchy", query.symbol), |b| {
                 b.iter(|| {
-                    mcp_call_hierarchy_by_name(black_box(mcp), black_box(query.symbol));
+                    mcp_call_hierarchy(
+                        black_box(mcp),
+                        black_box(&abs_path),
+                        black_box(query.line),
+                        black_box(query.character),
+                    );
                 });
-            },
-        );
+            });
+        }
+        if let Some(mcp) = mcp {
+            group.bench_function(
+                BenchmarkId::new("mcp_call_hierarchy_by_name", query.symbol),
+                |b| {
+                    b.iter(|| {
+                        mcp_call_hierarchy_by_name(black_box(mcp), black_box(query.symbol));
+                    });
+                },
+            );
+        }
     }
     group.finish();
 }
@@ -247,17 +251,19 @@ fn main() {
         );
     });
     let socket = server.socket().to_path_buf();
-    let mcp = support::RacliMcp::start(&workspace);
-    mcp.wait_for(
-        "call_hierarchy",
-        json!({"names": [QUERIES[0].symbol], "direction": "incoming"}),
-        |text| text.contains("<- callers:") && text.lines().count() > 2,
-        "racli mcp did not answer the first query in time",
-    );
+    let mcp = support::start_mcp_if_enabled(&workspace);
+    if let Some(mcp) = &mcp {
+        mcp.wait_for(
+            "call_hierarchy",
+            json!({"names": [QUERIES[0].symbol], "direction": "incoming"}),
+            |text| text.contains("<- callers:") && text.lines().count() > 2,
+            "racli mcp did not answer the first query in time",
+        );
+    }
 
     let mut criterion = Criterion::default()
         .measurement_time(Duration::from_secs(60))
         .configure_from_args();
-    bench_grep_vs_racli_call_hierarchy(&mut criterion, &racli, &socket, &mcp, &workspace);
+    bench_grep_vs_racli_call_hierarchy(&mut criterion, &racli, &socket, mcp.as_ref(), &workspace);
     criterion.final_summary();
 }

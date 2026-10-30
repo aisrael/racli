@@ -24,13 +24,14 @@ const QUERIES: &[&str] = &[
     "LspError",
 ];
 
-/// Runs `grep -r` with a fixed substring over `*.rs` under `root` (discards output).
+/// Runs `grep -r` with a fixed substring over `*.rs` under `root`, skipping `target/` (discards output).
 fn grep_rs_substring(root: &Path, query: &str) {
     let status = Command::new("grep")
         .arg("-r")
         .arg("-n")
         .arg("-F")
         .arg("--include=*.rs")
+        .arg("--exclude-dir=target")
         .arg(query)
         .arg(root)
         .stdout(Stdio::null())
@@ -44,7 +45,7 @@ fn grep_rs_substring(root: &Path, query: &str) {
 }
 
 /// Runs `grep -rnE` for a Rust declaration of any symbol kind (function, struct, enum, trait,
-/// type alias, const, static, or module) named `query` under `root`, approximating rust-analyzer's
+/// type alias, const, static, or module) named `query` under `root` (skipping `target/`), approximating rust-analyzer's
 /// `--kind all-symbols` `workspace/symbol` search without parsing (struct/enum fields are not
 /// matched; discards output).
 fn grep_rs_all_symbols_declaration(root: &Path, query: &str) {
@@ -54,6 +55,7 @@ fn grep_rs_all_symbols_declaration(root: &Path, query: &str) {
         .arg("-n")
         .arg("-E")
         .arg("--include=*.rs")
+        .arg("--exclude-dir=target")
         .arg(pattern)
         .arg(root)
         .stdout(Stdio::null())
@@ -115,7 +117,7 @@ fn bench_grep_vs_racli(
     c: &mut Criterion,
     racli: &Path,
     socket: &Path,
-    mcp: &support::RacliMcp,
+    mcp: Option<&support::RacliMcp>,
     workspace: &Path,
 ) {
     let mut group = c.benchmark_group("grep_vs_racli_search");
@@ -140,16 +142,20 @@ fn bench_grep_vs_racli(
                 racli_search_all_symbols_cli(black_box(racli), black_box(socket), black_box(query));
             });
         });
-        group.bench_function(BenchmarkId::new("mcp_search", *query), |b| {
-            b.iter(|| {
-                mcp_search(black_box(mcp), black_box(query), false);
+        if let Some(mcp) = mcp {
+            group.bench_function(BenchmarkId::new("mcp_search", *query), |b| {
+                b.iter(|| {
+                    mcp_search(black_box(mcp), black_box(query), false);
+                });
             });
-        });
-        group.bench_function(BenchmarkId::new("mcp_search_all_symbols", *query), |b| {
-            b.iter(|| {
-                mcp_search(black_box(mcp), black_box(query), true);
+        }
+        if let Some(mcp) = mcp {
+            group.bench_function(BenchmarkId::new("mcp_search_all_symbols", *query), |b| {
+                b.iter(|| {
+                    mcp_search(black_box(mcp), black_box(query), true);
+                });
             });
-        });
+        }
     }
     group.finish();
 }
@@ -182,17 +188,19 @@ fn main() {
         );
     });
     let socket = server.socket().to_path_buf();
-    let mcp = support::RacliMcp::start(&workspace);
-    mcp.wait_for(
-        "search",
-        json!({"query": QUERIES[0]}),
-        |text| text.lines().count() > 1,
-        "racli mcp did not find the first query's symbols in time",
-    );
+    let mcp = support::start_mcp_if_enabled(&workspace);
+    if let Some(mcp) = &mcp {
+        mcp.wait_for(
+            "search",
+            json!({"query": QUERIES[0]}),
+            |text| text.lines().count() > 1,
+            "racli mcp did not find the first query's symbols in time",
+        );
+    }
 
     let mut criterion = Criterion::default()
         .measurement_time(Duration::from_secs(60))
         .configure_from_args();
-    bench_grep_vs_racli(&mut criterion, &racli, &socket, &mcp, &workspace);
+    bench_grep_vs_racli(&mut criterion, &racli, &socket, mcp.as_ref(), &workspace);
     criterion.final_summary();
 }
