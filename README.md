@@ -1,12 +1,16 @@
-[![CI Tests](https://github.com/aisrael/racli/actions/workflows/ci.yml/badge.svg)](https://github.com/aisrael/racli/actions/workflows/ci.yml)
-[![Crates.io](https://img.shields.io/crates/v/racli.svg)](https://crates.io/crates/racli)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)]
-
-
 racli - a CLI tool for [rust-analyzer](https://github.com/rust-lang/rust-analyzer)
 ====
 
-The latest version is **0.3.0**, which lets the position commands look symbols up by name, adds `find-definition --hover` and `--source` and `search --exact`, makes `--text` output read like grep's with 1-based positions, and starts CLI commands faster by leaving file watching to rust-analyzer. It has breaking changes to `--text` output and to how positions are given. See the [changelog](CHANGELOG.md) for details.
+[![CI Tests](https://github.com/aisrael/racli/actions/workflows/ci.yml/badge.svg)](https://github.com/aisrael/racli/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/racli.svg)](https://crates.io/crates/racli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+
+`racli` is meant to be a CLI for `rust-analyzer`. It's meant to:
+
+- make using `rust-analyzer` more efficient, but allowing a single `rust-analyzer` process to be shared across multiple editors and agents
+- provide an interface for AI agents to search and navigate a Rust codebase that's faster and more token-efficient than `grep`
+
+See the [changelog](CHANGELOG.md) for change history.
 
 ## Installation
 
