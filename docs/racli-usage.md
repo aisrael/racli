@@ -48,7 +48,16 @@ Two options narrow the definitions that a name finds. They choose definitions, n
 | `--kind <KIND>` | Use only definitions of this kind, as `racli search --text` prints it. For example, `function`, `method` or `struct`. |
 | `--glob <PATTERN>` | Use only definitions in files that match the glob, for example `'src/**/*.rs'`. A relative pattern starts at the current directory. |
 
-If rust-analyzer found more results than `--symbol-search-limit`, racli warns on stderr. Some definitions can be missing. This is common for short names in dependencies. Use a qualified name, for example `core::cmp::min`.
+### The result limit
+
+To find a name, racli asks rust-analyzer for a list of matching symbols. rust-analyzer returns only a limited number of symbols for each query. `--symbol-search-limit` sets this limit. The default is `1000`.
+
+- Set the option when you start the server, not on a client command: `racli server --symbol-search-limit 5000`. `racli tee`, `racli-tee` and `racli mcp` accept it too.
+- If rust-analyzer finds more symbols than the limit, racli removes the extra symbols and warns on stderr. Some definitions can then be missing.
+- This is common for short names in dependencies, for example `min`. Use a qualified name, for example `core::cmp::min`, or start the server with a higher limit.
+- `racli search` uses the same limit. It applies the limit to each `|`-separated pattern.
+
+See [Configuration](configuration.md#--symbol-search-limit-n) for more detail.
 
 ## Positions
 

@@ -48,7 +48,7 @@ Each `racli mcp` process starts its own rust-analyzer. To share one rust-analyze
 racli server
 ```
 
-This opens a socket at `/tmp/racli-<hash>.sock`, with a unique hash computed from the workspace directory. Set `RACLI_UNIX_SOCKET` to specify a socket path.
+This opens a socket at `/tmp/racli-<hash>.sock`, with a unique hash computed from the workspace directory. Set `RACLI_UNIX_SOCKET` to specify a socket path. See [Configuration](docs/configuration.md) for this and other options.
 
 In another terminal, run a `racli` client command in the same workspace or in any of its subdirectories.
 
@@ -78,6 +78,8 @@ Some editors cannot pass arguments to the server. For these editors, use `racli-
 ```
 
 To check if racli serves the current directory, run `racli tee --check`. It exits with 0 if racli serves the directory. Otherwise, it exits with 1.
+
+Because the backend `rust-analyzer` process is shared, `racli tee` has some [limitations](docs/racli-tee-limitations.md) vs a full-blown `rust-analyzer` LSP server.
 
 
 ## Features
@@ -124,6 +126,7 @@ Several editors and agents can share one `rust-analyzer` process, so each does n
 For more information, see:
 
 - [Usage](docs/racli-usage.md) - client commands for every command
+- [Configuration](docs/configuration.md) for environment variables, command-line options and logging
 - [Architecture](docs/high-level-architecture.md) for how the parts fit together
 - [ADRs](docs/adrs/) for the design decisions
 - [The `racli` agent skill](.agents/skills/racli/SKILL.md) for every command and option
