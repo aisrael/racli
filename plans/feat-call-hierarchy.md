@@ -20,13 +20,13 @@ LSP models call hierarchy as two steps:
 - **The server exposes granular RPCs, not one fused one.** `PrepareCallHierarchy`,
   `IncomingCalls`, `OutgoingCalls` — one RPC per LSP method, matching the
   existing convention (`Search`↔`workspace/symbol`, `FindReferences`↔
-  `textDocument/references`). The *client* chains them into what looks like
+  `textDocument/references`). The _client_ chains them into what looks like
   one command to the end user. The server stays a thin, stateless mirror of
   LSP, consistent with `Core`/`RacliSession` today.
 - **`CallHierarchyItem` must round-trip through the client opaquely.** LSP's
   `CallHierarchyItem` carries an optional `data: Value` field rust-analyzer
   uses to resolve the item on the next call. The client can't reconstruct it
-  from name/uri/range — it must hand back the *exact* item it received from
+  from name/uri/range — it must hand back the _exact_ item it received from
   `PrepareCallHierarchy`. The proto item carries an opaque `data_json`
   passthrough field the client never inspects.
 - **`prepareCallHierarchy` can return more than one candidate** (ambiguous

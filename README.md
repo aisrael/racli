@@ -81,7 +81,6 @@ To check if racli serves the current directory, run `racli tee --check`. It exit
 
 Because the backend `rust-analyzer` process is shared, `racli tee` has some [limitations](https://github.com/aisrael/racli/blob/main/docs/racli-tee-limitations.md) vs a full-blown `rust-analyzer` LSP server.
 
-
 ## Features
 
 Because `racli` uses `rust-analyzer` under the hood, it can do more than just text search: it understands Rust types, traits, modules and call paths.

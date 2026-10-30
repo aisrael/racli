@@ -6,14 +6,14 @@ These [Criterion](https://github.com/bheisler/criterion.rs) benchmarks compare r
 
 Each bench file covers one command:
 
-| Bench | Command |
-| --- | --- |
-| `search` | `racli search` (also with `--kind all-symbols`) |
-| `find_definition` | `racli find-definition` (with and without hover) |
-| `find_references` | `racli find-references` |
-| `find_implementations` | `racli find-implementations` |
-| `call_hierarchy` | `racli call-hierarchy --direction incoming` |
-| `document_symbols` | `racli document-symbols` |
+| Bench                  | Command                                          |
+| ---------------------- | ------------------------------------------------ |
+| `search`               | `racli search` (also with `--kind all-symbols`)  |
+| `find_definition`      | `racli find-definition` (with and without hover) |
+| `find_references`      | `racli find-references`                          |
+| `find_implementations` | `racli find-implementations`                     |
+| `call_hierarchy`       | `racli call-hierarchy --direction incoming`      |
+| `document_symbols`     | `racli document-symbols`                         |
 
 Each bench group has these variants:
 

@@ -27,11 +27,11 @@ A racli server must run for the workspace. Start one with `racli server` or `rac
 
 `find-definition`, `find-references`, `find-implementations` and `call-hierarchy` take one or more symbol names. A name is one of these:
 
-| Form | Example |
-| --- | --- |
-| A bare name | `mkfifo` |
+| Form                              | Example       |
+| --------------------------------- | ------------- |
+| A bare name                       | `mkfifo`      |
 | A module path from the crate root | `sys::mkfifo` |
-| A member of a type or trait | `Fifo::name` |
+| A member of a type or trait       | `Fifo::name`  |
 
 How names match:
 
@@ -43,9 +43,9 @@ How names match:
 
 Two options narrow the definitions that a name finds. They choose definitions, not results.
 
-| Option | Meaning |
-| --- | --- |
-| `--kind <KIND>` | Use only definitions of this kind, as `racli search --text` prints it. For example, `function`, `method` or `struct`. |
+| Option             | Meaning                                                                                                                             |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `--kind <KIND>`    | Use only definitions of this kind, as `racli search --text` prints it. For example, `function`, `method` or `struct`.               |
 | `--glob <PATTERN>` | Use only definitions in files that match the glob, for example `'src/**/*.rs'`. A relative pattern starts at the current directory. |
 
 ### The result limit
@@ -76,11 +76,11 @@ racli find-references --path src/sys.rs --line 3 --character 8
 
 ## Output formats
 
-| Option | Meaning |
-| --- | --- |
-| `--text` | One short line for each result. This is the default. |
-| `--json` | JSON. It keeps LSP's absolute URIs and 0-based ranges. |
-| `--csv` | CSV with a header row. Only `search` has it. |
+| Option                     | Meaning                                                          |
+| -------------------------- | ---------------------------------------------------------------- |
+| `--text`                   | One short line for each result. This is the default.             |
+| `--json`                   | JSON. It keeps LSP's absolute URIs and 0-based ranges.           |
+| `--csv`                    | CSV with a header row. Only `search` has it.                     |
 | `--output-format <FORMAT>` | `search` and `document-symbols` only. Same as the options above. |
 
 Text output uses fewer tokens than JSON. Use `--json` only when a program reads the output. For commands that take names, JSON is an array of `{"symbol": …, "result": …}`.
@@ -93,13 +93,13 @@ Finds symbols by a fuzzy name match.
 racli search <QUERY> [--kind <KIND>] [--scope <SCOPE>] [--exact] [--text | --json | --csv]
 ```
 
-| Option | Meaning |
-| --- | --- |
-| `--kind only-types` | Return types only. This is the default. |
-| `--kind all-symbols` | Also return functions, methods, constants, statics and fields. |
-| `--scope workspace` | Search the workspace crates only. This is the default. |
-| `--scope workspace-and-dependencies` | Also search dependencies and the standard library. |
-| `--exact` | Keep only symbols with exactly the name in the query. |
+| Option                               | Meaning                                                        |
+| ------------------------------------ | -------------------------------------------------------------- |
+| `--kind only-types`                  | Return types only. This is the default.                        |
+| `--kind all-symbols`                 | Also return functions, methods, constants, statics and fields. |
+| `--scope workspace`                  | Search the workspace crates only. This is the default.         |
+| `--scope workspace-and-dependencies` | Also search dependencies and the standard library.             |
+| `--exact`                            | Keep only symbols with exactly the name in the query.          |
 
 Use `|` in the query to search for more than one pattern. Use `\|` for a literal pipe. This is not full regular-expression syntax.
 
@@ -135,9 +135,9 @@ Shows where a symbol is defined.
 racli find-definition <NAME>… [--kind <KIND>] [--glob <PATTERN>] [--hover] [--source] [--text | --json]
 ```
 
-| Option | Meaning |
-| --- | --- |
-| `--hover` | Also print the signature and the doc comment of each definition. |
+| Option     | Meaning                                                               |
+| ---------- | --------------------------------------------------------------------- |
+| `--hover`  | Also print the signature and the doc comment of each definition.      |
 | `--source` | Also print the whole source of each definition, with its doc comment. |
 
 Use `--hover` to read a signature before you call a function. Use `--source` to read a body before you change it. Both save you from opening the file.
@@ -230,12 +230,12 @@ Shows the callers and the callees of a function.
 racli call-hierarchy <NAME>… [--direction <DIRECTION>] [--depth <N>] [--kind <KIND>] [--glob <PATTERN>] [--text | --json]
 ```
 
-| Option | Meaning |
-| --- | --- |
-| `--direction incoming` | Callers only. |
-| `--direction outgoing` | Callees only. |
-| `--direction both` | Callers and callees. This is the default. |
-| `--depth <N>` | How many levels of callers or callees to get. The default is 1. Each level costs one request for each item. |
+| Option                 | Meaning                                                                                                     |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `--direction incoming` | Callers only.                                                                                               |
+| `--direction outgoing` | Callees only.                                                                                               |
+| `--direction both`     | Callers and callees. This is the default.                                                                   |
+| `--depth <N>`          | How many levels of callers or callees to get. The default is 1. Each level costs one request for each item. |
 
 The command prints an indented outline. Callers follow `<- callers:` and callees follow `-> callees:`. For a name that is not a function, it prints `no call hierarchy item`.
 

@@ -130,7 +130,7 @@ many, it drops the extra one and marks the response `truncated`. The client then
 
 - a name that finds nothing says it may exist after all:
   `no symbol named min (rust-analyzer had more results than the server's --symbol-search-limit, so
-  some definitions may be missing; qualify the name or raise the limit)`;
+some definitions may be missing; qualify the name or raise the limit)`;
 - a name that finds definitions from a cut-off search warns that some may be missing;
 - `racli search` warns on stderr.
 
@@ -179,7 +179,7 @@ The MCP tools don't change for now. They should later get the same lookup by nam
 
 - **Breaking:** the four position commands no longer take the file as a positional argument.
   `racli find-references src/sys.rs --line 2 --character 7` becomes `racli find-references --path
-  src/sys.rs --line 2 --character 7`, and the old form is a usage error that says so.
+src/sys.rs --line 2 --character 7`, and the old form is a usage error that says so.
 - The four commands take `[NAME]...`, `--path`, `--line`, `--character`, `--kind` and `--glob`.
   A position on its own prints as before.
 - New fields: `container_name` on the gRPC `LspSymbolInformation` and `LspWorkspaceSymbol`

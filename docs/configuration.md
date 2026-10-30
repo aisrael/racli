@@ -11,13 +11,13 @@ You configure `racli` with environment variables, command-line options and one b
 
 ## Environment variables
 
-| Variable | Used by | Default | Purpose |
-| --- | --- | --- | --- |
-| `RACLI_UNIX_SOCKET` | server, `tee` and client commands | not set | Use this socket path. |
-| `RACLI_DERIVE_SOCKET_PATH` | server, `tee` and client commands | `1` | Turn per-project sockets on or off. |
-| `RACLI_LOG_LEVEL` | client commands | `info` | Log level for client commands. |
-| `RACLI_SERVER_LOG_LEVEL` | `server`, `mcp` and `tee` | `info` | Log level for racli's own messages. |
-| `RACLI_SERVER_LOG_FILE` | `server`, `mcp` and `tee` | not set | Write logs to this file, not to stderr. |
+| Variable                   | Used by                           | Default | Purpose                                 |
+| -------------------------- | --------------------------------- | ------- | --------------------------------------- |
+| `RACLI_UNIX_SOCKET`        | server, `tee` and client commands | not set | Use this socket path.                   |
+| `RACLI_DERIVE_SOCKET_PATH` | server, `tee` and client commands | `1`     | Turn per-project sockets on or off.     |
+| `RACLI_LOG_LEVEL`          | client commands                   | `info`  | Log level for client commands.          |
+| `RACLI_SERVER_LOG_LEVEL`   | `server`, `mcp` and `tee`         | `info`  | Log level for racli's own messages.     |
+| `RACLI_SERVER_LOG_FILE`    | `server`, `mcp` and `tee`         | not set | Write logs to this file, not to stderr. |
 
 An empty value is the same as an unset variable.
 
@@ -38,11 +38,11 @@ RACLI_UNIX_SOCKET=/tmp/my-project.sock racli search SymbolMatch
 
 ### `RACLI_DERIVE_SOCKET_PATH`
 
-| Value | Result |
-| --- | --- |
-| not set, empty, `1` or `true` | Each project has its own socket. This is the default. |
-| `0` or `false` | The server and the clients all use one socket, `/tmp/racli.sock`. |
-| any other value | racli prints a warning and acts as if the value is `0`. |
+| Value                         | Result                                                            |
+| ----------------------------- | ----------------------------------------------------------------- |
+| not set, empty, `1` or `true` | Each project has its own socket. This is the default.             |
+| `0` or `false`                | The server and the clients all use one socket, `/tmp/racli.sock`. |
+| any other value               | racli prints a warning and acts as if the value is `0`.           |
 
 The value is not case-sensitive. A client with this setting does not find per-project servers. A server with this setting does not serve per-project clients.
 
@@ -62,14 +62,14 @@ Two sets of variables control logging. One set is for client commands. The other
 
 Set a level as a name or as a number:
 
-| Number | Name |
-| --- | --- |
-| `0` | `off` |
-| `1` | `error` |
-| `2` | `warn` |
-| `3` | `info` |
-| `4` | `debug` |
-| `5` | `trace` |
+| Number | Name    |
+| ------ | ------- |
+| `0`    | `off`   |
+| `1`    | `error` |
+| `2`    | `warn`  |
+| `3`    | `info`  |
+| `4`    | `debug` |
+| `5`    | `trace` |
 
 Names are not case-sensitive. If the value is not valid, racli prints a warning on stderr and uses `info`.
 
@@ -154,7 +154,7 @@ This links the [notify](https://docs.rs/notify) crate. On macOS, the crate loads
 
 You cannot change these values:
 
-| Limit | Value |
-| --- | --- |
+| Limit                                | Value      |
+| ------------------------------------ | ---------- |
 | Time to wait for each client request | 60 seconds |
-| Time to wait for `racli version` | 10 seconds |
+| Time to wait for `racli version`     | 10 seconds |

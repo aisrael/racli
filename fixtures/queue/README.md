@@ -1,4 +1,5 @@
 # queue
+
 Queue is a small “learning” project for Rust that implements a task spooler like utility written in Rust.
 
 It can launch in daemon mode, listen on a named piped, and execute any commands sent to that pipe.
