@@ -5,8 +5,8 @@ description: >-
   (rust-analyzer): search symbols, go to definitions, find references and
   implementations, outline a file, and walk callers/callees, by symbol name or
   file position. Prefer racli over grep for any Rust symbol lookup; use grep
-  only for plain text or when racli finds nothing. For MCP, `racli mcp` runs
-  rust-analyzer in-process; start it with the workspace root as its cwd.
+  only for plain text or when racli finds nothing. For MCP, `racli mcp` starts
+  its own rust-analyzer child process; start it with the workspace root as its cwd.
 ---
 
 # racli

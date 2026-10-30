@@ -1,163 +1,131 @@
-[![CI Tests](https://github.com/aisrael/racli/actions/workflows/ci.yml/badge.svg)](https://github.com/aisrael/racli/actions/workflows/ci.yml)
-[![Crates.io](https://img.shields.io/crates/v/racli.svg)](https://crates.io/crates/racli)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)]
-
-
 racli - a CLI tool for [rust-analyzer](https://github.com/rust-lang/rust-analyzer)
 ====
 
-The latest version is **0.3.0**, which lets the position commands look symbols up by name, adds `find-definition --hover` and `--source` and `search --exact`, makes `--text` output read like grep's with 1-based positions, and starts CLI commands faster by leaving file watching to rust-analyzer. It has breaking changes to `--text` output and to how positions are given. See the [changelog](CHANGELOG.md) for details.
+[![CI Tests](https://github.com/aisrael/racli/actions/workflows/ci.yml/badge.svg)](https://github.com/aisrael/racli/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/racli.svg)](https://crates.io/crates/racli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/aisrael/racli/blob/main/LICENSE)
+
+`racli` is a CLI for `rust-analyzer`. It's meant to:
+
+- make using `rust-analyzer` more efficient, but allowing a single `rust-analyzer` process to be shared across multiple editors and agents
+- provide an interface for AI agents to search and navigate a Rust codebase that's faster and more token-efficient than `grep`
+
+See the [changelog](https://github.com/aisrael/racli/blob/main/CHANGELOG.md) for change history.
 
 ## Installation
+
+For now, `racli` requires [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html) to install:
 
 ```sh
 cargo install racli
 ```
 
-rust-analyzer watches the workspace for changes itself. To have racli watch it instead and send rust-analyzer the changes, as racli did before, build with the `notify` feature: `cargo install racli --features notify`. That links the [notify](https://docs.rs/notify) crate, which on macOS loads CoreFoundation and CoreServices every time `racli` starts, CLI commands included. See [ADR 005](docs/adrs/005-file-watching-by-rust-analyzer.md).
-
 ## Usage
 
-In a Rust project folder, first run the server:
+`racli` has three main usage modes:
+
+- as a standalone MCP server for agents
+- as a CLI client + local socket gRPC server
+- in 'tee' mode as a drop-in replacement for `rust-analyzer`
+
+### `racli` as an MCP server
+
+Start it in the root of your Rust workspace. For example, to add it to Claude Code:
+
+```sh
+claude mcp add racli -- racli mcp
+```
+
+The server gives your agent these tools: `search`, `find_definition`, `find_references`, `find_implementations`, `call_hierarchy` and `document_symbols`. They work like the CLI commands. They take symbol names and 1-based positions, and they return text.
+
+Each `racli mcp` process starts its own rust-analyzer. To share one rust-analyzer, use `racli server` or `racli tee`.
+
+### `racli server`
+
+`racli server` starts rust-analyzer and a gRPC server on a Unix socket. Start it in the root of your Rust workspace:
 
 ```sh
 racli server
 ```
 
-Then, to search for e.g. `worker`:
+This opens a socket at `/tmp/racli-<hash>.sock`, with a unique hash computed from the workspace directory. Set `RACLI_UNIX_SOCKET` to specify a socket path. See [Configuration](https://github.com/aisrael/racli/blob/main/docs/configuration.md) for this and other options.
+
+In another terminal, run a `racli` client command in the same workspace or in any of its subdirectories.
+
+For example:
 
 ```sh
-racli search worker
+racli search SymbolMatch
+racli find-definition run_cli_search
+racli find-references run_cli_search
+racli find-implementations CallHierarchyBackend
+racli call-hierarchy run_cli_search
+racli document-symbols src/search.rs
 ```
 
-## Architecture
+Each command prints one line of text for each result. Add `--json` to get JSON. Use `racli version` to see the client, server and rust-analyzer versions.
 
-In the usual setup there are three pieces:
-
-- **rust-analyzer** — the Language Server process that `racli server` drives over LSP.
-- **racli server** — a long-running gRPC listener on a per-project Unix socket (see [Sockets](#sockets)); it spawns `rust-analyzer`, completes an LSP `initialize` handshake with the current working directory as the workspace root, and serves RPCs to clients.
-- **racli (client)** — the same binary used in client mode: subcommands that find the project's socket and call the server.
-
-### Sockets
-
-Each project gets its own server socket, so several projects (or editor windows) can each run their own racli and rust-analyzer. The socket path is `/tmp/racli-<hash>.sock`, where the hash is taken from the server's working directory.
-
-Client commands find it automatically. Starting from their own working directory, they check it and then each parent directory in turn, and connect to the nearest one with a running server. So `racli search` works from any subdirectory of the project that `racli server` or `racli tee` was started in. If no server is found, the client prints a warning naming the directory and the socket it expected.
-
-- `RACLI_UNIX_SOCKET=<path>` sets an explicit socket path. It overrides discovery on both the server and the client side.
-- `RACLI_DERIVE_SOCKET_PATH=0` (or `false`) turns per-project sockets off, so servers and clients both use the single `/tmp/racli.sock`. Clients with this setting don't find per-project servers, and vice versa.
-- **racli tee** — `racli server` plus an LSP server on stdio for editors: the editor launches `racli tee` in place of `rust-analyzer`, and CLI/MCP clients share the same rust-analyzer through the socket.
-- **racli mcp** — MCP over stdio only: spawns rust-analyzer (and, with the `notify` feature, racli's file watcher) inside the MCP child process (no Unix socket), and serves the client commands as MCP tools (see [`racli mcp`](#racli-mcp)). Use **`racli server`** for `racli search`, `racli find-definition`, `racli find-references`, `racli document-symbols`, and `racli version`.
-
-Stop the server with Ctrl+C or SIGTERM to trigger LSP `shutdown`/`exit` and clean termination of the child.
-
-A high-level diagram lives in [docs/high-level-architecture.md](docs/high-level-architecture.md). Design decisions are recorded as ADRs in [docs/adrs](docs/adrs/):
-
-- [ADR 001: Lookup by Symbol](docs/adrs/001-lookup-by-symbol.md)
-- [ADR 002: 1-Based Positions and Grep-Style Text Output](docs/adrs/002-one-based-positions-and-text-output.md)
-- [ADR 003: A High-Level Client](docs/adrs/003-high-level-client.md)
-- [ADR 004: Backend Status in Response Metadata](docs/adrs/004-backend-status-in-response-metadata.md)
-- [ADR 005: File Watching by rust-analyzer](docs/adrs/005-file-watching-by-rust-analyzer.md)
-- [ADR 006: MCP Tools Mirror the CLI](docs/adrs/006-mcp-tools-mirror-the-cli.md)
-
-### `racli server`
-
-`racli server` binds the project's gRPC Unix socket (see [Sockets](#sockets)) and, when `rust-analyzer` is available on your `PATH`, spawns it as a child in the current working directory and completes the LSP `initialize` handshake described above.
-
-If you start `racli server`, `racli tee` or `racli-tee` from a terminal in a directory that racli is already serving, it says so and exits 1 instead of starting a second rust-analyzer. When stdin isn't a terminal, the new instance takes over the socket. That's what happens when an editor restarts its server, so restarts aren't blocked by an old instance that hasn't exited yet.
-
-`--symbol-search-limit <N>` (also accepted by `racli mcp`) caps how many results `Search` returns per `workspace/symbol` query (default `1000`; rust-analyzer's own default is `128`). racli sends one more than the limit to rust-analyzer as `workspace.symbol.search.limit` during `initialize`, so it can tell a cut-off from an exact fit: when rust-analyzer returns more than the limit, `Search` drops the extra results and sets `truncated` on its response, and `racli search` warns on stderr. The limit applies to each `|`-separated pattern separately.
+If a server already runs for the directory, `racli server` prints a message and exits.
 
 ### `racli tee`
 
-`racli tee` does everything `racli server` does (spawns rust-analyzer, serves gRPC on the project's socket; see [Sockets](#sockets)). It also speaks LSP on stdin/stdout, so an editor can use it as its rust-analyzer while `racli search` and friends query the same instance. The stdio side never talks to rust-analyzer directly. It is a gRPC client of its own socket, using the `LspInitialize` / `LspRequest` / `LspNotify` / `LspEvents` RPCs, so editor requests are sequenced alongside every other client's.
+`racli tee` is a drop-in replacement for `rust-analyzer`. Your editor starts it and talks to using LSP ([Language Server Protocol](https://microsoft.github.io/language-server-protocol/)) over stdio. It also serves the same socket as `racli server`. Your editor, the CLI and your agents can then share one `rust-analyzer` process.
 
-Because sockets are per project, each editor window gets its own `racli tee`, and `racli search` run inside that project reaches the editor's rust-analyzer. The chosen socket path is logged in the `racli tee starting` line.
-
-It stops when the editor sends `exit` or closes stdin, or on SIGINT/SIGTERM. Logs go to stderr, or to `$RACLI_SERVER_LOG_FILE`, and never to stdout. A relative `RACLI_SERVER_LOG_FILE` is based on the working directory, and missing directories are created. So `RACLI_SERVER_LOG_FILE=.racli/racli.log` gives each project its own log, and you may want to add `.racli/` to that project's `.gitignore`.
-
-Editors that take a server path with no arguments (for example VS Code's `rust-analyzer.server.path`) can use the `racli-tee` binary, which `cargo install racli` installs alongside `racli`. It behaves exactly like `racli tee` and takes the same options:
+Some editors cannot pass arguments to the server. For these editors, use `racli-tee`, a thin wrapper that functions the same as `racli tee`. For example, in VS Code:
 
 ```json
-"rust-analyzer.server.path": "~/.cargo/bin/racli-tee"
+{ "rust-analyzer.server.path": "racli-tee" }
 ```
 
-To check whether racli is serving a project, run `racli tee --check` (or `racli-tee --check`) in the project root. It asks the server on that directory's socket for its version without starting anything. If a server answers, it prints the version and socket and exits 0. Otherwise it says why on stderr and exits 1. Unlike client commands, it doesn't look for a server in parent directories.
+To check if racli serves the current directory, run `racli tee --check`. It exits with 0 if racli serves the directory. Otherwise, it exits with 1.
 
-Limitations:
-- The editor's `initialize` is answered with racli's own `InitializeResult`, and the editor's capabilities and `initializationOptions` are ignored.
-- Requests are handled one at a time, and `$/cancelRequest` is ignored.
-- Only `textDocument/publishDiagnostics`, `experimental/serverStatus`, `window/showMessage` and `window/logMessage` reach the editor. Server-to-client requests are not forwarded.
+Because the backend `rust-analyzer` process is shared, `racli tee` has some [limitations](https://github.com/aisrael/racli/blob/main/docs/racli-tee-limitations.md) vs a full-blown `rust-analyzer` LSP server.
 
-### `racli mcp`
 
-`racli mcp` serves the [client commands](#client-commands) as [MCP](https://modelcontextprotocol.io) tools on stdin/stdout, for agents and other MCP hosts that start it as a child process. It starts its own rust-analyzer, with its working directory as the workspace root, and neither needs nor uses a socket, so configure the host to start it in the project root. It takes `--symbol-search-limit`, as `racli server` does.
+## Features
 
-Each tool is its command, with the same options as parameters (see [ADR 006](docs/adrs/006-mcp-tools-mirror-the-cli.md)):
+Because `racli` uses `rust-analyzer` under the hood, it can do more than just text search: it understands Rust types, traits, modules and call paths.
 
-| Tool                   | Command                     | Parameters                                                                            |
-| ---------------------- | --------------------------- | ------------------------------------------------------------------------------------- |
-| `search`               | `racli search`              | `query`, `kind`, `scope`, `exact`, `format`                                           |
-| `find_definition`      | `racli find-definition`     | `names`, `path`, `line`, `character`, `kind`, `glob`, `hover`, `source`, `format`     |
-| `find_references`      | `racli find-references`     | `names`, `path`, `line`, `character`, `kind`, `glob`, `format`                        |
-| `find_implementations` | `racli find-implementations` | `names`, `path`, `line`, `character`, `kind`, `glob`, `format`                        |
-| `call_hierarchy`       | `racli call-hierarchy`      | `names`, `path`, `line`, `character`, `kind`, `glob`, `direction`, `depth`, `format`  |
-| `document_symbols`     | `racli document-symbols`    | `path`, `format`                                                                      |
-| `get_version`          | `racli version`             | none                                                                                  |
+### Exact results
 
-For example, the arguments `{"names": ["mkfifo"]}`, `{"names": ["Fifo::name"], "format": "json"}` or `{"path": "src/sys.rs", "line": 3, "character": 8}`. As on the command line, `line` and `character` are 1-based, and `path` is relative to the working directory, here the workspace root.
+`racli find-references` and `racli find-definition` return real uses and definitions. They do not return matches in comments, strings or other symbols with the same name.
 
-- **Output:** a tool returns what its command prints by default, as a text content block, so a `path:line:col` it prints can be passed back as `path`, `line` and `character`. With `format: "json"` it returns the command's JSON instead, with LSP's URIs and 0-based ranges, as a string in a text block. `get_version` returns structured JSON.
-- **Errors and warnings:** what the command would print on stderr, such as the closest symbols for a name that finds nothing, `call-hierarchy`'s "did you mean" candidates, or a search cut off at `--symbol-search-limit`, comes as a second text block. If nothing was found at all, the result is an error (`isError`). Arguments the command would reject, such as `line: 0` or `glob` without `names`, are an error result too, with the reason.
-- **Backend status:** every result's `_meta` has `racli/backend`: `ready`, `indexing` or `error`, with `racli/backendMessage` for `error`. A result produced while rust-analyzer wasn't ready also has a text block saying its results may be incomplete.
+### Look up by name
 
-## Client commands
+- `racli find-references`
+- `racli find-definition`
+- `racli find-implementations`
+- `racli call-hierarchy`
 
-These subcommands expect a running `racli server` or `racli tee` for the project they're run in (found as described in [Sockets](#sockets)), unless noted otherwise.
+Each takes one or more symbol names.
 
-### `racli search <query>`
+### Implementations
 
-Runs LSP [`workspace/symbol`](https://rust-analyzer.github.io/book/features.html#workspace-symbol) through the server: the client calls gRPC `Search`, the server forwards the query to rust-analyzer, and the reply is a structured [`WorkspaceSymbolResponse`](proto/racli.proto) mirroring `lsp_types::WorkspaceSymbolResponse` (either a **flat** list of symbol information or a **nested** list of workspace symbols). Symbols are scoped to the server's current working directory when `racli server` was started. By default, output is **text**, one symbol per line; use `--json` or `--csv` (or `--output-format`) for JSON (one array of symbol objects) or CSV.
+`find-implementations` lists the `impl` blocks of a trait or type, and the overrides of a trait method.
 
-Separate alternative patterns with a single unescaped `|` (similar to `grep -E`), for example `racli search 'Foo|Bar'`. Each pattern is still a plain substring for rust-analyzer, not a full regular expression. A literal `|` in a pattern must be written as `\|` (a backslash before the pipe). Example: `racli search 'a\|b|c'` searches for the substring `a|b` and for `c`, then merges and dedupes the combined results.
+### Call hierarchy
 
-rust-analyzer matches each pattern fuzzily, so `racli search name` also returns `Named`. Pass `--exact` to keep only symbols named exactly as a pattern: `racli search 'name|unlink' --kind all-symbols --exact`. A qualified pattern such as `sys::mkfifo` is compared by its last segment, after rust-analyzer resolves the module path.
+`call-hierarchy` shows the callers and callees of a function, to the depth you choose.
 
-By default rust-analyzer returns only types (modules, structs, enums, traits, type aliases) from workspace crates. `--kind all-symbols` adds functions, methods, constants, statics, and fields, and `--scope workspace-and-dependencies` adds dependency crates and the standard library. An empty query (`racli search ''`) lists every matching symbol up to the server's `--symbol-search-limit`. The MCP `search` tool takes the same options as `kind` (`only_types` / `all_symbols`), `scope` (`workspace` / `workspace_and_dependencies`) and `exact`.
+### Read less code
 
-### `racli find-definition --path <PATH> --line <N> --character <N>`
+`document-symbols` prints the outline of a file. `find-definition --hover` prints a signature and its docs. `find-definition --source` prints the whole body of a definition.
 
-Runs LSP [`textDocument/definition`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_definition): the client calls gRPC `FindDefinition` with an absolute filesystem path (after canonicalizing `PATH` on the client) plus the position from `--line` and `--character`. Both are **1-based**, as in grep, rustc and editors, and the column counts UTF-16 units as LSP does; the client subtracts 1 from each to get LSP's 0-based `Position`. The server resolves the path again, builds a `file://` URI, and returns a list of definition sites (scalar, array, and link-shaped LSP results are flattened to `uri` + `range`). Default output is **text**: grep-style lines, `path:line:col: source line`, with the path relative to the current directory (absolute outside it, e.g. for dependency sources) and a 1-based line and column, so a position it prints can be passed back to `--line` and `--character`. Pass `--json` for JSON instead, with LSP's absolute URIs and 0-based ranges. Use the same workspace and socket rules as `racli search`; rust-analyzer must have indexed the crate (if the server just started, wait until analysis has caught up—for example until `racli search` returns symbols—before relying on definitions).
+### Dependencies and `std`
 
-`--hover` adds each definition's signature and doc comment, from rust-analyzer's hover, and `--source` adds its whole source, including the doc comment, with line numbers. Both work in dependencies too: `racli find-definition glob::MatchOptions --hover --source`. In JSON, each location gains `hover` (rust-analyzer's Markdown) and `source` (`range` and `text`) fields.
+Look up symbols in your dependencies and the standard library with `search --scope workspace-and-dependencies`.
 
-### `racli find-references --path <PATH> --line <N> --character <N>`
+### Short output
 
-Runs LSP [`textDocument/references`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_references): the client calls gRPC `FindReferences` with an absolute filesystem path (after canonicalizing `PATH` on the client) plus the position from `--line` and `--character`. Both are **1-based**, as in grep, rustc and editors, and the column counts UTF-16 units as LSP does; the client subtracts 1 from each to get LSP's 0-based `Position`. The declaration is included in the results. The server resolves the path again, builds a `file://` URI, and returns a list of reference locations (`uri` + `range`). Default output is **text**: grep-style `path:line:col: source line` lines, as for `find-definition`; pass `--json` for JSON. Use the same workspace and socket rules as `racli search` and `racli find-definition`.
+Each result is one line: `{path}:{line}:{col}`. Use `--json` or `--csv` for JSON or CSV output, suitable for programmatic parsing.
 
-### Symbol names
+### One `rust-analyzer`
 
-`find-definition`, `find-references`, `find-implementations` and `call-hierarchy` take symbol names as positional arguments, as well as, or instead of, a position given with `--path <PATH> --line <N> --character <N>`:
+Several editors and agents can share one `rust-analyzer` process, so each does not start its own.
 
-```sh
-racli find-references mkfifo
-racli find-references sys::mkfifo            # a module path from the crate root
-racli find-references Fifo::name             # the type or trait that contains it
-racli find-references SymbolMatch SymbolFilter   # several names
-racli find-definition Fifo --kind struct --glob 'src/**'
-racli find-references mkfifo --path src/main.rs --line 86 --character 32   # names and a position
-```
+For more information, see:
 
-Every positional argument is a name and must be a Rust path (`mkfifo`, `sys::mkfifo`, `Fifo::name`, `r#type`). Without `--glob`, a name is looked up in the whole workspace. The client finds each name's definitions with `workspace/symbol` over all symbol kinds, keeps the ones named exactly as given, and runs the command from each one's position. rust-analyzer resolves a module path itself; for `Type::member`, the client matches the member's LSP `containerName` instead. It searches the workspace first, then its dependencies.
-
-`--kind` keeps definitions of one kind, as `racli search --text` prints it (`function`, `method`, `struct`, …, in any case). `--glob <PATTERN>` keeps definitions in files the pattern matches, as a shell glob would: `*` stays within one path component and `**` spans several, so `src/**` is everything under `src/`. A relative pattern matches files under the current directory. Both choose which definitions a name finds, not which results are shown, and both apply to names only.
-
-Each definition gets its own result, and a definition found twice is run once. With `--text`, each result follows a line naming the symbol, in the layout of `racli search --text`; JSON output is an array of `{"symbol": {name, kind, containerName?, uri, range}, "result": …}`, where `result` is what the command prints for a position. A position given with names is labelled with the symbol it refers to. A position on its own prints as before. If no symbol has a name, the error lists the closest symbols to retry with, and the other names still run. If rust-analyzer's results were cut off at the server's `--symbol-search-limit`, the lookup says some definitions may be missing; a qualified name avoids that. See [ADR 001](docs/adrs/001-lookup-by-symbol.md).
-
-### `racli document-symbols <PATH>`
-
-Runs LSP [`textDocument/documentSymbol`](https://microsoft.github.io/language-server-protocol/specifications/specification-3-16/#textDocument_documentSymbol): the client calls gRPC `DocumentSymbols` with an absolute filesystem path (after canonicalizing `PATH` on the client). Unlike `find-definition`/`find-references`, this is **file-scoped only** — no line/character. The server resolves the path again, builds a `file://` URI, and returns a hierarchical outline of the symbols in that file (modules, structs, functions, methods nested under `impl` blocks, etc.), each with `name`, `kind`, `range`, `selectionRange`, an optional `detail`, and nested `children`. Default output is an **indented tree** (two spaces per nesting depth); pass `--json` for an array of top-level symbol objects, each recursively nesting `children`, or select explicitly with `--text`/`--json`/`--output-format`. Use the same workspace and socket rules as `racli search`.
-
-### `racli version`
-
-Prints the client version from the binary (`CARGO_PKG_VERSION`). If a server answers on the project's socket, prints the server version from gRPC `GetVersion`. If the server is missing, errors, or does not respond within 10 seconds, a message is written to stderr and only the client line is printed to stdout.
+- [Usage](https://github.com/aisrael/racli/blob/main/docs/racli-usage.md) - client commands for every command
+- [Configuration](https://github.com/aisrael/racli/blob/main/docs/configuration.md) for environment variables, command-line options and logging
+- [Architecture](https://github.com/aisrael/racli/blob/main/docs/high-level-architecture.md) for how the parts fit together
+- [The `racli` agent skill](https://github.com/aisrael/racli/blob/main/.agents/skills/racli/SKILL.md) for every command and option

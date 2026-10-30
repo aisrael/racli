@@ -47,7 +47,7 @@ struct Args {
 enum Command {
     /// Start the gRPC server on the Unix socket.
     Server(ServerArgs),
-    /// MCP stdio transport (`rmcp`); rust-analyzer and file watching run in-process (no Unix socket).
+    /// MCP stdio transport (`rmcp`); starts its own rust-analyzer child process (no Unix socket).
     Mcp(McpArgs),
     /// Serve gRPC on the Unix socket and LSP on stdio (for editors), routing stdio requests through the socket.
     Tee(tee::TeeArgs),
