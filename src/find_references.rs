@@ -17,6 +17,7 @@ use crate::symbol::SymbolArgs;
 use crate::symbol::SymbolResultJson;
 use crate::symbol::write_symbol_results_json;
 use crate::text_position::SourceLines;
+use crate::text_position::display_path;
 use crate::text_position::parse_one_based;
 
 /// Arguments for `racli find-references` (LSP `textDocument/references`, declaration included).
@@ -129,12 +130,12 @@ fn write_find_references_json(out: &mut CommandOutput, resp: &FindReferencesResp
     }
 }
 
-/// The JSON rows for a [`FindReferencesResponse`]: one `uri` + `range` per location.
+/// The JSON rows for a [`FindReferencesResponse`]: one `path` + `range` per location.
 fn find_references_json_rows(resp: &FindReferencesResponse) -> Vec<ReferenceLocationJson> {
     resp.locations
         .iter()
         .map(|loc| ReferenceLocationJson {
-            uri: loc.uri.clone(),
+            path: display_path(&loc.uri),
             range: proto_lsp_range_to_json(loc.range.as_ref().unwrap_or(&default_empty_range())),
         })
         .collect()
@@ -150,7 +151,7 @@ fn default_empty_range() -> crate::proto::racli::LspRange {
 /// Single reference row in JSON output.
 #[derive(Serialize)]
 struct ReferenceLocationJson {
-    uri: String,
+    path: String,
     range: ReferenceRangeJson,
 }
 

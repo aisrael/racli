@@ -30,8 +30,8 @@ use crate::symbol;
 use crate::symbol::SymbolArgs;
 use crate::symbol::SymbolResultJson;
 use crate::symbol::write_symbol_results_json;
+use crate::text_position::display_path;
 use crate::text_position::parse_one_based;
-use crate::text_position::position_text;
 
 /// Which side of the call graph to walk from the resolved item.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum, Deserialize, Serialize, JsonSchema)]
@@ -139,7 +139,7 @@ pub struct RangeJson {
 pub struct CallHierarchyItemJson {
     pub name: String,
     pub kind: String,
-    pub uri: String,
+    pub path: String,
     pub range: RangeJson,
     pub selection_range: RangeJson,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -195,7 +195,7 @@ fn item_to_json(item: &LspCallHierarchyItem) -> CallHierarchyItemJson {
         kind: crate::lsp_map::symbol_kind_to_string(crate::lsp_map::symbol_kind_from_i32(
             item.kind,
         )),
-        uri: item.uri.clone(),
+        path: display_path(&item.uri),
         range: item.range.as_ref().map(range_to_json).unwrap_or_default(),
         selection_range: item
             .selection_range
@@ -482,7 +482,7 @@ fn write_call_nodes_text(out: &mut CommandOutput, nodes: &[CallNodeJson], indent
 /// An item's `path:line:col`, at the start of its name, with 1-based line and column.
 fn item_position_text(item: &CallHierarchyItemJson) -> String {
     let start = &item.selection_range.start;
-    position_text(&item.uri, start.line, start.character)
+    format!("{}:{}:{}", item.path, start.line + 1, start.character + 1)
 }
 
 #[cfg(test)]

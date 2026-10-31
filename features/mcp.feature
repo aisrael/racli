@@ -45,14 +45,14 @@ Feature: racli mcp tools mirror the CLI commands
     Then the tool result should not be an error
     And the output should contain "src/sys.rs:3:8: pub fn mkfifo"
 
-  Scenario: format json returns the CLI's JSON, with LSP's URIs and 0-based ranges
+  Scenario: format json returns the CLI's JSON, with relative paths and 0-based ranges
     When the MCP tool "find_definition" is called with:
       """
       {"path": "src/main.rs", "line": 81, "character": 22, "format": "json"}
       """
     Then the tool result should not be an error
     And the JSON output should match JSONPath "$[?@.range.start.line == 2 && @.range.start.character == 7]"
-    And the JSON output should match JSONPath "$[*].uri" with a value ending with "/fixtures/queue/src/sys.rs"
+    And the JSON output should match JSONPath "$[*].path" with a value ending with "src/sys.rs"
 
   Scenario Outline: a type or trait qualifies a method
     When the MCP tool "find_references" is called with:
@@ -118,7 +118,7 @@ Feature: racli mcp tools mirror the CLI commands
       """
     Then the tool result should not be an error
     And the JSON output should be an array of 1 item
-    And the JSON output should match JSONPath "$[0].result[*].uri" with a value ending with "sys.rs"
+    And the JSON output should match JSONPath "$[0].result[*].path" with a value ending with "sys.rs"
 
   Scenario: glob is relative to the workspace root
     When the MCP tool "find_references" is called with:

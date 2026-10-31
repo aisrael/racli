@@ -60,7 +60,7 @@ Feature: racli find-definition
       racli find-definition Named --json
       """
     Then it should exit with status code 0
-    And the JSON output should match JSONPath "$[0].result[0].uri" with a value ending with "sys.rs"
+    And the JSON output should match JSONPath "$[0].result[0].path" with a value ending with "sys.rs"
     And the JSON output should not match JSONPath "$[0].result[0].hover"
     And the JSON output should not match JSONPath "$[0].result[0].source"
 

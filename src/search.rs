@@ -25,9 +25,9 @@ use crate::text_position::position_text;
 pub enum SearchOutputFormat {
     /// One human-readable line per symbol (legacy plain-text layout).
     Text,
-    /// One JSON array of objects with `name`, `kind`, `uri`, and optional `range`.
+    /// One JSON array of objects with `name`, `kind`, `path`, and optional `range`.
     Json,
-    /// RFC 4180-style CSV with a header row (`name`, `kind`, `uri`, `range`).
+    /// RFC 4180-style CSV with a header row (`name`, `kind`, `path`, `range`).
     Csv,
 }
 
@@ -205,7 +205,7 @@ fn symbol_location_text(uri: &str, range: Option<&crate::proto::racli::LspRange>
 struct SearchSymbolJson {
     name: String,
     kind: String,
-    uri: String,
+    path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     range: Option<SearchRangeJson>,
 }
@@ -241,7 +241,7 @@ fn search_response_to_json_rows(
                 rows.push(SearchSymbolJson {
                     name: it.name,
                     kind: it.kind,
-                    uri: it.uri,
+                    path: display_path(&it.uri),
                     range: it.range.as_ref().map(proto_lsp_range_to_json),
                 });
             }
@@ -251,7 +251,7 @@ fn search_response_to_json_rows(
                 rows.push(SearchSymbolJson {
                     name: it.name,
                     kind: it.kind,
-                    uri: it.uri,
+                    path: display_path(&it.uri),
                     range: it.range.as_ref().map(proto_lsp_range_to_json),
                 });
             }
@@ -310,12 +310,13 @@ fn csv_escape_field(s: &str) -> String {
     }
 }
 
-/// Writes search results as CSV with header `name,kind,uri,range` to `w`.
+/// Writes search results as CSV with header `name,kind,path,range` to `w`; the `path` column is
+/// the same path as `--text` output.
 fn write_search_response_csv(
     mut w: impl Write,
     resp: crate::proto::racli::SearchResponse,
 ) -> std::io::Result<()> {
-    writeln!(w, "name,kind,uri,range")?;
+    writeln!(w, "name,kind,path,range")?;
     for row in search_response_to_json_rows(resp) {
         let range_s = row
             .range
@@ -327,7 +328,7 @@ fn write_search_response_csv(
             "{},{},{},{}",
             csv_escape_field(&row.name),
             csv_escape_field(&row.kind),
-            csv_escape_field(&row.uri),
+            csv_escape_field(&row.path),
             csv_escape_field(&range_s),
         )?;
     }
@@ -395,7 +396,7 @@ mod search_output_tests {
         let v = serde_json::to_value(&rows).expect("serialize");
         assert_eq!(v[0]["name"], "foo");
         assert_eq!(v[0]["kind"], "FUNCTION");
-        assert_eq!(v[0]["uri"], "file:///a.rs");
+        assert_eq!(v[0]["path"], "/a.rs");
         assert_eq!(v[0]["range"]["start"]["line"], 1);
         assert_eq!(v[0]["range"]["end"]["character"], 4);
     }
@@ -442,8 +443,8 @@ mod search_output_tests {
         write_search_response_csv(&mut buf, resp).expect("csv");
         let s = String::from_utf8(buf).expect("utf8");
         let lines: Vec<&str> = s.lines().collect();
-        assert_eq!(lines[0], "name,kind,uri,range");
-        assert_eq!(lines[1], "x,CLASS,file:///c.rs,");
+        assert_eq!(lines[0], "name,kind,path,range");
+        assert_eq!(lines[1], "x,CLASS,/c.rs,");
     }
 
     #[test]
@@ -475,7 +476,7 @@ mod search_output_tests {
         write_search_response_csv(&mut buf, resp).expect("csv");
         let s = String::from_utf8(buf).expect("utf8");
         let lines: Vec<&str> = s.lines().collect();
-        assert_eq!(lines[1], "\"a,b\",FN,file:///d.rs,0:0-0:1");
+        assert_eq!(lines[1], "\"a,b\",FN,/d.rs,0:0-0:1");
     }
 
     #[test]

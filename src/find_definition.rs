@@ -22,6 +22,7 @@ use crate::symbol::SymbolArgs;
 use crate::symbol::SymbolResultJson;
 use crate::symbol::write_symbol_results_json;
 use crate::text_position::SourceLines;
+use crate::text_position::display_path;
 use crate::text_position::parse_one_based;
 
 /// Arguments for `racli find-definition` (LSP `textDocument/definition`).
@@ -168,7 +169,7 @@ fn find_definition_json_rows<'a>(
         .map(|(i, loc)| {
             let detail = details.get(i);
             DefinitionLocationJson {
-                uri: loc.uri.clone(),
+                path: display_path(&loc.uri),
                 range: proto_lsp_range_to_json(
                     loc.range.as_ref().unwrap_or(&default_empty_range()),
                 ),
@@ -189,7 +190,7 @@ fn default_empty_range() -> crate::proto::racli::LspRange {
 /// Single definition row in JSON output.
 #[derive(Serialize)]
 struct DefinitionLocationJson<'a> {
-    uri: String,
+    path: String,
     range: DefinitionRangeJson,
     /// rust-analyzer's hover as Markdown, with `--hover`.
     #[serde(skip_serializing_if = "Option::is_none")]

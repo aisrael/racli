@@ -32,7 +32,7 @@ sequenceDiagram
     Server->>RA: LSP workspace/symbol<br/>params: {"query": "workspace"}
     RA-->>Server: result (symbols)
     Server-->>Client: SearchResponse<br/>(workspace_symbol_response)
-    Client-->>User: JSON on stdout<br/>(name, kind, uri, range)
+    Client-->>User: JSON on stdout<br/>(name, kind, path, range)
 ```
 
 The client only speaks gRPC to `racli server`, and finds the server's socket by checking its working directory and then each parent directory for a running server. The server owns the `rust-analyzer` process and the LSP session for the directory where the server was started.
