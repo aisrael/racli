@@ -23,4 +23,4 @@ Feature: racli call-hierarchy
       racli call-hierarchy --path fixtures/queue/src/sys.rs --line 3 --character 8 --direction incoming --json
       """
     Then it should exit with status code 0
-    And the JSON output should match JSONPath "$.incoming[*].uri" with a value ending with "main.rs"
+    And the JSON output should match JSONPath "$.incoming[*].path" with a value ending with "main.rs"

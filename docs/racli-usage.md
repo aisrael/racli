@@ -79,7 +79,7 @@ racli find-references --path src/sys.rs --line 3 --character 8
 | Option                     | Meaning                                                          |
 | -------------------------- | ---------------------------------------------------------------- |
 | `--text`                   | One short line for each result. This is the default.             |
-| `--json`                   | JSON. It keeps LSP's absolute URIs and 0-based ranges.           |
+| `--json`                   | JSON. Paths are the same as in text; ranges are 0-based.         |
 | `--csv`                    | CSV with a header row. Only `search` has it.                     |
 | `--output-format <FORMAT>` | `search` and `document-symbols` only. Same as the options above. |
 
@@ -291,6 +291,4 @@ If it cannot reach a server within 10 seconds, it prints the client version and 
 
 ## Related documents
 
-- [ADR 001: Lookup by Symbol](adrs/001-lookup-by-symbol.md)
-- [ADR 002: 1-Based Positions and Grep-Style Text Output](adrs/002-one-based-positions-and-text-output.md)
 - [High-level architecture](high-level-architecture.md)

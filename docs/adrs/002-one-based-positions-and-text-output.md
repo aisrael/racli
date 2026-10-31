@@ -33,6 +33,9 @@ fixtures/queue/src/sys.rs:3:8: pub fn mkfifo(path: &str, mode: u16) -> i32 {
 
 ### 3. JSON, CSV, gRPC and MCP keep LSP's positions
 
+> [!NOTE]
+> 2026-10-30 Superseded by [ADR 007](007-relative-paths-in-json.md).
+
 They keep absolute URIs and 0-based ranges, so tools that read them don't change, and an MCP
 result's positions still work as MCP inputs.
 

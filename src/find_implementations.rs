@@ -17,6 +17,7 @@ use crate::symbol::SymbolArgs;
 use crate::symbol::SymbolResultJson;
 use crate::symbol::write_symbol_results_json;
 use crate::text_position::SourceLines;
+use crate::text_position::display_path;
 use crate::text_position::parse_one_based;
 
 /// Arguments for `racli find-implementations` (LSP `textDocument/implementation`).
@@ -131,14 +132,14 @@ fn write_find_implementations_json(out: &mut CommandOutput, resp: &FindImplement
     }
 }
 
-/// The JSON rows for a [`FindImplementationsResponse`]: one `uri` + `range` per location.
+/// The JSON rows for a [`FindImplementationsResponse`]: one `path` + `range` per location.
 fn find_implementations_json_rows(
     resp: &FindImplementationsResponse,
 ) -> Vec<ImplementationLocationJson> {
     resp.locations
         .iter()
         .map(|loc| ImplementationLocationJson {
-            uri: loc.uri.clone(),
+            path: display_path(&loc.uri),
             range: proto_lsp_range_to_json(loc.range.as_ref().unwrap_or(&default_empty_range())),
         })
         .collect()
@@ -154,7 +155,7 @@ fn default_empty_range() -> crate::proto::racli::LspRange {
 /// Single implementation row in JSON output.
 #[derive(Serialize)]
 struct ImplementationLocationJson {
-    uri: String,
+    path: String,
     range: ImplementationRangeJson,
 }
 

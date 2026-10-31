@@ -69,14 +69,14 @@ Feature: racli --text output and 1-based positions
     Then it should exit with status code 0
     And the output should contain "mkfifo (FUNCTION) 3:1-9:2"
 
-  Scenario: JSON keeps LSP's absolute URIs and 0-based ranges
+  Scenario: JSON prints the same relative paths as text, with 0-based ranges
     When the following command is run:
       """
       racli find-definition --path fixtures/queue/src/main.rs --line 81 --character 22 --json
       """
     Then it should exit with status code 0
     And the JSON output should match JSONPath "$[?@.range.start.line == 2 && @.range.start.character == 7]"
-    And the JSON output should match JSONPath "$[*].uri" with a value ending with "/fixtures/queue/src/sys.rs"
+    And the JSON output should match JSONPath "$[*].path" with a value ending with "fixtures/queue/src/sys.rs"
 
   Scenario Outline: 0 isn't a position
     When the following command is run:

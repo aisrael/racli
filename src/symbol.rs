@@ -19,6 +19,7 @@ use crate::racli_backend::RacliBackend;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchOptions;
 use crate::rust_analyzer::SymbolSearchScope;
+use crate::text_position::display_path;
 use crate::text_position::position_text;
 
 /// How many of the closest symbols a "not found" error lists.
@@ -62,8 +63,15 @@ pub struct SymbolMatch {
     /// The item that contains the symbol, e.g. the type of a method.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_name: Option<String>,
+    /// The file's URI, printed in JSON as `path`: the same path `--text` shows.
+    #[serde(rename = "path", serialize_with = "serialize_uri_as_path")]
     pub uri: String,
     pub range: RangeJson,
+}
+
+/// Serializes a file URI as its `--text` path.
+fn serialize_uri_as_path<S: serde::Serializer>(uri: &str, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&display_path(uri))
 }
 
 /// LSP range as JSON with `start` and `end` positions.
