@@ -8,7 +8,7 @@ racli - a CLI tool for [rust-analyzer](https://github.com/rust-lang/rust-analyze
 `racli` is a CLI for `rust-analyzer`. It's meant to:
 
 - make using `rust-analyzer` more efficient, but allowing a single `rust-analyzer` process to be shared across multiple editors and agents
-- provide an interface for AI agents to search and navigate a Rust codebase that's faster and more token-efficient than `grep`
+- provide an interface for AI agents to search and navigate a Rust codebase with better accuracy and token-efficiency
 
 See the [changelog](https://github.com/aisrael/racli/blob/main/CHANGELOG.md) for change history.
 
