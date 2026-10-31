@@ -69,7 +69,7 @@ If a server already runs for the directory, `racli server` prints a message and 
 
 ### `racli tee`
 
-`racli tee` is a drop-in replacement for `rust-analyzer`. Your editor starts it and talks to using LSP ([Language Server Protocol](https://microsoft.github.io/language-server-protocol/)) over stdio. It also serves the same socket as `racli server`. Your editor, the CLI and your agents can then share one `rust-analyzer` process.
+`racli tee` is a drop-in replacement for `rust-analyzer`. Your editor starts it and talks to using LSP ([Language Server Protocol](https://microsoft.github.io/language-server-protocol/)). It also serves the same socket as `racli server`. Your editor, the CLI and your agents can then share one `rust-analyzer` process.
 
 Some editors cannot pass arguments to the server. For these editors, use `racli-tee`, a thin wrapper that functions the same as `racli tee`. For example, in VS Code:
 
