@@ -43,6 +43,20 @@ RACLI_BENCH_MCP=1 cargo bench
 
 When the variable is not set, the benches do not start `racli mcp` and print a note that they skip the MCP variants.
 
+## Token benchmark
+
+`tokens` is not a Criterion bench. It measures how many tokens each answer puts into an agent's context, for `find-definition`, `find-references`, `find-implementations` and `call-hierarchy`. It compares racli with the `grep` and `sed` pipelines that an agent would run without it, and scores each output against racli's locations.
+
+```sh
+cargo bench --bench tokens
+```
+
+- With `ANTHROPIC_API_KEY` set, it counts tokens with the Anthropic `count_tokens` endpoint through `curl` (version 8.3 or later). The output of racli and `grep` for this repository goes to the endpoint.
+- Without a key, or with `RACLI_BENCH_TOKENS=estimate`, it prints an estimate of bytes divided by 2. These are not Claude token counts.
+- It prints Markdown tables, and writes `results.csv`, `grep-only.txt` (the `grep` locations that racli does not give), `grep-missed.txt` (the racli locations that `grep` does not find) and a token cache.
+- The symbols, the commands of each tool and the workspace come from a YAML file. By default it reads `config/racli.yaml` (racli's own tree). To use another, set `RACLI_BENCH_CONFIG`. For example, `RACLI_BENCH_CONFIG=path/to/other.yaml cargo bench --bench tokens` runs it on another Rust workspace, and skips itself if the `workspace` in the file has no `Cargo.toml`. The keys are described at the top of `racli.yaml`.
+- Results go to `target/<name>/`, where `<name>` is the `name` in the YAML file.
+
 ## Layout
 
 `support/mod.rs` has the shared helpers: finding the `racli` binary, starting a server or an MCP session, and waiting until rust-analyzer is ready.
