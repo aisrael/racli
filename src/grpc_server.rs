@@ -36,6 +36,8 @@ use crate::proto::racli::LspRequestResponse;
 use crate::proto::racli::OutgoingCallsResponse;
 use crate::proto::racli::PrepareCallHierarchyRequest;
 use crate::proto::racli::PrepareCallHierarchyResponse;
+use crate::proto::racli::RenameRequest;
+use crate::proto::racli::RenameResponse;
 use crate::proto::racli::SearchRequest;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::racli_server::Racli;
@@ -230,6 +232,27 @@ impl Racli for RacliGrpc {
         );
         self.session
             .find_references(inner.file_path, inner.line, inner.character)
+            .await
+            .map(|r| self.respond(r))
+            .map_err(racli_rpc_error_to_status)
+    }
+
+    /// Runs LSP `textDocument/prepareRename` and `textDocument/rename` and returns the edits; nothing is written.
+    async fn rename(
+        &self,
+        request: Request<RenameRequest>,
+    ) -> Result<Response<RenameResponse>, Status> {
+        let inner = request.into_inner();
+        tracing::debug!(
+            rpc = "Racli.Rename",
+            file_path = %inner.file_path,
+            line = inner.line,
+            character = inner.character,
+            new_name = %inner.new_name,
+            "gRPC endpoint invoked"
+        );
+        self.session
+            .rename(inner.file_path, inner.line, inner.character, inner.new_name)
             .await
             .map(|r| self.respond(r))
             .map_err(racli_rpc_error_to_status)

@@ -4,6 +4,10 @@ All notable changes to racli are documented in this file. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`racli rename`** lists the edits that rename one symbol, by name or at a position, to `--new-name`: `racli rename sys::mkfifo --new-name make_fifo`. It asks rust-analyzer for the edits (LSP `textDocument/prepareRename` and `textDocument/rename`) and prints one `path:line:col: old text => new text` line for each. It does not write them, so racli stays read-only. If a name has more than one definition, it exits with status 2 and lists the definitions; qualify the name, narrow it with `--kind` or `--glob`, or give a position. The server has a `Racli.Rename` gRPC RPC, and the MCP server has a `rename` tool.
+
 ## [0.3.0] - 2026-10-29
 
 ### Added

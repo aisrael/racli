@@ -56,6 +56,14 @@ pub(crate) enum RustAnalyzerMsg {
         character: u32,
         reply: LspReply,
     },
+    /// LSP `textDocument/prepareRename` and `textDocument/rename` (the edits are not applied).
+    Rename {
+        uri: String,
+        line: u32,
+        character: u32,
+        new_name: String,
+        reply: LspReply,
+    },
     /// LSP `textDocument/prepareCallHierarchy`.
     PrepareCallHierarchy {
         uri: String,
@@ -226,6 +234,15 @@ impl Actor for RustAnalyzerActor {
                 reply,
             } => reply_with_session!(state, reply, |ra| server::find_references(
                 ra, uri, line, character
+            )),
+            RustAnalyzerMsg::Rename {
+                uri,
+                line,
+                character,
+                new_name,
+                reply,
+            } => reply_with_session!(state, reply, |ra| server::rename(
+                ra, uri, line, character, new_name
             )),
             RustAnalyzerMsg::PrepareCallHierarchy {
                 uri,

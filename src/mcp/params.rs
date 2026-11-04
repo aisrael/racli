@@ -13,6 +13,7 @@ use crate::document_symbols::DocumentSymbolsOutputFormat;
 use crate::find_definition::FindDefinitionArgs;
 use crate::find_implementations::FindImplementationsArgs;
 use crate::find_references::FindReferencesArgs;
+use crate::rename::RenameArgs;
 use crate::rust_analyzer::SymbolSearchKind;
 use crate::rust_analyzer::SymbolSearchScope;
 use crate::search::SearchArgs;
@@ -81,6 +82,65 @@ pub struct PositionParams {
     /// `text` (default) or `json`.
     #[serde(default)]
     pub format: Format,
+}
+
+/// Parameters of the `rename` tool, as `racli rename` takes them: one symbol name or a position,
+/// and the new name. The tool reports the edits and never writes them.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RenameParams {
+    /// The new name for the symbol.
+    pub new_name: String,
+    /// The symbol to rename, e.g. `mkfifo`, `sys::mkfifo` (a module path from the crate root) or
+    /// `Fifo::name` (the type or trait that contains it). It must have exactly one definition.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Rust source file of a position to rename from, relative to the workspace root or absolute;
+    /// given with `line` and `character`.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// 1-based line of the position in `path`.
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    pub line: Option<u32>,
+    /// 1-based column of the position, in UTF-16 units.
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    pub character: Option<u32>,
+    /// Only use definitions of this kind, e.g. `function`, `method` or `struct` (a name only).
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Only use definitions in files this glob matches, e.g. `src/**`, relative to the workspace
+    /// root (a name only).
+    #[serde(default)]
+    pub glob: Option<String>,
+    /// `text` (default) or `json`.
+    #[serde(default)]
+    pub format: Format,
+}
+
+impl RenameParams {
+    /// The `racli rename` arguments these parameters stand for.
+    pub fn into_rename_args(self) -> Result<RenameArgs, String> {
+        let text = self.format == Format::Text;
+        let t = targets(
+            self.name.into_iter().collect(),
+            self.path,
+            self.line,
+            self.character,
+            self.kind,
+            self.glob,
+        )?;
+        Ok(RenameArgs {
+            name: t.names.into_iter().next(),
+            new_name: self.new_name,
+            path: t.path,
+            line: t.line,
+            character: t.character,
+            symbol: t.symbol,
+            text,
+            json: !text,
+        })
+    }
 }
 
 /// Parameters of the `find_definition` tool, as `racli find-definition` takes them.
@@ -356,6 +416,34 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn rename_params_become_rename_args() {
+        let params: RenameParams = serde_json::from_value(json!({
+            "name": "sys::mkfifo",
+            "new_name": "make_fifo",
+            "kind": "function",
+            "format": "json"
+        }))
+        .unwrap();
+
+        let args = params.into_rename_args().unwrap();
+
+        assert_eq!(args.name.as_deref(), Some("sys::mkfifo"));
+        assert_eq!(args.new_name, "make_fifo");
+        assert_eq!(args.symbol.kind.as_deref(), Some("function"));
+        assert!(args.json && !args.text);
+    }
+
+    #[test]
+    fn rename_params_need_a_name_or_a_position() {
+        let params: RenameParams =
+            serde_json::from_value(json!({"new_name": "make_fifo"})).unwrap();
+
+        let err = params.into_rename_args().err().expect("should be rejected");
+
+        assert!(err.contains("give symbol names"), "{err}");
+    }
 
     #[test]
     fn search_params_parse_optional_kind_and_scope() {

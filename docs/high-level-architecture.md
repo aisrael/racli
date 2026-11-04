@@ -89,7 +89,7 @@ The editor's `shutdown` is acknowledged locally, and `exit` (or stdin EOF) shuts
 
 The types a request passes through, from the CLI's `main()` to the rust-analyzer child. Structs carry the in-crate traits they implement in `«guillemets»`:
 
-- **`RacliBackend`** (`src/racli_backend.rs`) is the set of operations the client commands use: `search`, `find_definition`, `find_references`, `find_implementations`, `document_symbols`, `hover` and the three call-hierarchy operations (`prepare_call_hierarchy`, `incoming_calls` and `outgoing_calls`). Each command's `run_*` function takes a `&dyn RacliBackend`, so the same code runs over the socket (CLI) or in-process (MCP). See [ADR 006](adrs/006-mcp-tools-mirror-the-cli.md).
+- **`RacliBackend`** (`src/racli_backend.rs`) is the set of operations the client commands use: `search`, `find_definition`, `find_references`, `find_implementations`, `rename`, `document_symbols`, `hover` and the three call-hierarchy operations (`prepare_call_hierarchy`, `incoming_calls` and `outgoing_calls`). Each command's `run_*` function takes a `&dyn RacliBackend`, so the same code runs over the socket (CLI) or in-process (MCP). See [ADR 006](adrs/006-mcp-tools-mirror-the-cli.md).
 
 ```mermaid
 flowchart TD

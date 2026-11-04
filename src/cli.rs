@@ -18,6 +18,7 @@ use crate::grpc_server::GrpcServerError;
 use crate::grpc_server::run_grpc_unix_socket_interactive;
 use crate::logging;
 use crate::mcp;
+use crate::rename;
 use crate::rust_analyzer::DEFAULT_SYMBOL_SEARCH_LIMIT;
 use crate::search;
 use crate::tee;
@@ -59,6 +60,8 @@ enum Command {
     FindDefinition(find_definition::FindDefinitionArgs),
     /// List references to symbol names or the symbol at a file position via rust-analyzer (LSP `textDocument/references`; always includes the declaration).
     FindReferences(find_references::FindReferencesArgs),
+    /// Show the edits that rename one symbol (by name or at a file position) via rust-analyzer (LSP `textDocument/rename`); nothing is written.
+    Rename(rename::RenameArgs),
     /// Resolve trait/type implementations for symbol names or at a file position via rust-analyzer (LSP `textDocument/implementation`).
     FindImplementations(find_implementations::FindImplementationsArgs),
     /// Walk the call hierarchy (callers/callees) of symbol names or at a file position via rust-analyzer (LSP `prepareCallHierarchy` + `incoming`/`outgoingCalls`).
@@ -142,6 +145,10 @@ pub async fn run() -> Result<(), RunError> {
         Command::FindReferences(args) => {
             logging::init_client_tracing();
             find_references::run_cli_find_references(args).await
+        }
+        Command::Rename(args) => {
+            logging::init_client_tracing();
+            rename::run_cli_rename(args).await
         }
         Command::FindImplementations(args) => {
             logging::init_client_tracing();

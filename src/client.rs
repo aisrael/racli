@@ -1,4 +1,4 @@
-//! gRPC client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`, `FindReferences`, `FindImplementations`, `PrepareCallHierarchy`, `IncomingCalls`, `OutgoingCalls`, `DocumentSymbols`, `Hover`). It wraps only racli's typed RPCs, not the LSP passthrough used by `racli tee` (see ADR 003).
+//! gRPC client for `racli server` over a Unix socket (`GetVersion`, `Search`, `FindDefinition`, `FindReferences`, `FindImplementations`, `Rename`, `PrepareCallHierarchy`, `IncomingCalls`, `OutgoingCalls`, `DocumentSymbols`, `Hover`). It wraps only racli's typed RPCs, not the LSP passthrough used by `racli tee` (see ADR 003).
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -26,6 +26,8 @@ use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::OutgoingCallsResponse;
 use crate::proto::racli::PrepareCallHierarchyRequest;
 use crate::proto::racli::PrepareCallHierarchyResponse;
+use crate::proto::racli::RenameRequest;
+use crate::proto::racli::RenameResponse;
 use crate::proto::racli::SearchRequest;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::SymbolSearchKind as ProtoSymbolSearchKind;
@@ -224,6 +226,26 @@ impl Client {
                 file_path: file_path.as_ref().to_string(),
                 line,
                 character,
+            })
+            .await?;
+        Ok(Reply::from_response(resp))
+    }
+
+    /// Calls `Rename` at a 0-based position in `file_path`; the reply holds the edits, which are not applied.
+    pub async fn rename(
+        &self,
+        file_path: impl AsRef<str>,
+        line: u32,
+        character: u32,
+        new_name: impl AsRef<str>,
+    ) -> Result<Reply<RenameResponse>, ClientError> {
+        let mut client = self.inner.clone();
+        let resp = client
+            .rename(RenameRequest {
+                file_path: file_path.as_ref().to_string(),
+                line,
+                character,
+                new_name: new_name.as_ref().to_string(),
             })
             .await?;
         Ok(Reply::from_response(resp))

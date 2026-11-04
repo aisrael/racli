@@ -12,6 +12,7 @@ use params::CallHierarchyParams;
 use params::DocumentSymbolsParams;
 use params::FindDefinitionParams;
 use params::PositionParams;
+use params::RenameParams;
 use params::SearchParams;
 
 use rmcp::ErrorData;
@@ -45,6 +46,7 @@ use crate::find_references::run_find_references;
 use crate::grpc_server::install_unix_shutdown_signals;
 use crate::logging::init_server_tracing;
 use crate::racli_core::RacliCore;
+use crate::rename::run_rename;
 use crate::rust_analyzer::RustAnalyzerError;
 use crate::search::run_search;
 
@@ -255,6 +257,24 @@ impl RacliMcpHandler {
         };
         let mut out = CommandOutput::default();
         let result = run_find_references(self.session.as_ref(), &args, &mut out).await;
+        self.tool_result(&out, result)
+    }
+
+    /// Runs `racli rename`.
+    #[tool(
+        name = "rename",
+        description = "The edits that rename one symbol (racli rename), by a name such as `mkfifo`, `sys::mkfifo` or `Fifo::name`, or a 1-based position (path, line, character), to new_name. Nothing is written: it returns `path:line:col: old text => new text` per edit. Fails if the name has more than one definition; qualify it, or narrow it with kind and glob. Check the edits, then make them in the editor."
+    )]
+    async fn rename(
+        &self,
+        Parameters(params): Parameters<RenameParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = match params.into_rename_args() {
+            Ok(args) => args,
+            Err(reason) => return Ok(self.rejected(reason)),
+        };
+        let mut out = CommandOutput::default();
+        let result = run_rename(self.session.as_ref(), &args, &mut out).await;
         self.tool_result(&out, result)
     }
 

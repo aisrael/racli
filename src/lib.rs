@@ -40,6 +40,8 @@ pub mod proto;
 pub mod racli_backend;
 /// Shared gRPC/MCP backend (rust-analyzer + [`crate::server`] operations).
 pub mod racli_core;
+/// `racli rename`: CLI arguments and formatting for the edits of an LSP rename (reported, not written).
+pub mod rename;
 /// `rust-analyzer` LSP child process used by `racli server`.
 pub mod rust_analyzer;
 /// `racli search` CLI and response formatting.

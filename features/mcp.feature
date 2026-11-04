@@ -216,3 +216,25 @@ Feature: racli mcp tools mirror the CLI commands
       | {"names": ["mkfifo"], "glob": "["}                                    | glob                                        |
       | {"names": ["mkfifo"], "format": "csv"}                                | csv                                         |
       | {}                                                                    | names                                       |
+
+  Scenario: rename by name returns the edits and writes nothing
+    When the MCP tool "rename" is called with:
+      """
+      {"name": "sys::mkfifo", "new_name": "make_fifo"}
+      """
+    Then the tool result should not be an error
+    And the output should be
+      """
+      mkfifo [FUNCTION] src/sys.rs:3:8
+        src/main.rs:81:22: mkfifo => make_fifo
+        src/sys.rs:3:8: mkfifo => make_fifo
+      """
+
+  Scenario: rename of a name with two definitions is an error that lists them
+    When the MCP tool "rename" is called with:
+      """
+      {"name": "mkfifo", "new_name": "make_fifo"}
+      """
+    Then the tool result should be an error
+    And the output should contain "cannot rename: 2 definitions match"
+    And the output should contain "mkfifo [FUNCTION] src/sys.rs:25:16"

@@ -10,6 +10,7 @@ use crate::proto::racli::HoverResponse;
 use crate::proto::racli::LspCallHierarchyIncomingCall;
 use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::LspCallHierarchyOutgoingCall;
+use crate::proto::racli::RenameResponse;
 use crate::proto::racli::SearchResponse;
 use crate::racli_core::RacliCore;
 use crate::rust_analyzer::SymbolSearchOptions;
@@ -40,6 +41,15 @@ pub trait RacliBackend: Send + Sync {
         line: u32,
         character: u32,
     ) -> Result<FindReferencesResponse, String>;
+    /// Runs `textDocument/prepareRename` and `textDocument/rename` at a position in `file_path`
+    /// (`Racli.Rename`); the edits are returned, never applied.
+    async fn rename(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+        new_name: &str,
+    ) -> Result<RenameResponse, String>;
     /// Runs `textDocument/implementation` at a position in `file_path` (`Racli.FindImplementations`).
     async fn find_implementations(
         &self,
@@ -108,6 +118,19 @@ impl RacliBackend for Client {
         character: u32,
     ) -> Result<FindReferencesResponse, String> {
         Client::find_references(self, file_path, line, character)
+            .await
+            .map(|reply| reply.value)
+            .map_err(|e| e.to_string())
+    }
+
+    async fn rename(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+        new_name: &str,
+    ) -> Result<RenameResponse, String> {
+        Client::rename(self, file_path, line, character, new_name)
             .await
             .map(|reply| reply.value)
             .map_err(|e| e.to_string())
@@ -210,6 +233,24 @@ impl RacliBackend for RacliCore {
         RacliCore::find_references(self, file_path.to_string(), line, character)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    async fn rename(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+        new_name: &str,
+    ) -> Result<RenameResponse, String> {
+        RacliCore::rename(
+            self,
+            file_path.to_string(),
+            line,
+            character,
+            new_name.to_string(),
+        )
+        .await
+        .map_err(|e| e.to_string())
     }
 
     async fn find_implementations(

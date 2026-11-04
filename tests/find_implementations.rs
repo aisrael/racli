@@ -87,9 +87,14 @@ async fn grpc_find_implementations_racli_backend() {
         .expect("canonicalize racli_backend.rs");
 
     // 0-based LSP position on `RacliBackend` in `pub trait RacliBackend: Send + Sync {`.
+    let source = std::fs::read_to_string(&file_path).expect("read racli_backend.rs");
+    let line = source
+        .lines()
+        .position(|l| l.starts_with("pub trait RacliBackend"))
+        .expect("racli_backend.rs defines RacliBackend") as u32;
     let resp = Client::new(sock.as_path())
         .unwrap()
-        .find_implementations(file_path.to_string_lossy().as_ref(), 20, 10)
+        .find_implementations(file_path.to_string_lossy().as_ref(), line, 10)
         .await
         .expect("find_implementations")
         .value;

@@ -11,6 +11,7 @@ This document describes the `racli` client commands. Each command asks a running
 - [`find-references`](#find-references)
 - [`find-implementations`](#find-implementations)
 - [`call-hierarchy`](#call-hierarchy)
+- [`rename`](#rename)
 - [`document-symbols`](#document-symbols)
 - [`version`](#version)
 
@@ -256,6 +257,36 @@ racli call-hierarchy sys::mkfifo --direction outgoing
 racli call-hierarchy sys::mkfifo --depth 3
 racli call-hierarchy --path fixtures/queue/src/sys.rs --line 3 --character 8 --direction incoming
 ```
+
+## `rename`
+
+Lists the edits that rename one symbol. It does not write them. Make the edits in your editor.
+
+```sh
+racli rename <NAME> --new-name <NEW_NAME> [--kind <KIND>] [--glob <PATTERN>] [--text | --json]
+racli rename --path <PATH> --line <N> --character <N> --new-name <NEW_NAME> [--text | --json]
+```
+
+`rename` takes one symbol, and the symbol must have exactly one definition. If a name has more than one definition, `rename` exits with status 2 and lists the definitions. Qualify the name, narrow it with `--kind` or `--glob`, or give a position.
+
+Each edit is `path:line:col: old text => new text`.
+
+```sh
+racli rename sys::mkfifo --new-name make_fifo
+```
+
+```text
+mkfifo [FUNCTION] fixtures/queue/src/sys.rs:3:8
+  fixtures/queue/src/main.rs:81:22: mkfifo => make_fifo
+  fixtures/queue/src/sys.rs:3:8: mkfifo => make_fifo
+```
+
+Notes:
+
+- `old text` is `…` for an edit that spans more than one line.
+- If rust-analyzer rejects the new name or the symbol, `rename` prints its message.
+- A rename that creates, renames or deletes files is not supported.
+- With `--json`, the output is `{"files": [{"path", "edits": [{"range", "new_text"}]}]}`. Ranges are 0-based, as in LSP.
 
 ## `document-symbols`
 

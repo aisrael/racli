@@ -495,6 +495,7 @@ mod tests {
     use crate::proto::racli::HoverResponse;
     use crate::proto::racli::LspCallHierarchyIncomingCall;
     use crate::proto::racli::LspCallHierarchyOutgoingCall;
+    use crate::proto::racli::RenameResponse;
     use crate::proto::racli::SearchResponse;
     use crate::rust_analyzer::SymbolSearchOptions;
     use std::collections::HashMap;
@@ -547,6 +548,16 @@ mod tests {
             _character: u32,
         ) -> Result<FindReferencesResponse, String> {
             unreachable!("find_references is not exercised by these tests")
+        }
+
+        async fn rename(
+            &self,
+            _file_path: &str,
+            _line: u32,
+            _character: u32,
+            _new_name: &str,
+        ) -> Result<RenameResponse, String> {
+            unreachable!("rename is not exercised by these tests")
         }
 
         async fn find_implementations(
