@@ -3,6 +3,8 @@
 use lsp_types::CallHierarchyIncomingCall;
 use lsp_types::CallHierarchyItem;
 use lsp_types::CallHierarchyOutgoingCall;
+use lsp_types::DocumentChangeOperation;
+use lsp_types::DocumentChanges;
 use lsp_types::DocumentSymbol;
 use lsp_types::DocumentSymbolResponse;
 use lsp_types::GotoDefinitionResponse;
@@ -13,21 +15,26 @@ use lsp_types::Position;
 use lsp_types::Range;
 use lsp_types::SymbolInformation;
 use lsp_types::SymbolKind;
+use lsp_types::TextEdit;
 use lsp_types::Uri;
+use lsp_types::WorkspaceEdit;
 use lsp_types::WorkspaceLocation;
 use lsp_types::WorkspaceSymbol;
 use lsp_types::WorkspaceSymbolResponse;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 use crate::proto::racli::LspCallHierarchyIncomingCall;
 use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::LspCallHierarchyOutgoingCall;
 use crate::proto::racli::LspDocumentSymbol;
+use crate::proto::racli::LspFileEdits;
 use crate::proto::racli::LspLocation;
 use crate::proto::racli::LspPosition;
 use crate::proto::racli::LspRange;
 use crate::proto::racli::LspSymbolInformation;
 use crate::proto::racli::LspSymbolInformationList;
+use crate::proto::racli::LspTextEdit;
 use crate::proto::racli::LspWorkspaceSymbol;
 use crate::proto::racli::LspWorkspaceSymbolList;
 use crate::proto::racli::LspWorkspaceSymbolResponse;
@@ -70,6 +77,59 @@ pub fn goto_definition_response_to_locations(resp: GotoDefinitionResponse) -> Ve
 /// Maps LSP `textDocument/references` results into protobuf [`LspLocation`] rows.
 pub fn references_to_locations(locations: Vec<Location>) -> Vec<LspLocation> {
     locations.into_iter().map(location_to_proto).collect()
+}
+
+/// Maps an LSP `WorkspaceEdit` into protobuf edits grouped by document, sorted by URI and position.
+///
+/// Fails if the edit holds a file create, rename or delete operation, which racli does not report.
+pub fn workspace_edit_to_files(edit: WorkspaceEdit) -> Result<Vec<LspFileEdits>, String> {
+    let mut by_uri: BTreeMap<String, Vec<TextEdit>> = BTreeMap::new();
+    for (uri, edits) in edit.changes.unwrap_or_default() {
+        by_uri.entry(uri_to_string(&uri)).or_default().extend(edits);
+    }
+    let text_document_edits = match edit.document_changes {
+        None => vec![],
+        Some(DocumentChanges::Edits(edits)) => edits,
+        Some(DocumentChanges::Operations(operations)) => {
+            let mut edits = Vec::new();
+            for operation in operations {
+                match operation {
+                    DocumentChangeOperation::Edit(edit) => edits.push(edit),
+                    DocumentChangeOperation::Op(_) => {
+                        return Err(
+                            "the rename creates, renames or deletes files, which racli does not report"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            edits
+        }
+    };
+    for document_edit in text_document_edits {
+        let uri = uri_to_string(&document_edit.text_document.uri);
+        let edits = document_edit.edits.into_iter().map(|edit| match edit {
+            OneOf::Left(edit) => edit,
+            OneOf::Right(annotated) => annotated.text_edit,
+        });
+        by_uri.entry(uri).or_default().extend(edits);
+    }
+    Ok(by_uri
+        .into_iter()
+        .map(|(uri, mut edits)| {
+            edits.sort_by_key(|e| (e.range.start.line, e.range.start.character));
+            LspFileEdits {
+                uri,
+                edits: edits
+                    .into_iter()
+                    .map(|e| LspTextEdit {
+                        range: Some(range_to_proto(e.range)),
+                        new_text: e.new_text,
+                    })
+                    .collect(),
+            }
+        })
+        .collect())
 }
 
 /// Maps an LSP `textDocument/documentSymbol` result into top-level protobuf [`LspDocumentSymbol`] rows (children nested recursively).
@@ -321,6 +381,59 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn workspace_edit_to_files_groups_sorts_and_merges_both_shapes() {
+        let edit: WorkspaceEdit = serde_json::from_value(json!({
+            "changes": {
+                "file:///b.rs": [
+                    {"range": {"start": {"line": 5, "character": 1}, "end": {"line": 5, "character": 4}}, "newText": "x"},
+                    {"range": {"start": {"line": 2, "character": 1}, "end": {"line": 2, "character": 4}}, "newText": "x"}
+                ]
+            },
+            "documentChanges": [
+                {
+                    "textDocument": {"uri": "file:///a.rs", "version": null},
+                    "edits": [
+                        {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}}, "newText": "x"},
+                        {"range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 3}}, "newText": "x", "annotationId": "a"}
+                    ]
+                }
+            ]
+        }))
+        .unwrap();
+
+        let files = workspace_edit_to_files(edit).unwrap();
+
+        let shape: Vec<_> = files
+            .iter()
+            .map(|f| {
+                (
+                    f.uri.as_str(),
+                    f.edits
+                        .iter()
+                        .map(|e| e.range.as_ref().unwrap().start.as_ref().unwrap().line)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![("file:///a.rs", vec![0, 1]), ("file:///b.rs", vec![2, 5])]
+        );
+    }
+
+    #[test]
+    fn workspace_edit_to_files_rejects_file_operations() {
+        let edit: WorkspaceEdit = serde_json::from_value(json!({
+            "documentChanges": [{"kind": "rename", "oldUri": "file:///a.rs", "newUri": "file:///b.rs"}]
+        }))
+        .unwrap();
+
+        let err = workspace_edit_to_files(edit).unwrap_err();
+
+        assert!(err.contains("creates, renames or deletes files"), "{err}");
+    }
 
     #[test]
     fn hover_contents_accepts_markup_strings_and_lists() {

@@ -73,6 +73,18 @@ pub async fn find_references(
         .await
 }
 
+/// Runs LSP `textDocument/prepareRename` and `textDocument/rename` on the live rust-analyzer session and returns the raw JSON `WorkspaceEdit`; nothing is written.
+pub async fn rename(
+    ra: &mut RustAnalyzerSession,
+    document_uri: String,
+    line: u32,
+    character: u32,
+    new_name: String,
+) -> Result<Value, RustAnalyzerError> {
+    ra.text_document_rename(document_uri, line, character, new_name)
+        .await
+}
+
 /// Runs LSP `textDocument/prepareCallHierarchy` on the live rust-analyzer session and returns the raw JSON `result`.
 pub async fn prepare_call_hierarchy(
     ra: &mut RustAnalyzerSession,

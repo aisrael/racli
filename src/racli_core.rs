@@ -28,6 +28,7 @@ use crate::proto::racli::LspServerInfo;
 use crate::proto::racli::LspWorkspaceSymbolResponse;
 use crate::proto::racli::OutgoingCallsResponse;
 use crate::proto::racli::PrepareCallHierarchyResponse;
+use crate::proto::racli::RenameResponse;
 use crate::proto::racli::SearchResponse;
 use crate::proto::racli::SymbolSearchKind as ProtoSymbolSearchKind;
 use crate::proto::racli::SymbolSearchScope as ProtoSymbolSearchScope;
@@ -353,6 +354,52 @@ impl RacliCore {
         };
 
         Ok(FindReferencesResponse { locations })
+    }
+
+    /// Asks rust-analyzer for the edits that rename the symbol at `file_path` + LSP position to `new_name` (`Racli.Rename`); nothing is written.
+    pub async fn rename(
+        &self,
+        file_path: String,
+        line: u32,
+        character: u32,
+        new_name: String,
+    ) -> Result<RenameResponse, RacliRpcError> {
+        let path = PathBuf::from(file_path.trim());
+        if path.as_os_str().is_empty() {
+            return Err(RacliRpcError::InvalidArgument(
+                "file_path must not be empty".into(),
+            ));
+        }
+        if new_name.trim().is_empty() {
+            return Err(RacliRpcError::InvalidArgument(
+                "new_name must not be empty".into(),
+            ));
+        }
+        let abs = std::fs::canonicalize(&path).map_err(|e| {
+            RacliRpcError::InvalidArgument(format!("cannot resolve file path: {e}"))
+        })?;
+        let uri = crate::rust_analyzer::document_uri_from_path(&abs)
+            .map_err(|e| RacliRpcError::InvalidArgument(e.to_string()))?;
+
+        let value = ractor::call!(self.rust_analyzer, |reply| {
+            RustAnalyzerMsg::Rename {
+                uri,
+                line,
+                character,
+                new_name,
+                reply,
+            }
+        })??;
+
+        let files = if value.is_null() {
+            vec![]
+        } else {
+            let edit: lsp_types::WorkspaceEdit = serde_json::from_value(value)
+                .map_err(|e| RacliRpcError::Internal(e.to_string()))?;
+            crate::lsp_map::workspace_edit_to_files(edit).map_err(RacliRpcError::Internal)?
+        };
+
+        Ok(RenameResponse { files })
     }
 
     /// Resolves call hierarchy candidates at `file_path` + LSP position (`Racli.PrepareCallHierarchy`).

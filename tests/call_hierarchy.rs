@@ -88,9 +88,14 @@ async fn grpc_call_hierarchy_incoming_calls_document_uri_from_path() {
         .expect("canonicalize src/rust_analyzer.rs");
 
     // 0-based LSP position on `document_uri_from_path` in `pub fn document_uri_from_path(...)`.
+    let source = std::fs::read_to_string(&file_path).expect("read src/rust_analyzer.rs");
+    let line = source
+        .lines()
+        .position(|l| l.starts_with("pub fn document_uri_from_path"))
+        .expect("rust_analyzer.rs defines document_uri_from_path") as u32;
     let prepared = Client::new(sock.as_path())
         .unwrap()
-        .prepare_call_hierarchy(file_path.to_string_lossy().as_ref(), 871, 7)
+        .prepare_call_hierarchy(file_path.to_string_lossy().as_ref(), line, 7)
         .await
         .expect("prepare_call_hierarchy")
         .value;

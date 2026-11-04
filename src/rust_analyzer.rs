@@ -37,6 +37,7 @@ use lsp_types::PublishDiagnosticsClientCapabilities;
 use lsp_types::ReferenceContext;
 use lsp_types::ReferenceParams;
 use lsp_types::RenameClientCapabilities;
+use lsp_types::RenameParams;
 use lsp_types::SemanticTokensClientCapabilities;
 use lsp_types::SemanticTokensClientCapabilitiesRequests;
 use lsp_types::SemanticTokensFullOptions;
@@ -65,7 +66,9 @@ use lsp_types::request::GotoDefinition;
 use lsp_types::request::GotoImplementation;
 use lsp_types::request::GotoImplementationParams;
 use lsp_types::request::HoverRequest;
+use lsp_types::request::PrepareRenameRequest;
 use lsp_types::request::References;
+use lsp_types::request::Rename;
 use lsp_types::request::Request;
 use lsp_types::request::WorkspaceSymbolRequest;
 use schemars::JsonSchema;
@@ -780,6 +783,43 @@ impl RustAnalyzerSession {
             work_done_progress_params: WorkDoneProgressParams::default(),
         };
         let result = lsp.send_request::<HoverRequest>(params).await?;
+        serde_json::to_value(result).map_err(RustAnalyzerError::from)
+    }
+
+    /// Sends LSP `textDocument/prepareRename` and then `textDocument/rename` for `document_uri` at `line` / `character` (0-based LSP position) and returns the JSON `WorkspaceEdit` (`null` if there is nothing to rename). The edits are not applied.
+    pub async fn text_document_rename(
+        &mut self,
+        document_uri: impl Into<String>,
+        line: u32,
+        character: u32,
+        new_name: String,
+    ) -> Result<Value, RustAnalyzerError> {
+        let uri_str = document_uri.into();
+        let uri: Uri = uri_str
+            .parse()
+            .map_err(|_| RustAnalyzerError::InvalidDocumentUrl)?;
+        let lsp = self
+            .lsp
+            .as_ref()
+            .ok_or_else(|| RustAnalyzerError::Io(io_other("LSP client missing")))?;
+        let position = TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position { line, character },
+        };
+        let prepared = lsp
+            .send_request::<PrepareRenameRequest>(position.clone())
+            .await?;
+        if prepared.is_none() {
+            return Err(RustAnalyzerError::Io(io_other(
+                "the symbol at this position cannot be renamed",
+            )));
+        }
+        let params = RenameParams {
+            text_document_position: position,
+            new_name,
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+        let result = lsp.send_request::<Rename>(params).await?;
         serde_json::to_value(result).map_err(RustAnalyzerError::from)
     }
 

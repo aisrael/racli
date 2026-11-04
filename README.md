@@ -36,7 +36,7 @@ Start it in the root of your Rust workspace. For example, to add it to Claude Co
 claude mcp add racli -- racli mcp
 ```
 
-The server gives your agent these tools: `search`, `find_definition`, `find_references`, `find_implementations`, `call_hierarchy` and `document_symbols`. They work like the CLI commands. They take symbol names and 1-based positions, and they return text.
+The server gives your agent these tools: `search`, `find_definition`, `find_references`, `find_implementations`, `call_hierarchy`, `rename` and `document_symbols`. They work like the CLI commands. They take symbol names and 1-based positions, and they return text.
 
 Each `racli mcp` process starts its own rust-analyzer. To share one rust-analyzer, use `racli server` or `racli tee`.
 
@@ -60,6 +60,7 @@ racli find-definition run_cli_search
 racli find-references run_cli_search
 racli find-implementations CallHierarchyBackend
 racli call-hierarchy run_cli_search
+racli rename run_cli_search --new-name run_search_command
 racli document-symbols src/search.rs
 ```
 
@@ -105,6 +106,10 @@ Each takes one or more symbol names.
 ### Call hierarchy
 
 `call-hierarchy` shows the callers and callees of a function, to the depth you choose.
+
+### Rename preview
+
+`rename` lists the edits that rename one symbol. It does not write them, so racli stays read-only. If the name has more than one definition, it exits with an error and lists them.
 
 ### Read less code
 

@@ -51,10 +51,11 @@ racli find-references --path src/search.rs --line <LINE> --character <COL>
 - **`find-references`**: every use, including the declaration.
 - **`find-implementations`**: a trait's or type's `impl` blocks, or a trait method's overrides. Nothing from inside an `impl`.
 - **`call-hierarchy`**: callers and callees. `--direction incoming|outgoing|both` (default `both`), `--depth <N>` (default 1, one round trip per node per level). Prints "no call hierarchy item" for a non-function.
+- **`rename <NAME> --new-name <NEW>`**: the edits that rename one symbol, as `path:line:col: old text => new text` lines. It never writes them; make them in the editor. It takes one name, or a position instead; a name with more than one definition is a usage error (exit 2) that lists them, so qualify it or add `--kind`/`--glob`. With `--json`: `{"files": [{"path", "edits": [{"range", "new_text"}]}]}`.
 - **`document-symbols <PATH>`**: a file's outline, instead of reading the whole file. It prints an indented tree with 1-based ranges.
 
 `find-definition`, `find-references` and `find-implementations` print `path:line:col: source line`. With `--json`, JSON keeps LSP's absolute URIs and 0-based ranges; with names, it's an array of `{"symbol": …, "result": …}`.
 
 ## MCP
 
-`racli mcp` serves the same commands as MCP tools (`search`, `find_definition`, `find_references`, `find_implementations`, `call_hierarchy`, `document_symbols`), with the options as parameters: `names` (an array), `path`, `line` and `character` (1-based), `kind`, `glob`, `hover`, `source`, `exact`, `direction`, `depth`. Results are the CLI's text, with paths relative to the workspace root; pass `format: "json"` only when you need JSON. Unknown names and their closest symbols come as a second text block. A result that says rust-analyzer is still indexing may be incomplete.
+`racli mcp` serves the same commands as MCP tools (`search`, `find_definition`, `find_references`, `find_implementations`, `call_hierarchy`, `rename`, `document_symbols`), with the options as parameters: `names` (an array; `rename` takes one `name` and a `new_name`), `path`, `line` and `character` (1-based), `kind`, `glob`, `hover`, `source`, `exact`, `direction`, `depth`. Results are the CLI's text, with paths relative to the workspace root; pass `format: "json"` only when you need JSON. Unknown names and their closest symbols come as a second text block. A result that says rust-analyzer is still indexing may be incomplete.
