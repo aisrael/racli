@@ -193,9 +193,16 @@ message LspFileEdits {
   repeated LspTextEdit edits = 2;
 }
 
-// Result of `Racli.Rename`: the edits rust-analyzer proposes, grouped by document. Nothing is written.
+// A file rename that is part of a rename, such as the file of a renamed module.
+message LspFileRename {
+  string old_uri = 1;
+  string new_uri = 2;
+}
+
+// Result of `Racli.Rename`: the edits and file renames rust-analyzer proposes. Nothing is written.
 message RenameResponse {
   repeated LspFileEdits files = 1;
+  repeated LspFileRename renames = 2;
 }
 
 // Parameters for `Racli.FindImplementations` (absolute `file_path` resolved on the server).

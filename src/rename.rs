@@ -144,14 +144,15 @@ fn ambiguity_message(targets: &[Target]) -> String {
 }
 
 /// Writes the edits after `indent`, one line each: `path:line:col: old text => new text`, with
-/// the path relative to the current directory and a 1-based line and column.
+/// the path relative to the current directory and a 1-based line and column. File renames follow
+/// as `old/path.rs => new/path.rs`.
 fn write_rename_text(
     out: &mut CommandOutput,
     resp: &RenameResponse,
     indent: &str,
     sources: &mut SourceLines,
 ) {
-    if resp.files.iter().all(|file| file.edits.is_empty()) {
+    if resp.files.iter().all(|file| file.edits.is_empty()) && resp.renames.is_empty() {
         out.println(format!("{indent}(no edits)"));
         return;
     }
@@ -167,6 +168,13 @@ fn write_rename_text(
                 edit.new_text
             ));
         }
+    }
+    for rename in &resp.renames {
+        out.println(format!(
+            "{indent}{} => {}",
+            display_path(&rename.old_uri),
+            display_path(&rename.new_uri)
+        ));
     }
 }
 
@@ -216,11 +224,19 @@ fn range_bounds(range: Option<&LspRange>) -> ((u32, u32), (u32, u32)) {
     }
 }
 
-/// Writes the edits as JSON: `{"files": [{"path", "edits": [{"range", "new_text"}]}]}`, with
-/// paths relative to the current directory and 0-based LSP ranges, as the other commands do.
+/// Writes the edits as JSON: `{"files": [{"path", "edits": [{"range", "new_text"}]}], "renames":
+/// [{"old_path", "new_path"}]}`, with paths relative to the current directory and 0-based LSP ranges, as the other commands do.
 fn write_rename_json(out: &mut CommandOutput, resp: &RenameResponse) {
     let json = RenameJson {
         files: resp.files.iter().map(file_edits_json).collect(),
+        renames: resp
+            .renames
+            .iter()
+            .map(|rename| FileRenameJson {
+                old_path: display_path(&rename.old_uri),
+                new_path: display_path(&rename.new_uri),
+            })
+            .collect(),
     };
     match serde_json::to_string(&json) {
         Ok(json) => out.println(json),
@@ -259,6 +275,14 @@ fn file_edits_json(file: &LspFileEdits) -> FileEditsJson {
 #[derive(Serialize)]
 struct RenameJson {
     files: Vec<FileEditsJson>,
+    renames: Vec<FileRenameJson>,
+}
+
+/// A file rename in JSON.
+#[derive(Serialize)]
+struct FileRenameJson {
+    old_path: String,
+    new_path: String,
 }
 
 /// The edits in one document, in JSON.
@@ -292,6 +316,39 @@ struct PositionJson {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::racli::LspFileRename;
+
+    fn response_with_rename() -> RenameResponse {
+        RenameResponse {
+            files: vec![],
+            renames: vec![LspFileRename {
+                old_uri: "file:///tmp/a.rs".into(),
+                new_uri: "file:///tmp/b.rs".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn text_output_lists_file_renames() {
+        let mut out = CommandOutput::default();
+        write_rename_text(
+            &mut out,
+            &response_with_rename(),
+            "",
+            &mut SourceLines::default(),
+        );
+        let text = out.stdout();
+        assert!(text.contains("a.rs => ") && text.contains("b.rs"), "{text}");
+        assert!(!text.contains("(no edits)"), "{text}");
+    }
+
+    #[test]
+    fn json_output_lists_file_renames() {
+        let mut out = CommandOutput::default();
+        write_rename_json(&mut out, &response_with_rename());
+        let text = out.stdout();
+        assert!(text.contains(r#""renames":[{"old_path":"#), "{text}");
+    }
 
     #[test]
     fn utf16_slice_counts_utf16_units() {

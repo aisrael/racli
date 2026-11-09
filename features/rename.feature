@@ -62,3 +62,29 @@ Feature: racli rename
       racli rename nosuchsymbol --new-name other
       """
     Then the error output should contain "no symbol named nosuchsymbol"
+
+  Scenario: renaming a module lists its edits and the rename of its file
+    When the following command is run:
+      """
+      racli rename sys --new-name plumbing --kind module
+      """
+    Then it should exit with status code 0
+    And the output should be
+      """
+      sys [MODULE] fixtures/queue/src/main.rs:1:5
+        fixtures/queue/src/main.rs:1:5: sys => plumbing
+        fixtures/queue/src/main.rs:81:17: sys => plumbing
+        fixtures/queue/src/main.rs:86:20: sys => plumbing
+        fixtures/queue/src/main.rs:86:38: sys => plumbing
+        fixtures/queue/src/main.rs:90:5: sys => plumbing
+        fixtures/queue/src/sys.rs => fixtures/queue/src/plumbing.rs
+      """
+
+  Scenario: the JSON output lists file renames
+    When the following command is run:
+      """
+      racli rename sys --new-name plumbing --kind module --json
+      """
+    Then it should exit with status code 0
+    And the JSON output should match JSONPath "$.renames[0].old_path" with a value ending with "src/sys.rs"
+    And the JSON output should match JSONPath "$.renames[0].new_path" with a value ending with "src/plumbing.rs"
