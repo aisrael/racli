@@ -391,15 +391,12 @@ impl RacliCore {
             }
         })??;
 
-        let files = if value.is_null() {
-            vec![]
-        } else {
-            let edit: lsp_types::WorkspaceEdit = serde_json::from_value(value)
-                .map_err(|e| RacliRpcError::Internal(e.to_string()))?;
-            crate::lsp_map::workspace_edit_to_files(edit).map_err(RacliRpcError::Internal)?
-        };
-
-        Ok(RenameResponse { files })
+        if value.is_null() {
+            return Ok(RenameResponse::default());
+        }
+        let edit: lsp_types::WorkspaceEdit =
+            serde_json::from_value(value).map_err(|e| RacliRpcError::Internal(e.to_string()))?;
+        crate::lsp_map::workspace_edit_to_response(edit).map_err(RacliRpcError::Internal)
     }
 
     /// Resolves call hierarchy candidates at `file_path` + LSP position (`Racli.PrepareCallHierarchy`).

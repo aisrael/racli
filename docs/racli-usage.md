@@ -269,7 +269,7 @@ racli rename --path <PATH> --line <N> --character <N> --new-name <NEW_NAME> [--t
 
 `rename` takes one symbol, and the symbol must have exactly one definition. If a name has more than one definition, `rename` exits with status 2 and lists the definitions. Qualify the name, narrow it with `--kind` or `--glob`, or give a position.
 
-Each edit is `path:line:col: old text => new text`.
+Each edit is `path:line:col: old text => new text`. If the rename also moves a file, such as the file of a renamed module, a line `old/path.rs => new/path.rs` follows the edits.
 
 ```sh
 racli rename sys::mkfifo --new-name make_fifo
@@ -285,8 +285,8 @@ Notes:
 
 - `old text` is `…` for an edit that spans more than one line.
 - If rust-analyzer rejects the new name or the symbol, `rename` prints its message.
-- A rename that creates, renames or deletes files is not supported.
-- With `--json`, the output is `{"files": [{"path", "edits": [{"range", "new_text"}]}]}`. Ranges are 0-based, as in LSP.
+- A rename that creates or deletes files is not supported, and `rename` exits with an error.
+- With `--json`, the output is `{"files": [{"path", "edits": [{"range", "new_text"}]}], "renames": [{"old_path", "new_path"}]}`. Ranges are 0-based, as in LSP.
 
 ## `document-symbols`
 

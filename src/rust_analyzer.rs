@@ -38,6 +38,7 @@ use lsp_types::ReferenceContext;
 use lsp_types::ReferenceParams;
 use lsp_types::RenameClientCapabilities;
 use lsp_types::RenameParams;
+use lsp_types::ResourceOperationKind;
 use lsp_types::SemanticTokensClientCapabilities;
 use lsp_types::SemanticTokensClientCapabilitiesRequests;
 use lsp_types::SemanticTokensFullOptions;
@@ -50,8 +51,8 @@ use lsp_types::TextDocumentSyncClientCapabilities;
 use lsp_types::TokenFormat;
 use lsp_types::Uri;
 use lsp_types::WorkDoneProgressParams;
-#[cfg(feature = "notify")]
 use lsp_types::WorkspaceClientCapabilities;
+use lsp_types::WorkspaceEditClientCapabilities;
 use lsp_types::WorkspaceFolder;
 use lsp_types::WorkspaceSymbolResponse;
 #[cfg(feature = "notify")]
@@ -189,7 +190,7 @@ impl Request for RaWorkspaceSymbolRequest {
 
 /// Client capabilities advertised to rust-analyzer during LSP `initialize`: watched-files dynamic
 /// registration (with the `notify` feature), hierarchical `textDocument/documentSymbol` (otherwise servers return a flat
-/// `SymbolInformation[]`), and editor-level text document features for `racli tee`. Capabilities
+/// `SymbolInformation[]`), and editor-level text document features for `racli tee`. `workspace.workspaceEdit` is declared (document changes and file renames) so a module rename works; racli reports the edit and never applies it. Capabilities
 /// that make the server send requests to the client (configuration, applyEdit, refresh, progress)
 /// are deliberately omitted because racli cannot forward those to an editor; `experimental/serverStatus`
 /// notifications are requested so editors can show rust-analyzer's health.
@@ -197,10 +198,16 @@ fn racli_lsp_client_capabilities() -> ClientCapabilities {
     let markup = || Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]);
     ClientCapabilities {
         // Only racli's own watcher (the `notify` feature) reports changes; otherwise rust-analyzer watches.
-        #[cfg(feature = "notify")]
         workspace: Some(WorkspaceClientCapabilities {
+            #[cfg(feature = "notify")]
             did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
                 dynamic_registration: Some(true),
+                ..Default::default()
+            }),
+            // Lets a module rename return a file rename; racli reports it and never applies it.
+            workspace_edit: Some(WorkspaceEditClientCapabilities {
+                document_changes: Some(true),
+                resource_operations: Some(vec![ResourceOperationKind::Rename]),
                 ..Default::default()
             }),
             ..Default::default()

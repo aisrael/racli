@@ -8,6 +8,10 @@ All notable changes to racli are documented in this file. The format is based on
 
 - **`racli rename`** lists the edits that rename one symbol, by name or at a position, to `--new-name`: `racli rename sys::mkfifo --new-name make_fifo`. It asks rust-analyzer for the edits (LSP `textDocument/prepareRename` and `textDocument/rename`) and prints one `path:line:col: old text => new text` line for each. It does not write them, so racli stays read-only. If a name has more than one definition, it exits with status 2 and lists the definitions; qualify the name, narrow it with `--kind` or `--glob`, or give a position. The server has a `Racli.Rename` gRPC RPC, and the MCP server has a `rename` tool.
 
+### Changed
+
+- **`racli rename` works on modules.** rust-analyzer refused to rename a module (`Client does not support rename capability.`) because racli did not say it can take file renames. Racli now declares that, and `rename` prints the rename of the module's file as an `old/path.rs => new/path.rs` line. In JSON, the output has a `renames` array of `{"old_path", "new_path"}`, and the gRPC `RenameResponse` has a `renames` field. Nothing is written.
+
 ## [0.3.0] - 2026-10-29
 
 ### Added

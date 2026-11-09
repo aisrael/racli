@@ -13,6 +13,7 @@ use lsp_types::LocationLink;
 use lsp_types::OneOf;
 use lsp_types::Position;
 use lsp_types::Range;
+use lsp_types::ResourceOp;
 use lsp_types::SymbolInformation;
 use lsp_types::SymbolKind;
 use lsp_types::TextEdit;
@@ -29,6 +30,7 @@ use crate::proto::racli::LspCallHierarchyItem;
 use crate::proto::racli::LspCallHierarchyOutgoingCall;
 use crate::proto::racli::LspDocumentSymbol;
 use crate::proto::racli::LspFileEdits;
+use crate::proto::racli::LspFileRename;
 use crate::proto::racli::LspLocation;
 use crate::proto::racli::LspPosition;
 use crate::proto::racli::LspRange;
@@ -38,6 +40,7 @@ use crate::proto::racli::LspTextEdit;
 use crate::proto::racli::LspWorkspaceSymbol;
 use crate::proto::racli::LspWorkspaceSymbolList;
 use crate::proto::racli::LspWorkspaceSymbolResponse;
+use crate::proto::racli::RenameResponse;
 use crate::proto::racli::lsp_workspace_symbol_response;
 
 /// Builds a protobuf [`LspWorkspaceSymbolResponse`] from a deserialized LSP workspace symbol result.
@@ -79,10 +82,12 @@ pub fn references_to_locations(locations: Vec<Location>) -> Vec<LspLocation> {
     locations.into_iter().map(location_to_proto).collect()
 }
 
-/// Maps an LSP `WorkspaceEdit` into protobuf edits grouped by document, sorted by URI and position.
+/// Maps an LSP `WorkspaceEdit` into a [`RenameResponse`]: edits grouped by document and sorted by
+/// URI and position, and file renames in the order sent.
 ///
-/// Fails if the edit holds a file create, rename or delete operation, which racli does not report.
-pub fn workspace_edit_to_files(edit: WorkspaceEdit) -> Result<Vec<LspFileEdits>, String> {
+/// Fails if the edit holds a file create or delete operation, which racli does not report.
+pub fn workspace_edit_to_response(edit: WorkspaceEdit) -> Result<RenameResponse, String> {
+    let mut renames = Vec::new();
     let mut by_uri: BTreeMap<String, Vec<TextEdit>> = BTreeMap::new();
     for (uri, edits) in edit.changes.unwrap_or_default() {
         by_uri.entry(uri_to_string(&uri)).or_default().extend(edits);
@@ -95,9 +100,15 @@ pub fn workspace_edit_to_files(edit: WorkspaceEdit) -> Result<Vec<LspFileEdits>,
             for operation in operations {
                 match operation {
                     DocumentChangeOperation::Edit(edit) => edits.push(edit),
+                    DocumentChangeOperation::Op(ResourceOp::Rename(rename)) => {
+                        renames.push(LspFileRename {
+                            old_uri: uri_to_string(&rename.old_uri),
+                            new_uri: uri_to_string(&rename.new_uri),
+                        });
+                    }
                     DocumentChangeOperation::Op(_) => {
                         return Err(
-                            "the rename creates, renames or deletes files, which racli does not report"
+                            "the rename creates or deletes files, which racli does not report"
                                 .to_string(),
                         );
                     }
@@ -114,7 +125,7 @@ pub fn workspace_edit_to_files(edit: WorkspaceEdit) -> Result<Vec<LspFileEdits>,
         });
         by_uri.entry(uri).or_default().extend(edits);
     }
-    Ok(by_uri
+    let files = by_uri
         .into_iter()
         .map(|(uri, mut edits)| {
             edits.sort_by_key(|e| (e.range.start.line, e.range.start.character));
@@ -129,7 +140,8 @@ pub fn workspace_edit_to_files(edit: WorkspaceEdit) -> Result<Vec<LspFileEdits>,
                     .collect(),
             }
         })
-        .collect())
+        .collect();
+    Ok(RenameResponse { files, renames })
 }
 
 /// Maps an LSP `textDocument/documentSymbol` result into top-level protobuf [`LspDocumentSymbol`] rows (children nested recursively).
@@ -403,7 +415,7 @@ mod tests {
         }))
         .unwrap();
 
-        let files = workspace_edit_to_files(edit).unwrap();
+        let files = workspace_edit_to_response(edit).unwrap().files;
 
         let shape: Vec<_> = files
             .iter()
@@ -424,15 +436,42 @@ mod tests {
     }
 
     #[test]
-    fn workspace_edit_to_files_rejects_file_operations() {
+    fn workspace_edit_to_response_reports_file_renames() {
         let edit: WorkspaceEdit = serde_json::from_value(json!({
-            "documentChanges": [{"kind": "rename", "oldUri": "file:///a.rs", "newUri": "file:///b.rs"}]
+            "documentChanges": [
+                {"textDocument": {"uri": "file:///a.rs", "version": null}, "edits": [
+                    {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}}, "newText": "x"}
+                ]},
+                {"kind": "rename", "oldUri": "file:///a.rs", "newUri": "file:///b.rs"}
+            ]
         }))
         .unwrap();
 
-        let err = workspace_edit_to_files(edit).unwrap_err();
+        let resp = workspace_edit_to_response(edit).unwrap();
 
-        assert!(err.contains("creates, renames or deletes files"), "{err}");
+        assert_eq!(resp.files.len(), 1);
+        assert_eq!(
+            resp.renames,
+            vec![LspFileRename {
+                old_uri: "file:///a.rs".into(),
+                new_uri: "file:///b.rs".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn workspace_edit_to_response_rejects_file_creates_and_deletes() {
+        for operation in [
+            json!({"kind": "create", "uri": "file:///a.rs"}),
+            json!({"kind": "delete", "uri": "file:///a.rs"}),
+        ] {
+            let edit: WorkspaceEdit =
+                serde_json::from_value(json!({ "documentChanges": [operation] })).unwrap();
+
+            let err = workspace_edit_to_response(edit).unwrap_err();
+
+            assert!(err.contains("creates or deletes files"), "{err}");
+        }
     }
 
     #[test]

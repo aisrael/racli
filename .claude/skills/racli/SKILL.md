@@ -51,7 +51,7 @@ racli find-references --path src/search.rs --line <LINE> --character <COL>
 - **`find-references`**: every use, including the declaration.
 - **`find-implementations`**: a trait's or type's `impl` blocks, or a trait method's overrides. Nothing from inside an `impl`.
 - **`call-hierarchy`**: callers and callees. `--direction incoming|outgoing|both` (default `both`), `--depth <N>` (default 1, one round trip per node per level). Prints "no call hierarchy item" for a non-function.
-- **`rename <NAME> --new-name <NEW>`**: the edits that rename one symbol, as `path:line:col: old text => new text` lines. It never writes them; make them in the editor. It takes one name, or a position instead; a name with more than one definition is a usage error (exit 2) that lists them, so qualify it or add `--kind`/`--glob`. With `--json`: `{"files": [{"path", "edits": [{"range", "new_text"}]}]}`.
+- **`rename <NAME> --new-name <NEW>`**: the edits that rename one symbol, as `path:line:col: old text => new text` lines, and a file rename (a module's file) as `old/path.rs => new/path.rs`. It never writes them; make them in the editor. It takes one name, or a position instead; a name with more than one definition is a usage error (exit 2) that lists them, so qualify it or add `--kind`/`--glob`. With `--json`: `{"files": [{"path", "edits": [{"range", "new_text"}]}], "renames": [{"old_path", "new_path"}]}`.
 - **`document-symbols <PATH>`**: a file's outline, instead of reading the whole file. It prints an indented tree with 1-based ranges.
 
 `find-definition`, `find-references` and `find-implementations` print `path:line:col: source line`. With `--json`, JSON keeps LSP's absolute URIs and 0-based ranges; with names, it's an array of `{"symbol": …, "result": …}`.
