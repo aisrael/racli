@@ -120,7 +120,7 @@ fn cut_to_limit(value: &mut Value, limit: u32) -> bool {
 pub enum SymbolSearchKind {
     /// Types only (modules, structs, enums, traits, type aliases); rust-analyzer's default.
     OnlyTypes,
-    /// All symbols, including functions, methods, constants, statics, and fields.
+    /// All symbols, including functions, methods, constants and statics, but not fields.
     AllSymbols,
 }
 

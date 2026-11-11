@@ -28,7 +28,7 @@ racli find-references SymbolMatch SymbolFilter    # several names
 racli find-implementations RacliBackend::hover
 ```
 
-- **Names** match exactly: a bare name (`mkfifo`), a module path from the crate root (`sys::mkfifo`, not `raw::mkfifo` for `sys::raw::mkfifo`), or a member qualified by its type or trait (`Fifo::name`). The workspace is searched first, then dependencies.
+- **Names** match exactly: a bare name (`mkfifo`), a module path from the crate root (`sys::mkfifo`, not `raw::mkfifo` for `sys::raw::mkfifo`), or a method or field qualified by its type or trait (`Fifo::name`, `Settings::path`). The workspace is searched first, then dependencies.
 - **Each definition** gets its own result, under a header line `name [KIND] path:line:col`.
 - **Narrow** with `--kind <KIND>` (`function`, `method`, `struct`, …) or `--glob <PATTERN>` (`'src/**'`, relative to the current directory). They choose definitions, not results.
 - **Not found:** stderr lists the closest symbols; retry with a qualified name.
@@ -46,7 +46,7 @@ racli find-references --path src/search.rs --line <LINE> --character <COL>
 
 ## Commands
 
-- **`search <QUERY>`**: fuzzy symbol search; `--exact` keeps only exact names. `|` separates alternatives (`'Foo|Bar'`; `\|` is a literal pipe). Returns only types unless `--kind all-symbols`, so use that for functions, methods, constants and fields. `--scope workspace-and-dependencies` adds dependencies and std. It prints `name [KIND] path:line:col`.
+- **`search <QUERY>`**: fuzzy symbol search; `--exact` keeps only exact names. `|` separates alternatives (`'Foo|Bar'`; `\|` is a literal pipe). Returns only types unless `--kind all-symbols`, so use that for functions, methods and constants. It never returns fields; look one up as `Type::field`. `--scope workspace-and-dependencies` adds dependencies and std. It prints `name [KIND] path:line:col`.
 - **`find-definition`**: where a symbol is defined. Add `--hover` for its signature and docs before calling it, or `--source` for its whole body before changing it, instead of reading the file.
 - **`find-references`**: every use, including the declaration.
 - **`find-implementations`**: a trait's or type's `impl` blocks, or a trait method's overrides. Nothing from inside an `impl`.

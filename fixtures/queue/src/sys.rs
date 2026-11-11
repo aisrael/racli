@@ -39,3 +39,8 @@ impl Named for Fifo {
         "queue"
     }
 }
+
+/// A queue's settings.
+pub struct Settings {
+    pub path: String,
+}

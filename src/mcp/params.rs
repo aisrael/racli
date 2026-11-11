@@ -38,7 +38,7 @@ pub struct SearchParams {
     /// Fuzzy workspace symbol query; `|` separates alternative patterns, and `\|` is a literal pipe.
     pub query: String,
     /// `only_types` (default: modules, structs, enums, traits, type aliases) or `all_symbols` (also
-    /// functions, methods, constants, fields).
+    /// functions, methods, constants; never fields).
     #[serde(default)]
     pub kind: Option<SymbolSearchKind>,
     /// `workspace` (default) or `workspace_and_dependencies` (also dependency crates and std).
