@@ -4,12 +4,15 @@ All notable changes to racli are documented in this file. The format is based on
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-11
+
 ### Added
 
 - **`racli rename`** lists the edits that rename one symbol, by name or at a position, to `--new-name`: `racli rename sys::mkfifo --new-name make_fifo`. It asks rust-analyzer for the edits (LSP `textDocument/prepareRename` and `textDocument/rename`) and prints one `path:line:col: old text => new text` line for each. It does not write them, so racli stays read-only. If a name has more than one definition, it exits with status 2 and lists the definitions; qualify the name, narrow it with `--kind` or `--glob`, or give a position. The server has a `Racli.Rename` gRPC RPC, and the MCP server has a `rename` tool.
 
 ### Changed
 
+- **A type qualifies a struct field**: `racli find-references Config::precision` finds the field, as `Fifo::name` finds a method. rust-analyzer's symbol search never returns fields, so racli reads them from the outline of the file that defines the type. Enum variants work too. Bare field names are still not supported. `--kind all-symbols` and its documentation no longer claim to return fields. See [ADR 008](docs/adrs/008-fields-by-type.md).
 - **`racli rename` works on modules.** rust-analyzer refused to rename a module (`Client does not support rename capability.`) because racli did not say it can take file renames. Racli now declares that, and `rename` prints the rename of the module's file as an `old/path.rs => new/path.rs` line. In JSON, the output has a `renames` array of `{"old_path", "new_path"}`, and the gRPC `RenameResponse` has a `renames` field. Nothing is written.
 
 ## [0.3.0] - 2026-10-29
@@ -100,6 +103,7 @@ Changes since 0.1.1.
 - `racli server` and `racli mcp` log at `info` instead of `debug` by default. Set `RACLI_SERVER_LOG_LEVEL=debug` to get the old output.
 - Library API: the `transport::socket_server` and `transport::socketwrapper` modules were removed, and `RACLI_SERVER_LOG_LEVEL_ENV` moved from `grpc_server` to `logging`.
 
+[0.4.0]: https://github.com/aisrael/racli/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aisrael/racli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aisrael/racli/compare/v0.1.1...v0.2.0
 [#2]: https://github.com/aisrael/racli/pull/2
