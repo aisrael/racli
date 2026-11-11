@@ -97,7 +97,7 @@ racli search <QUERY> [--kind <KIND>] [--scope <SCOPE>] [--exact] [--text | --jso
 | Option                               | Meaning                                                        |
 | ------------------------------------ | -------------------------------------------------------------- |
 | `--kind only-types`                  | Return types only. This is the default.                        |
-| `--kind all-symbols`                 | Also return functions, methods, constants, statics and fields. |
+| `--kind all-symbols`                 | Also return functions, methods, constants and statics, not fields.  |
 | `--scope workspace`                  | Search the workspace crates only. This is the default.         |
 | `--scope workspace-and-dependencies` | Also search dependencies and the standard library.             |
 | `--exact`                            | Keep only symbols with exactly the name in the query.          |

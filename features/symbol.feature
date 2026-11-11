@@ -50,6 +50,14 @@ Feature: racli position commands by symbol name
       | Fifo::name  | Fifo      |
       | Named::name | Named     |
 
+  Scenario: a type qualifies a field
+    When the following command is run:
+      """
+      racli find-definition Settings::path --text
+      """
+    Then it should exit with status code 0
+    And the output should contain "path [FIELD] in Settings fixtures/queue/src/sys.rs:"
+
   Scenario: several names give a result for each
     When the following command is run:
       """

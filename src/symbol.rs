@@ -491,6 +491,14 @@ async fn resolve_symbol(
                 .filter(|m| m.container_name.as_deref() == Some(last_segment(container)))
                 .collect();
         }
+        if found.is_empty()
+            && let Some(container) = container
+        {
+            // rust-analyzer's symbol search never returns fields, so read them from the outline.
+            found = member_matches(backend, container, leaf, scope)
+                .await
+                .map_err(ResolveSymbolError::Search)?;
+        }
         any_truncated |= truncated;
         let kept: Vec<SymbolMatch> = found.iter().filter(|m| filter.keeps(m)).cloned().collect();
         if !kept.is_empty() {
@@ -528,6 +536,74 @@ async fn search(
         scope: Some(scope),
     };
     backend.search(query, options).await
+}
+
+/// The members named `leaf` of the types named like `container`, such as a struct's fields,
+/// read from the outline of the file that defines each type.
+async fn member_matches(
+    backend: &dyn RacliBackend,
+    container: &str,
+    leaf: &str,
+    scope: SymbolSearchScope,
+) -> Result<Vec<SymbolMatch>, String> {
+    let type_name = last_segment(container);
+    let mut found = Vec::new();
+    for owner in exact_matches(search(backend, type_name, scope).await?, type_name) {
+        if !matches!(
+            owner.kind.as_str(),
+            "STRUCT" | "ENUM" | "CLASS" | "INTERFACE"
+        ) {
+            continue;
+        }
+        let Some(path) = owner.file_path() else {
+            continue;
+        };
+        let outline = backend
+            .document_symbols(&path.display().to_string())
+            .await?;
+        found.extend(outline_members(&outline.symbols, &owner, leaf));
+    }
+    Ok(found)
+}
+
+/// The children named `leaf` of the outline entry that `owner` names, as symbols in `owner`.
+fn outline_members(
+    outline: &[LspDocumentSymbol],
+    owner: &SymbolMatch,
+    leaf: &str,
+) -> Vec<SymbolMatch> {
+    let Some(entry) = outline_entry_at(outline, owner.range) else {
+        return Vec::new();
+    };
+    entry
+        .children
+        .iter()
+        .filter(|child| child.name == leaf)
+        .filter_map(|child| {
+            Some(SymbolMatch {
+                name: child.name.clone(),
+                kind: child.kind.clone(),
+                container_name: Some(owner.name.clone()),
+                uri: owner.uri.clone(),
+                range: range_json(child.selection_range?)?,
+            })
+        })
+        .collect()
+}
+
+/// The outline entry whose name is at `range`, searching nested entries too.
+fn outline_entry_at(outline: &[LspDocumentSymbol], range: RangeJson) -> Option<&LspDocumentSymbol> {
+    outline.iter().find_map(|s| {
+        let at = s
+            .selection_range
+            .and_then(range_json)
+            .is_some_and(|r| r == range);
+        if at {
+            Some(s)
+        } else {
+            outline_entry_at(&s.children, range)
+        }
+    })
 }
 
 /// Splits `a::b::c` into its qualifier `a::b` and its name `c`.
@@ -810,6 +886,58 @@ mod tests {
                 .expect_err("should be rejected")
                 .contains("given together")
         );
+    }
+
+    #[test]
+    fn outline_members_find_a_fields_name_range_in_its_owner() {
+        let range = |line, start, end| LspRange {
+            start: Some(LspPosition {
+                line,
+                character: start,
+            }),
+            end: Some(LspPosition {
+                line,
+                character: end,
+            }),
+        };
+        let entry = |name: &str, kind: &str, line, children| LspDocumentSymbol {
+            name: name.into(),
+            detail: None,
+            kind: kind.into(),
+            range: Some(range(line, 0, 30)),
+            selection_range: Some(range(line, 11, 17)),
+            children,
+        };
+        let outline = vec![
+            entry(
+                "Other",
+                "STRUCT",
+                1,
+                vec![entry("precision", "FIELD", 2, vec![])],
+            ),
+            entry(
+                "Config",
+                "STRUCT",
+                10,
+                vec![
+                    entry("database", "FIELD", 11, vec![]),
+                    entry("precision", "FIELD", 12, vec![]),
+                ],
+            ),
+        ];
+        let owner = SymbolMatch {
+            name: "Config".into(),
+            kind: "STRUCT".into(),
+            container_name: None,
+            uri: "file:///a.rs".into(),
+            range: range_json(range(10, 11, 17)).expect("range"),
+        };
+        let found = outline_members(&outline, &owner, "precision");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, "FIELD");
+        assert_eq!(found[0].container_name.as_deref(), Some("Config"));
+        assert_eq!(found[0].range.start.line, 12);
+        assert!(outline_members(&outline, &owner, "nope").is_empty());
     }
 
     #[test]

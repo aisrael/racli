@@ -212,7 +212,7 @@ impl RacliMcpHandler {
     /// Runs `racli search`.
     #[tool(
         name = "search",
-        description = "Fuzzy workspace symbol search (racli search). Returns one `name [KIND] path:line:col` line per symbol, 1-based. Only types unless kind is all_symbols (adds functions, methods, constants, fields); scope workspace_and_dependencies adds dependencies and std; exact keeps only exact names. `|` separates alternative patterns."
+        description = "Fuzzy workspace symbol search (racli search). Returns one `name [KIND] path:line:col` line per symbol, 1-based. Only types unless kind is all_symbols (adds functions, methods, constants; never fields); scope workspace_and_dependencies adds dependencies and std; exact keeps only exact names. `|` separates alternative patterns."
     )]
     async fn search(
         &self,

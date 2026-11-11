@@ -46,7 +46,7 @@ pub struct SearchArgs {
     /// Select how search results are printed (default: text).
     #[arg(long, value_enum)]
     pub output_format: Option<SearchOutputFormat>,
-    /// Symbol kinds to return (default: rust-analyzer's `only-types`); `all-symbols` adds functions, methods, constants, and fields.
+    /// Symbol kinds to return (default: rust-analyzer's `only-types`); `all-symbols` adds functions, methods and constants (rust-analyzer never searches fields).
     #[arg(long, value_enum)]
     pub kind: Option<SymbolSearchKind>,
     /// Crates to search (default: rust-analyzer's `workspace`); `workspace-and-dependencies` adds dependency crates.
