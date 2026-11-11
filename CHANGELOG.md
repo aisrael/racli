@@ -4,7 +4,7 @@ All notable changes to racli are documented in this file. The format is based on
 
 ## [Unreleased]
 
-## [0.3.1] - 2026-11-11
+## [0.4.0] - 2026-11-11
 
 ### Added
 
@@ -103,7 +103,7 @@ Changes since 0.1.1.
 - `racli server` and `racli mcp` log at `info` instead of `debug` by default. Set `RACLI_SERVER_LOG_LEVEL=debug` to get the old output.
 - Library API: the `transport::socket_server` and `transport::socketwrapper` modules were removed, and `RACLI_SERVER_LOG_LEVEL_ENV` moved from `grpc_server` to `logging`.
 
-[0.3.1]: https://github.com/aisrael/racli/compare/v0.3.0...v0.3.1
+[0.4.0]: https://github.com/aisrael/racli/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aisrael/racli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aisrael/racli/compare/v0.1.1...v0.2.0
 [#2]: https://github.com/aisrael/racli/pull/2
